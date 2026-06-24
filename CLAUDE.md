@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single-file HTML5 canvas arcade game — "Freddy & Michi: Espíritu del Amazonas" — a top-down round-based wave survival brawler with 1- or 2-player local co-op and online co-op over WebRTC. The entire game (markup, CSS, all JavaScript logic, and every image/audio asset as base64 data URIs) lives in `index.html` (~5MB, ~1620 lines). There is no build system, package manager, framework, or test suite.
+An HTML5 canvas arcade game — "Freddy & Michi: Espíritu del Amazonas" — a top-down round-based wave survival brawler with 1- or 2-player local co-op and online co-op over WebRTC. All markup, CSS, and JavaScript logic live in `index.html` (~0.2MB, ~3500 lines of readable code). Every image and audio asset is an external binary file under `assets/` (`img_*.png`, `img_*.jpg`, `snd_*.mp3`), referenced by relative path; the JS loads them into `Image`/`Audio` objects. There is no build system, package manager, framework, or test suite.
+
+> Assets were previously inlined as base64 `data:` URIs (making `index.html` ~23MB); they have since been externalized into `assets/`. The file names are sequential (not semantic) — to find which asset a sprite/sound uses, grep `index.html` for the variable assignment, not the filename.
 
 ## Running / developing
 
 - **Run it**: open `index.html` directly in a browser, or serve the directory (e.g. `python3 -m http.server`) and open the page. Online multiplayer needs the page served over a real origin (PeerJS signaling) and internet access to load `peerjs` from unpkg.
 - **No build, lint, or test commands exist.** Edits to `index.html` take effect on browser reload.
-- **Editing caution**: most of the file's bytes are single very long lines of base64 (`data:image/...`, `data:audio/...`). Do not try to read the whole file — it exceeds token limits. Use `grep -n` to locate functions/sections by name, then `Read` with `offset`/`limit`. The actual game logic is compact and human-readable; the asset blobs are not.
+- **Editing**: `index.html` is now ~0.2MB of readable code and can be `Read` directly. Assets are separate files in `assets/`, so the long base64 lines are gone. Use `grep -n` to locate functions/sections by name.
 
 ## Architecture (all within `index.html`)
 
