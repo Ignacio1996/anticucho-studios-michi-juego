@@ -109,7 +109,7 @@ function initAudio(){
     try{ plin2Base=new Audio(AUDIO_SRC.plin2); plin2Base.load(); }catch(e){}
     try{ wowBase=new Audio(AUDIO_SRC.wow); wowBase.load(); }catch(e){}
   }
-  try{ if(actx && actx.state==='suspended') actx.resume(); if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
+  try{ if(actx && actx.state==='suspended') actx.resume(); if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
 function playPlin(){ plinCount++; const p2=(plinCount%7===0); const base=p2?plin2Base:plinBase, src=p2?AUDIO_SRC.plin2:AUDIO_SRC.plin;
   try{ const a=routeEl(base?base.cloneNode():new Audio(src)); a.volume=0.4*sfxVol; a.play().catch(()=>{}); }catch(e){} }
@@ -131,11 +131,11 @@ function playMagic(){ playOne(AUDIO_SRC.magic, 0.3); }
 function playBrujaAttack(giant){ try{ const a=routeEl(new Audio(AUDIO_SRC.bruja_attack)); a.volume=0.72*sfxVol; if(giant){ a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=0.62; } a.play().catch(()=>{}); }catch(e){} }
 function playHeeGiant(){ try{ const a=routeEl(new Audio(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]])); a.volume=0.62*sfxVol; a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=0.62; a.play().catch(()=>{}); }catch(e){} }
 function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
-function playDeathMusic(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
-function playLosAndes(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
+function playDeathMusic(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
+function playLosAndes(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
 function gameTrack(){ return currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
 function otherTrack(){ return currentMap==='stonebridge'?bgMusic:sbMusic; }
-function resumeCumbia(){ try{ if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(g){ g.play().catch(()=>{}); } }catch(e){} }
+function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(g){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }
 function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; try{ const a=routeEl(wowBase?wowBase.cloneNode():new Audio(AUDIO_SRC.wow)); a.volume=0.4*sfxVol; a.play().catch(()=>{}); }catch(e){} }
 function playPickup(){
   if(!actx) return;
@@ -538,6 +538,7 @@ const SUPAY_SRC={
 const SUPAY={}; for(const k in SUPAY_SRC){ const im=new Image(); im.src=SUPAY_SRC[k]; im._key='su_'+k; SUPAY[k]=im; }
 
 function tinted(img, key, color){
+  if(!img || !img.naturalWidth) return img;   // don't cache a 0x0 canvas before the sprite has loaded
   const ck=key+'|'+color; if(tintCache[ck]) return tintCache[ck];
   const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight;
   const x=c.getContext('2d');
@@ -573,8 +574,8 @@ const clamp = (v,a,b) => v<a?a:(v>b?b:v);
 const TAU = Math.PI*2;
 
 // ---------- Game State ----------
-const STATE = { MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help' };
-let state = STATE.MAINMENU;
+const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help' };
+let state = STATE.LOADING;
 let mainSel=0, mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapLockShake=0, currentMap='amazonas';
 let WORLD_W=W, WORLD_H=H, camX=0, camY=0;
 let flowGrid=null, flowCols=0, flowRows=0, flowCell=46, flowTimer=0;
@@ -3428,6 +3429,7 @@ function _frameBody(now){
   if(currentMap==='templo' && (state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO)){ _shx+=Math.sin(time*31)*1.4; _shy+=Math.cos(time*43)*1.1; }
   if(_shx||_shy) ctx.translate(_shx,_shy);
 
+  if(state===STATE.LOADING){ updatePreload(); drawLoading(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAINMENU){ drawMainMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAPAS){ drawMapas(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.HELP){ drawHelp(); ctx.restore(); requestAnimationFrame(frame); return; }
@@ -3482,6 +3484,35 @@ function _frameBody(now){
 
   ctx.restore();
   requestAnimationFrame(frame);
+}
+// ---------- Asset preloader (gates the menu so gameplay never starts with un-loaded sprites) ----------
+const PRELOAD_IMGS=[];
+(function(){
+  for(let i=1;i<=291;i++){ const im=new Image(); im.src='assets/img_'+String(i).padStart(3,'0')+'.png'; PRELOAD_IMGS.push(im); }
+  for(const j of ['assets/img_001.jpg','assets/img_002.jpg','assets/img_003.jpg']){ const im=new Image(); im.src=j; PRELOAD_IMGS.push(im); }
+})();
+let preloadStart=null;
+function preloadDone(){ let n=0; for(const im of PRELOAD_IMGS){ if(im.complete || im.naturalWidth>0) n++; } return n; }
+function updatePreload(){
+  if(preloadStart===null) preloadStart=time;
+  const done=preloadDone(), total=PRELOAD_IMGS.length;
+  // advance to the menu when every sprite is ready, or after a 12s grace period so a slow/failed asset never hard-blocks
+  if(done>=total || (time-preloadStart)>12){ state=STATE.MAINMENU; mainSel=0; mainMenuT=0; }
+}
+function drawLoading(){
+  ctx.fillStyle='#0f0b08'; ctx.fillRect(0,0,W,H);
+  const done=preloadDone(), total=PRELOAD_IMGS.length, frac=total?done/total:1;
+  ctx.fillStyle='#ffe14a'; ctx.font='bold 26px Courier New'; ctx.textAlign='center';
+  ctx.fillText('FREDDY & MICHI', W/2, H/2-54);
+  ctx.fillStyle='#cdbb96'; ctx.font='14px Courier New';
+  ctx.fillText('Cargando…', W/2, H/2-24);
+  const bw=Math.min(440,W-80), bx=(W-bw)/2, by=H/2, bh=18;
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(bx-2,by-2,bw+4,bh+4);
+  ctx.fillStyle='#2a2014'; ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#7bc850'; ctx.fillRect(bx,by,bw*frac,bh);
+  ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
+  ctx.fillText(Math.round(frac*100)+'%', W/2, by+bh+22);
+  ctx.textAlign='left';
 }
 try{ initAudio(); }catch(e){}
 requestAnimationFrame(frame);
