@@ -885,10 +885,9 @@ function spawnBreakItems(){
   const partyMul = (players.length>=4) ? 1.6 : (players.length===3) ? 1.35 : (players.length>=2) ? 1 : 0.85;
   const apuMul = ((currentMap==='stonebridge') ? 1.3 : 1) * partyMul;
   const nOthers = Math.round((lateGame ? randi(3,4) : randi(3,5)) * apuMul);
-  // Rio = full-health pickup, one grab per player. Guarantee one per player,
-  // and at least 4 every round after round 10 so everyone can heal.
-  let rioTarget = Math.max(1, players.length);
-  if(round>10) rioTarget = Math.max(4, rioTarget);
+  // Rio = full-health pickup, one grab per player. Exactly one per player
+  // (max 1 each), so everyone can heal but there are never spares.
+  const rioTarget = Math.max(1, players.length);
   for(let i=0;i<rioTarget;i++){ placeApu('rio'); }
   for(let i=0;i<nOthers;i++){
     let type=weightedApu(!morgUsed, !safUsed);
