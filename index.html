@@ -92,7 +92,13 @@ AUDIO_SRC.jar_intro2="assets/snd_044.mp3";
 AUDIO_SRC.guachi_intro="assets/snd_045.mp3";
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
-function routeEl(el){ try{ if(actx && masterGain){ actx.createMediaElementSource(el).connect(masterGain); } }catch(e){} return el; }
+// On file:// origins createMediaElementSource() succeeds but emits silence (the media
+// is treated as cross-origin). Detect that and skip Web Audio routing so the <audio>
+// elements play through their own output instead — all sound stays audible locally.
+// Trade-off: un-routed audio isn't captured into the WebRTC stream for online guests,
+// but online multiplayer already requires a served http(s) origin.
+const AUDIO_DIRECT = (location.protocol==='file:');
+function routeEl(el){ if(AUDIO_DIRECT) return el; try{ if(actx && masterGain){ actx.createMediaElementSource(el).connect(masterGain); } }catch(e){} return el; }
 function initAudio(){
   if(!audioStarted){
     audioStarted=true;
