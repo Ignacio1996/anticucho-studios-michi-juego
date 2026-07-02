@@ -3538,10 +3538,24 @@ function drawLoading(){
 const SNAP_DT = 1/18;        // host broadcast period (seconds)
 const NET_INTERP = 100;      // ms of interpolation delay applied to non-owned entities
 let netSeq = 0, netAccum = 0;
+// static/dynamic split: an enemy's constant fields (skin/variants/type/…) are sent only for its
+// first ~1s of life and re-broadcast every ~2s (self-heal drops / late joiners); the small mutable
+// set streams every snapshot. Halves steady-state per-enemy payload.
+const NET_YOUNG = 18, NET_KEYFRAME = 36;
+const netFirstSeen = new Map();   // enemy id -> seq first serialized (host-side)
+const NET_ESTATIC = ['type','skin','kind','radius','footR','maxhp','tint','color','eye','pts','ttype',
+  'gvar','lvar','gpvar','charge','leafer','archer','supay','llama','boss','giant','barRow','punchMax','dmg','speed'];
+const NET_ESTATIC_SET = new Set(NET_ESTATIC);
 
 // ---- host: serialize the live world into a compact, always-serializable snapshot ----
 function netSerEnt(e){  // copy primitive fields only → drops object refs / functions so BinaryPack never chokes
   const o={}; for(const k in e){ const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
+}
+function netSerEnemyDyn(e){    // dynamic tier: everything primitive EXCEPT the known-constant static fields (id stays)
+  const o={}; for(const k in e){ if(NET_ESTATIC_SET.has(k)) continue; const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
+}
+function netSerEnemyStatic(e){ // static tier: only the constant fields the renderers need
+  const o={}; for(const k of NET_ESTATIC){ const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
 }
 function netSerPlayer(p){
   return { kind:p.kind, name:p.name, color:p.color, radius:p.radius, x:p.x, y:p.y,
@@ -3552,14 +3566,23 @@ function netSerPlayer(p){
     tierra:p.tierra, piedra:p.piedra, fx:p.facing.x, fy:p.facing.y };
 }
 function netSerializeSnapshot(){
-  return { _snap:1, seq:++netSeq,
+  const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0), estatic={}, ids=new Set();
+  for(const e of enemies){
+    ids.add(e.id);
+    let fs=netFirstSeen.get(e.id); if(fs===undefined){ fs=seq; netFirstSeen.set(e.id,fs); }
+    if(kf || (seq-fs)<NET_YOUNG) estatic[e.id]=netSerEnemyStatic(e);
+  }
+  if(kf){ for(const id of netFirstSeen.keys()) if(!ids.has(id)) netFirstSeen.delete(id); }  // prune despawned
+  return { _snap:1, seq,
     state, round, score, spawnQueue, breakTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
     players: players.map(netSerPlayer),
-    enemies: enemies.map(netSerEnt),
+    enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
-    fx:      fx_effects.map(netSerEnt) };
+    fx:      fx_effects.map(netSerEnt),
+    leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),
+    nuggets: nuggets.map(netSerEnt),  wallets: wallets.map(netSerEnt) };
 }
 function netBroadcast(dt){
   if(NET.role!=='host' || !NET.conns.length) return;
@@ -3574,7 +3597,7 @@ let gBuf=[];                 // recent snapshots, each stamped with local receiv
 const gEnemMap={};           // enemy id -> persistent render object (keeps locally-advanced anim clocks)
 const gApuMap={};            // apuchi id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
-let gPrevRound=-999;
+let gPrevRound=-999, gProjSeq=-1;
 function netOnSnapshot(d){
   if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; return; }
   if(!d._snap) return;
@@ -3655,17 +3678,20 @@ function netApplyGuest(dt){
   if(a && b && b.rt>a.rt){ interp=true; alpha=clamp((renderT-a.rt)/(b.rt-a.rt),0,1); }
   const src = interp ? b : cur;                    // field values matched to the render time
   const aEnem = interp ? _byId(a.enemies) : null;
+  const estatic = cur.estatic || {};               // constant fields arrive on their own cadence
 
-  // enemies (incl. bosses) — interpolate x/y by id, advance walk-cycle clocks locally
+  // enemies (incl. bosses) — merge static+dynamic tiers, interpolate x/y by id, advance clocks locally
   enemies.length=0; const seen={};
   for(const se of src.enemies){
     let o=gEnemMap[se.id];
     if(!o){ o={animTime:Math.random()*2, wob:Math.random()*6.28}; gEnemMap[se.id]=o; }
+    const st=estatic[se.id]; if(st){ for(const kk in st) o[kk]=st[kk]; o._hasStatic=true; }   // sticky once received
     for(const kk in se){ if(kk==='animTime'||kk==='wob') continue; o[kk]=se[kk]; }
     o.animTime=(o.animTime||0)+dt; o.wob=(o.wob||0)+dt*6;
     if(interp && aEnem[se.id]){ const pa=aEnem[se.id]; o.x=pa.x+(se.x-pa.x)*alpha; o.y=pa.y+(se.y-pa.y)*alpha; }
     else { o.x=se.x; o.y=se.y; }
-    seen[se.id]=1; enemies.push(o);
+    seen[se.id]=1;
+    if(o._hasStatic) enemies.push(o);              // don't render until we know skin/kind/radius/…
   }
   for(const id in gEnemMap){ if(!seen[id]) delete gEnemMap[id]; }
 
@@ -3691,6 +3717,22 @@ function netApplyGuest(dt){
   if(cur.amuleto){ if(!amuleto) amuleto={bob:0, spin:0}; amuleto.x=cur.amuleto.x; amuleto.y=cur.amuleto.y; amuleto.item=cur.amuleto.item; amuleto.bob+=dt*4; amuleto.spin+=dt*2; }
   else amuleto=null;
   fx_effects.length=0; for(const f of cur.fx) fx_effects.push(f);
+
+  // projectiles / pickups: resync from the authoritative snapshot, then dead-reckon locally between
+  // snapshots so fast-moving shots stay smooth at 60fps (they travel in straight lines).
+  if(gProjSeq!==cur.seq){
+    gProjSeq=cur.seq;
+    leaves.length=0;   for(const l of cur.leaves||[])  leaves.push({...l});
+    rays.length=0;     for(const r of cur.rays||[])    rays.push({...r});
+    iceBeams.length=0; for(const b2 of cur.ice||[])    iceBeams.push({...b2});
+    nuggets.length=0;  for(const g of cur.nuggets||[]) nuggets.push({...g});
+    wallets.length=0;  for(const w of cur.wallets||[]) wallets.push({...w});
+  }
+  for(const l of leaves){  l.x+=(l.vx||0)*dt; l.y+=(l.vy||0)*dt; }
+  for(const r of rays){    r.x+=(r.vx||0)*dt; r.y+=(r.vy||0)*dt; }
+  for(const g of nuggets){ g.x+=(g.vx||0)*dt; g.y+=(g.vy||0)*dt; g.bob=(g.bob||0)+dt*8; }
+  for(const b2 of iceBeams){ b2.life-=dt; }               // fade the beam smoothly; resync restores it
+  for(const w of wallets){ w.bob=(w.bob||0)+dt*4; w.spin=(w.spin||0)+dt*1.5; }
 
   // local audio cues driven off snapshot deltas
   if(gPrevRound===-999) gPrevRound=cur.round;

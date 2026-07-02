@@ -147,15 +147,20 @@ M2 adds the prediction/reconciliation loop; M3 is polish.
 All three milestones landed together and the video path was removed outright (no `?predict=1`
 A/B flag — the replicated path is now the only path). Concrete choices that differ from the plan:
 
-- **Full-object snapshots, not minimal deltas.** The host sends `~18` snapshots/s over the existing
-  unreliable data channel. Each enemy is serialized with a *primitive-field filter* (`netSerEnt`:
-  copies only number/string/boolean fields, which auto-drops object refs like a boss's target and
-  any functions → always BinaryPack-safe) rather than the hand-picked `{id,t,x,y,facing,hp,st}`.
-  Players use an explicit whitelist (`netSerPlayer`, facing flattened to `fx`/`fy`). This is heavier
-  than the doc's "few hundred bytes" target (~single-digit KB/snapshot) but still ~100× below the
-  old 6 Mbps video, and it guarantees the detailed `draw*()` funcs get every field they read
-  (skin, variant indices `gvar`/`lvar`/`gpvar`, boss anim state, etc.). Delta-encoding / int16
-  quantization / MessagePack remain the same "optional later" wins.
+- **Snapshots at ~18 Hz over the unreliable data channel**, using a *primitive-field filter*
+  (`netSerEnt`: copies only number/string/boolean fields, auto-dropping object refs like a boss's
+  target and any functions → always BinaryPack-safe). Players use an explicit whitelist
+  (`netSerPlayer`, facing flattened to `fx`/`fy`). This guarantees the detailed `draw*()` funcs get
+  every field they read (skin, variant indices `gvar`/`lvar`/`gpvar`, boss anim state, etc.).
+- **Static/dynamic enemy split (implemented).** Enemy constant fields (`NET_ESTATIC`: skin, kind,
+  type, radius, variant indices, tint, type flags, maxhp…) are sent in a per-snapshot `estatic` map
+  only while the enemy is "young" (first `NET_YOUNG`≈18 snapshots ≈1 s) and re-broadcast on a
+  keyframe every `NET_KEYFRAME`≈36 snapshots (~2 s); the mutable set (`netSerEnemyDyn`: x, y, dir,
+  moving, hp, hitFlash, dead, punch/aim/boss-anim state…) streams every frame. The guest keeps the
+  static tier sticky (`_hasStatic`) and withholds an enemy from rendering until its static arrives,
+  so a dropped spawn packet self-heals at the next keyframe instead of drawing a wrong/blank sprite.
+  Roughly halves steady-state per-enemy payload. Int16 quantization / delta-encoding / MessagePack
+  remain the "optional later" wins on top of this.
 - **Entity IDs** are stamped at spawn via a module-level `_entId` counter on enemies (all 4 spawn
   sites incl. bosses) and apuchis — used for cross-snapshot matching / interpolation.
 - **animTime advanced locally** on the guest (walk cycles stay smooth regardless of snapshot rate);
@@ -167,10 +172,12 @@ A/B flag — the replicated path is now the only path). Concrete choices that di
   damage/knockback stay 100% host-authoritative.
 - **Audio localized** minimally: round-start cue on round delta + background music mirrored from
   state; all wrapped in try/catch so an audio hiccup can never break rendering.
-- **Not replicated (known gaps):** cosmetic/secondary visuals that aren't in the snapshot — enemy
-  projectiles (`leaves`/arrows), `rays`, `iceBeams`, `nuggets`, machu `wallets`, and host-side
-  spark particles. The guest sees players, enemies, bosses, apuchis, hearts, the amuleto/key, and
-  `fx_effects` (beams/zaps/shock/camflash). Adding the projectile arrays to the snapshot is the
-  natural next increment if their absence proves distracting.
+- **Projectiles/pickups replicated (implemented).** `leaves`/arrows, `rays`, `iceBeams`, `nuggets`,
+  and machu `wallets` are serialized each snapshot and, on the guest, resynced on `seq` change then
+  **dead-reckoned** locally by their velocity between snapshots (they travel in straight lines), so
+  fast shots stay smooth at 60 fps. The guest now sees players, enemies, bosses, apuchis, hearts,
+  the amuleto/key, `fx_effects` (beams/zaps/shock/camflash), and all of the above.
+- **Not replicated (cosmetic only):** host-side spark particles and floating combat text — purely
+  decorative, spawned as a side effect of host logic; the guest simply omits them.
 - **Per-guest camera**: each guest now frames the group independently (its own `updateCamera`),
   rather than all guests sharing the host's single viewport as under the video model.
