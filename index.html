@@ -560,7 +560,8 @@ function tinted(img, key, color){
 
 // ---------- Input ----------
 const keys = {};
-const NET = { role:'local', peer:null, conn:null, conns:[], stream:null, link:'', hosting:false };  // host: conns = up to 3 guests
+const NET = { role:'local', peer:null, conn:null, conns:[], link:'', hosting:false,   // host: conns = up to 3 guests
+  guestReady:false, slot:1, snap:null, guestKeys:null, waitState:'' };                 // guest: replicated-state fields
 addEventListener('keydown', e => {
   initAudio();
   keys[e.code] = true;
@@ -773,6 +774,7 @@ function effKnock(p){ return p.knock; }
 
 // ---------- Enemies ----------
 const enemies = [];
+let _entId = 1;   // stable, monotonically-increasing id stamped on every enemy/apuchi at spawn (used by online guests to match entities across snapshots)
 const ENEMY_TYPES = {
   // slower than before; difficulty scales via numbers each round
   normal: { hp:92,  dmg:8,  speed:46, radius:16, pts:10, tint:null,      eye:'#fff' },
@@ -826,6 +828,7 @@ function spawnEnemy(){
   }
   if(currentMap==='machu') speed=Math.round(speed*1.2);
   enemies.push({
+    id:_entId++,
     type, x, y,
     radius: radius,
     hp: baseHp*scale*mcfg.hpMul, maxhp: baseHp*scale*mcfg.hpMul,
@@ -881,7 +884,7 @@ function spawnApuPos(){
 }
 function placeApu(type){
   const pos=spawnApuPos();
-  apuchis.push({type, x:pos.x, y:pos.y, r:18, bob:Math.random()*TAU, spawn:0});
+  apuchis.push({id:_entId++, type, x:pos.x, y:pos.y, r:18, bob:Math.random()*TAU, spawn:0});
 }
 function spawnBreakItems(){
   apuchis.length=0;
@@ -2282,7 +2285,7 @@ function fireSupayballs(e,tgt){
   spark(e.x,e.y-10,'#ff8a2a',8,100);
 }
 function spawnGiantBoss(){
-  enemies.push({ boss:true, giant:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
+  enemies.push({ id:_entId++, boss:true, giant:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
     x:WORLD_W/2, y:(currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):96)), radius:48,
     hp:6000, maxhp:6000, dmg:(currentMap==='templo'?40:0), speed:(currentMap==='templo'?110:currentMap==='machu'?36:30),
     dir:'s', moving:false, animTime:Math.random()*2,
@@ -2291,7 +2294,7 @@ function spawnGiantBoss(){
   floatText(WORLD_W/2,140,(currentMap==='stonebridge'?'\u00a1BRUJA BLANCA COLOSAL!':currentMap==='templo'?'\u00a1JARJACHA COLOSAL!':'\u00a1TEDDINGTON COLOSAL!'),'#bfefff');
 }
 function spawnBoss(r){
-  enemies.push({ boss:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
+  enemies.push({ id:_entId++, boss:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
     x:(WORLD_W>W?WORLD_W/2:W/2), y:(currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):80)), radius:40,
     hp:500+r*100, maxhp:500+r*100, dmg:20+r*1.5, speed:(currentMap==='templo'?120:currentMap==='machu'?Math.round(Math.min(60,34+r)*1.2):Math.min(60,34+r)),
     dir:'s', moving:false, animTime:Math.random()*2,
@@ -2559,7 +2562,7 @@ function updateMachuBoss(e,dt){
 }
 function spawnMachuBoss(kind,giant,row){
   const r=round;
-  enemies.push({ boss:true, giant:!!giant, type:'boss', kind:kind,
+  enemies.push({ id:_entId++, boss:true, giant:!!giant, type:'boss', kind:kind,
     x: WORLD_W/2 + (row?200:-200), y: MACHU_SKY+140, radius: giant?56:42, footR: giant?30:22,
     hp:(giant?5200:480+r*95), maxhp:(giant?5200:480+r*95), dmg:0,
     speed:(kind==='evan'?118:46),
@@ -3415,12 +3418,19 @@ function _frameBody(now){
   for(let _i=0;_i<40;_i++) ctx.restore();
   ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
 
-  if(state===STATE.PLAY) safe('updatePlay',()=>updatePlay(dt));
-  else if(state===STATE.BREAK) safe('updateBreak',()=>updateBreak(dt));
-  else if(state===STATE.INTRO) safe('updateIntro',()=>updateIntro(dt));
-  else if(state===STATE.DYING) safe('updateDying',()=>updateDying(dt));
-  else if(state===STATE.MAINMENU) mainMenuT+=dt;
-  else if(state===STATE.SELECT && selPending){ selStartTimer-=dt; if(selStartTimer<=0){ selPending=false; safe('startGame',startGame); } }
+  // online guest: replicate the host's world from snapshots instead of simulating locally
+  if(NET.role==='guest'){
+    if(!NET.guestReady){ safe('guestwait',drawGuestWaiting); requestAnimationFrame(frame); return; }
+    safe('netguest',()=>netApplyGuest(dt));
+  } else {
+    if(state===STATE.PLAY) safe('updatePlay',()=>updatePlay(dt));
+    else if(state===STATE.BREAK) safe('updateBreak',()=>updateBreak(dt));
+    else if(state===STATE.INTRO) safe('updateIntro',()=>updateIntro(dt));
+    else if(state===STATE.DYING) safe('updateDying',()=>updateDying(dt));
+    else if(state===STATE.MAINMENU) mainMenuT+=dt;
+    else if(state===STATE.SELECT && selPending){ selStartTimer-=dt; if(selStartTimer<=0){ selPending=false; safe('startGame',startGame); } }
+  }
+  if(NET.role==='host') safe('netcast',()=>netBroadcast(dt));
   for(const _p of players){ if(_p.fell && _p.fallT>0) _p.fallT-=dt; }
   if(mapLockShake>0) mapLockShake-=dt;
   safe('particles-upd',()=>updateParticles(dt));
@@ -3520,13 +3530,191 @@ function drawLoading(){
   ctx.fillText(Math.round(frac*100)+'%', W/2, by+bh+22);
   ctx.textAlign='left';
 }
+// ================= ONLINE NET SYNC (host snapshots ↔ guest replication + prediction) =================
+// Replaces the old "stream the host's canvas as video" model. The host now serializes its
+// authoritative world ~18×/s and sends it over the PeerJS data channel; each guest renders that
+// world locally with real sprites (no video ramp-up), interpolates non-owned entities ~100ms in the
+// past for smoothness, and predicts its OWN player from local input so its movement is zero-latency.
+const SNAP_DT = 1/18;        // host broadcast period (seconds)
+const NET_INTERP = 100;      // ms of interpolation delay applied to non-owned entities
+let netSeq = 0, netAccum = 0;
+
+// ---- host: serialize the live world into a compact, always-serializable snapshot ----
+function netSerEnt(e){  // copy primitive fields only → drops object refs / functions so BinaryPack never chokes
+  const o={}; for(const k in e){ const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
+}
+function netSerPlayer(p){
+  return { kind:p.kind, name:p.name, color:p.color, radius:p.radius, x:p.x, y:p.y,
+    dir:p.dir, moving:p.moving, animTime:p.animTime, hp:p.hp, maxhp:p.maxhp, speed:p.speed, cd:p.cd,
+    alive:p.alive, fell:p.fell, fallT:p.fallT, deathAnim:(p.deathAnim==null?null:p.deathAnim), reviveProgress:p.reviveProgress||0,
+    punchAnim:p.punchAnim, hitFlash:p.hitFlash, shieldFlash:p.shieldFlash, shields:p.shields,
+    special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0,
+    tierra:p.tierra, piedra:p.piedra, fx:p.facing.x, fy:p.facing.y };
+}
+function netSerializeSnapshot(){
+  return { _snap:1, seq:++netSeq,
+    state, round, score, spawnQueue, breakTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
+    players: players.map(netSerPlayer),
+    enemies: enemies.map(netSerEnt),
+    apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
+    hearts:  hearts.map(h=>({x:h.x, y:h.y})),
+    amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
+    fx:      fx_effects.map(netSerEnt) };
+}
+function netBroadcast(dt){
+  if(NET.role!=='host' || !NET.conns.length) return;
+  netAccum+=dt; if(netAccum<SNAP_DT) return; netAccum=0;
+  const inGame = (state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING||state===STATE.OVER||state===STATE.VICTORY);
+  const s = inGame ? netSerializeSnapshot() : {_wait:1, state};
+  for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ s.you = g.slot; g.conn.send(s); } }catch(e){} }
+}
+
+// ---- guest: buffer snapshots, replicate + interpolate + predict ----
+let gBuf=[];                 // recent snapshots, each stamped with local receive time .rt
+const gEnemMap={};           // enemy id -> persistent render object (keeps locally-advanced anim clocks)
+const gApuMap={};            // apuchi id -> persistent render object
+let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
+let gPrevRound=-999;
+function netOnSnapshot(d){
+  if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; return; }
+  if(!d._snap) return;
+  d.rt = performance.now();
+  gBuf.push(d); if(gBuf.length>16) gBuf.shift();
+  NET.snap=d; NET.guestReady=true;
+  if(typeof d.you==='number') NET.slot=d.you;
+}
+function _byId(arr){ const m={}; for(const e of arr) m[e.id]=e; return m; }
+function netApplyMeta(s){
+  state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
+  if(currentMap!==s.currentMap){
+    currentMap=s.currentMap;
+    obstacles=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS;
+    cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
+  }
+  WORLD_W=s.worldW; WORLD_H=s.worldH;
+}
+function netRenderPlayer(sp){
+  return { kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
+    dir:sp.dir, moving:sp.moving, animTime:sp.animTime, hp:sp.hp, maxhp:sp.maxhp, speed:sp.speed, cd:sp.cd,
+    alive:sp.alive, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, reviveProgress:sp.reviveProgress,
+    punchAnim:sp.punchAnim, hitFlash:sp.hitFlash, shieldFlash:sp.shieldFlash, shields:sp.shields,
+    special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge,
+    tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy} };
+}
+function netPredictOwned(rp, me, cur, dt){
+  if(!me.alive){ gPred.init=false; gPred.punchAnim=0; return; }   // dead → just show authoritative pose
+  if(!gPred.init){ gPred.x=me.x; gPred.y=me.y; gPred.animTime=me.animTime||0; gPred.init=true; }
+  const canMove=(state===STATE.PLAY||state===STATE.BREAK);   // no input during intro/pause/over
+  const k=canMove ? (NET.guestKeys||{}) : {};
+  let mx=0,my=0;
+  if(k['KeyW']||k['ArrowUp'])    my-=1;
+  if(k['KeyS']||k['ArrowDown'])  my+=1;
+  if(k['KeyA']||k['ArrowLeft'])  mx-=1;
+  if(k['KeyD']||k['ArrowRight']) mx+=1;
+  gPred.animTime+=dt;
+  const moving=!!(mx||my);
+  if(moving){
+    const l=Math.hypot(mx,my); mx/=l; my/=l;
+    rp.facing.x=mx; rp.facing.y=my;
+    rp.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s');
+    const sp=effSpeed(me);                                 // same stat pipeline the host uses
+    gPred.x+=mx*sp*dt; gPred.y+=my*sp*dt;
+    const tmp={x:gPred.x, y:gPred.y, radius:me.radius}; resolveCollision(tmp); gPred.x=tmp.x; gPred.y=tmp.y;
+  }
+  // reconcile against the latest authoritative pose: hard-snap on teleport (round start / revive /
+  // cliff death), otherwise ease toward it so small mispredictions never rubber-band.
+  const auth=cur.players[NET.slot];
+  if(auth && auth.alive){
+    const dd=Math.hypot(gPred.x-auth.x, gPred.y-auth.y);
+    if(dd>110){ gPred.x=auth.x; gPred.y=auth.y; }
+    else { gPred.x+=(auth.x-gPred.x)*0.12; gPred.y+=(auth.y-gPred.y)*0.12; }
+  }
+  // predicted punch animation (visual only — real damage/knockback stay host-authoritative)
+  const punch=!!(k['Space']||k['Comma']);
+  if(gPred.cd>0) gPred.cd-=dt;
+  if(gPred.punchAnim>0) gPred.punchAnim-=dt;
+  if(punch && !gPred.wasPunch && gPred.cd<=0 && me.special==='none'){
+    gPred.punchAnim=(CHARS[me.kind]&&CHARS[me.kind].pd)||0.3; gPred.cd=me.cd||0.4;
+  }
+  gPred.wasPunch=punch;
+  rp.x=gPred.x; rp.y=gPred.y; rp.moving=moving; rp.animTime=gPred.animTime;
+  rp.punchAnim=Math.max(rp.punchAnim||0, gPred.punchAnim);
+}
+function netGuestMusic(st){
+  const playing=(st===STATE.PLAY||st===STATE.BREAK||st===STATE.INTRO);
+  if(playing){ const gt=gameTrack(); if(gt && gt.paused && (!deathMusic||deathMusic.paused)) gt.play().catch(()=>{}); if(menuMusic && !menuMusic.paused) menuMusic.pause(); }
+}
+function netApplyGuest(dt){
+  const cur=NET.snap; if(!cur) return;
+  netApplyMeta(cur);
+  const nowP=performance.now(), renderT=nowP-NET_INTERP;
+  // pick the two snapshots bracketing the (delayed) render time for position interpolation
+  let a=null, b=null;
+  for(let i=0;i<gBuf.length;i++){ const s=gBuf[i]; if(!s._snap) continue; if(s.rt<=renderT) a=s; else if(!b) b=s; }
+  let interp=false, alpha=0;
+  if(a && b && b.rt>a.rt){ interp=true; alpha=clamp((renderT-a.rt)/(b.rt-a.rt),0,1); }
+  const src = interp ? b : cur;                    // field values matched to the render time
+  const aEnem = interp ? _byId(a.enemies) : null;
+
+  // enemies (incl. bosses) — interpolate x/y by id, advance walk-cycle clocks locally
+  enemies.length=0; const seen={};
+  for(const se of src.enemies){
+    let o=gEnemMap[se.id];
+    if(!o){ o={animTime:Math.random()*2, wob:Math.random()*6.28}; gEnemMap[se.id]=o; }
+    for(const kk in se){ if(kk==='animTime'||kk==='wob') continue; o[kk]=se[kk]; }
+    o.animTime=(o.animTime||0)+dt; o.wob=(o.wob||0)+dt*6;
+    if(interp && aEnem[se.id]){ const pa=aEnem[se.id]; o.x=pa.x+(se.x-pa.x)*alpha; o.y=pa.y+(se.y-pa.y)*alpha; }
+    else { o.x=se.x; o.y=se.y; }
+    seen[se.id]=1; enemies.push(o);
+  }
+  for(const id in gEnemMap){ if(!seen[id]) delete gEnemMap[id]; }
+
+  // players — own slot predicted, others interpolated
+  const np=[];
+  for(let i=0;i<src.players.length;i++){
+    const sp=src.players[i], rp=netRenderPlayer(sp);
+    if(i===NET.slot){ netPredictOwned(rp, sp, cur, dt); }
+    else if(interp && a.players[i]){ rp.x=a.players[i].x+(sp.x-a.players[i].x)*alpha; rp.y=a.players[i].y+(sp.y-a.players[i].y)*alpha; }
+    np.push(rp);
+  }
+  players=np;
+
+  // apuchis (bob locally), hearts, amuleto, fx
+  apuchis.length=0; const seenA={};
+  for(const sa of cur.apuchis){
+    let o=gApuMap[sa.id]; if(!o){ o={bob:Math.random()*6.28, spawn:0, r:18}; gApuMap[sa.id]=o; }
+    o.type=sa.type; o.x=sa.x; o.y=sa.y; o.bob+=dt*7; if(o.spawn<1) o.spawn=Math.min(1,o.spawn+dt*3);
+    seenA[sa.id]=1; apuchis.push(o);
+  }
+  for(const id in gApuMap){ if(!seenA[id]) delete gApuMap[id]; }
+  hearts.length=0; for(const h of cur.hearts) hearts.push({x:h.x, y:h.y, bob:time*4, spin:time*3, life:16});
+  if(cur.amuleto){ if(!amuleto) amuleto={bob:0, spin:0}; amuleto.x=cur.amuleto.x; amuleto.y=cur.amuleto.y; amuleto.item=cur.amuleto.item; amuleto.bob+=dt*4; amuleto.spin+=dt*2; }
+  else amuleto=null;
+  fx_effects.length=0; for(const f of cur.fx) fx_effects.push(f);
+
+  // local audio cues driven off snapshot deltas
+  if(gPrevRound===-999) gPrevRound=cur.round;
+  try{ if(cur.state===STATE.PLAY && cur.round!==gPrevRound) playRoundStart(cur.round); }catch(e){}
+  try{ netGuestMusic(cur.state); }catch(e){}
+  gPrevRound=cur.round;
+}
+function drawGuestWaiting(){
+  ctx.fillStyle='#0f0b08'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffe14a'; ctx.font='bold 24px Courier New'; ctx.textAlign='center';
+  ctx.fillText('FREDDY & MICHI — CO-OP ONLINE', W/2, H/2-30);
+  ctx.fillStyle='#cdbb96'; ctx.font='15px Courier New';
+  ctx.fillText((NET.conn && NET.conn.open) ? 'Esperando al anfitrión…' : 'Conectando con el anfitrión…', W/2, H/2+6);
+  ctx.textAlign='left';
+}
+
 try{ initAudio(); }catch(e){}
 requestAnimationFrame(frame);
 
-// ================= ONLINE MULTIPLAYER (host-authoritative + PeerJS) =================
-// Host: runs the real game, streams its canvas to every guest, and feeds each guest's
-//       keypresses into its own player (slots 2-4) via that connection's keys object.
-// Guest: shows the host's video, sends its own keypresses, runs no simulation.
+// ================= ONLINE MULTIPLAYER (state-replicated + client prediction, over PeerJS) =================
+// Host: runs the authoritative simulation, broadcasts ~18 world-snapshots/s to every guest, and feeds
+//       each guest's keypresses into its own player (slots 1-3) via that connection's keys object.
+// Guest: renders the replicated world locally with real sprites, interpolates non-owned entities, and
+//        predicts its OWN player from local input for zero-latency movement. (See netApply* above.)
 (function initNet(){
   const $ = id => document.getElementById(id);
   const statusEl=$('netstatus'), linkBox=$('netlink'), copyBtn=$('netcopy'), panel=$('netui'),
@@ -3537,7 +3725,7 @@ requestAnimationFrame(frame);
 
   const joinId = new URLSearchParams(location.search).get('r');
 
-  // translate a guest's normalized input into the canonical control codes
+  // translate a guest's normalized input into the canonical control codes fed into its host-side player
   function applyRemote(keysObj, d){
     keysObj['ArrowUp']    = !!d.u;
     keysObj['ArrowDown']  = !!d.dn;
@@ -3549,22 +3737,37 @@ requestAnimationFrame(frame);
   if(joinId){
     // ----------------------------- GUEST -----------------------------
     NET.role = 'guest';
-    // silence the local (hidden) game; the guest only hears the host's streamed audio.
-    // every local sound routes through masterGain, so dropping it to 0 mutes them all.
-    try{ if(masterGain) masterGain.gain.value=0; }catch(e){}
-    [bgMusic,menuMusic,sbMusic,tpMusic,evMusic,deathMusic,losAndesMusic].forEach(m=>{ try{ if(m){ m.muted=true; } }catch(e){} });
+    // the guest renders its own world (real sprites) and plays its own audio, so DON'T mute/hide it.
     if(panel) panel.style.display='none';
-    if(wrap)  wrap.style.display='none';
-    if(vid)   vid.style.display='block';
+    if(vid)   vid.style.display='none';   // no more incoming video track
+    if(wrap)  wrap.style.display='';       // show the local canvas — this is what the guest actually plays on
     setBanner('Conectando con el anfitrión…');
 
-    // capture our keys; STOP them reaching the local (hidden) game instance
+    // capture our keys: feed them to local prediction (NET.guestKeys) AND ship them to the host, but
+    // STOP them reaching the local menu/game state machine (which the guest never drives directly).
     const gk = {};
+    NET.guestKeys = gk;
+    let lastSig = '';
+    function inputPacket(){
+      return {
+        u:  !!(gk['KeyW']||gk['ArrowUp']),    dn: !!(gk['KeyS']||gk['ArrowDown']),
+        l:  !!(gk['KeyA']||gk['ArrowLeft']),  r:  !!(gk['KeyD']||gk['ArrowRight']),
+        p:  !!(gk['Space']||gk['Comma'])
+      };
+    }
+    // send the instant input changes (force=true for the periodic heartbeat resend);
+    // the channel is unreliable, so the heartbeat corrects any dropped/lost key change.
+    function sendInput(force){
+      if(!(NET.conn && NET.conn.open)) return;
+      const p = inputPacket(), sig = (p.u?1:0)+''+(p.dn?1:0)+(p.l?1:0)+(p.r?1:0)+(p.p?1:0);
+      if(!force && sig===lastSig) return;   // nothing changed → don't spam (also swallows key-repeat)
+      lastSig = sig;
+      try{ NET.conn.send(p); }catch(e){}
+    }
     const swallow = e => {
       const down = e.type==='keydown';
-      gk[e.code] = down;
-      // first key is a user gesture - unmute the host's video so we can hear the game
-      if(down && vid && vid.muted){ vid.muted=false; vid.play().catch(()=>{}); }
+      try{ initAudio(); }catch(_e){}                                // first key is the user gesture that unlocks local audio
+      if(gk[e.code]!==down){ gk[e.code]=down; sendInput(false); }   // fire the moment a key toggles
       e.preventDefault();
       e.stopImmediatePropagation();
     };
@@ -3574,24 +3777,14 @@ requestAnimationFrame(frame);
     const peer = new Peer(); NET.peer = peer;
     peer.on('open', () => {
       const conn = peer.connect(joinId, { reliable:false }); NET.conn = conn;
-      conn.on('open',  () => setBanner('Conectado - esperando vídeo del anfitrión…'));
-      conn.on('close', () => setBanner('Anfitrión desconectado.'));
-    });
-    peer.on('call', call => {
-      call.answer();                                  // guest sends no media back
-      call.on('stream', s => { if(vid){ vid.srcObject = s; vid.play().catch(()=>{}); } if(banner) banner.style.display='none'; });
+      conn.on('data',  d => { try{ netOnSnapshot(d); if(banner) banner.style.display='none'; }catch(_e){} });
+      conn.on('open',  () => { setBanner('Conectado - esperando al anfitrión…'); lastSig=''; sendInput(true); });
+      conn.on('close', () => { NET.guestReady=false; setBanner('Anfitrión desconectado.'); });
     });
     peer.on('error', e => setBanner('Error de conexión: ' + e.type));
 
-    setInterval(() => {
-      if(NET.conn && NET.conn.open){
-        NET.conn.send({
-          u:  !!(gk['KeyW']||gk['ArrowUp']),    dn: !!(gk['KeyS']||gk['ArrowDown']),
-          l:  !!(gk['KeyA']||gk['ArrowLeft']),  r:  !!(gk['KeyD']||gk['ArrowRight']),
-          p:  !!(gk['Space']||gk['Comma'])
-        });
-      }
-    }, 33);
+    // heartbeat: resend current state so a dropped packet (unreliable channel) can't stick a key
+    setInterval(() => sendInput(true), 120);
 
   } else {
     // ----------------------------- HOST ------------------------------
@@ -3609,32 +3802,9 @@ requestAnimationFrame(frame);
       NET.conns.push(guest);
       const num = NET.conns.length;   // J2, J3, J4
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(num+1)+' listo)');
-      conn.on('data', d => applyRemote(guest.keys, d));
+      conn.on('data', d => applyRemote(guest.keys, d));   // guest→host input packets
       conn.on('close', () => setStatus('J'+(guest.slot+1)+' se desconectó.'));
-      conn.on('open', () => {
-        try {
-          if(!NET.stream){
-            NET.stream = cv.captureStream(30);                       // one shared canvas stream for all guests
-            try{ NET.stream.getVideoTracks()[0].contentHint='detail'; }catch(e){}  // favour sharpness over FPS (pixel art + text)
-          }
-          // add the game audio (music + SFX) once it's available; without this guests get a silent video
-          if(streamDest && NET.stream.getAudioTracks().length===0){
-            try{ streamDest.stream.getAudioTracks().forEach(t=>NET.stream.addTrack(t)); }catch(e){}
-          }
-          const call = peer.call(conn.peer, NET.stream);
-          try{
-            const sender = call.peerConnection.getSenders().find(s=>s.track && s.track.kind==='video');
-            if(sender){
-              const pr = sender.getParameters();
-              if(pr.encodings && pr.encodings.length){            // raise bitrate so the stream isn't blocky
-                pr.encodings.forEach(en=>{ en.maxBitrate=6000000; });
-                pr.degradationPreference='maintain-resolution';   // under load drop FPS, keep it crisp
-                sender.setParameters(pr).catch(()=>{});
-              }
-            }
-          }catch(e){}
-        } catch(err){ setStatus('No se pudo iniciar el vídeo: ' + err.message); }
-      });
+      // (snapshots are broadcast from the main loop via netBroadcast — nothing to set up per-connection)
       // if a game is already running, slot this guest in live
       if(inGame()){
         if(players[guest.slot]) players[guest.slot].keysrc = guest.keys;

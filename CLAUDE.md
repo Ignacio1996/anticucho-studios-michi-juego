@@ -30,10 +30,11 @@ Key global mutable arrays/objects updated each tick: `players`, `enemies`, `apuc
 
 **Rendering**: arena background and tree border are pre-rendered once to offscreen canvases (`arenaBG`, `arenaTrees`) and blitted each frame. Sprites are loaded from base64 `data:` URIs into `Image` objects; `tinted()` caches recolored sprite variants. Audio is base64 `data:` URIs in `AUDIO_SRC`, played via cloned `Audio` elements; `initAudio()` must run on a user gesture (wired to the first keydown).
 
-## Online multiplayer (`initNet` IIFE, line ~1533)
+## Online multiplayer (`initNet` IIFE + net-sync block above it)
 
-Host-authoritative streaming model, **not** state replication:
-- **Host** runs the entire simulation, captures its `<canvas>` via `captureStream(30)` and sends it to the guest as a WebRTC video track. It receives the guest's normalized key state over a PeerJS data connection and feeds it into Michi (player 2) through the shared `remoteKeys` object (`players[1].keysrc = remoteKeys`).
-- **Guest** is detected by the `?r=<peerId>` query param. It renders only the incoming video (`#remotevideo`), runs no game logic, captures its own keys in the capture phase to keep them out of the local hidden game instance, and sends a compact `{u,dn,l,r,p}` input packet every 33ms.
+**State replication + client-side prediction** — host-authoritative *simulation*, but each guest renders its own world (no video). See `NETWORKING_PREDICTION_DESIGN.md` for the full rationale.
+- **Host** runs the only authoritative simulation. Every ~1/18s `netBroadcast()` sends a full world snapshot (`netSerializeSnapshot()`: players + enemies + bosses + apuchis + hearts + amuleto + fx) over the PeerJS **data** channel to each guest, tagged with that guest's player slot (`you`). It still feeds each guest's `{u,dn,l,r,p}` input packet into that guest's player via `applyRemote` → the connection's `keys` object (`players[slot].keysrc`).
+- **Guest** is detected by the `?r=<peerId>` query param. It buffers snapshots (`netOnSnapshot`), and each frame `netApplyGuest()` replicates the world into the shared globals (`players`/`enemies`/`apuchis`/…), **interpolating** non-owned entities ~100ms in the past and **predicting** its own player from local input via the real `effSpeed`/`resolveCollision` (`netPredictOwned`), reconciled toward the latest authoritative pose. It renders with the normal `draw*()` code and plays its own audio.
+- `_frameBody` branches on `NET.role`: a guest skips all `update*()` sim and instead runs `netApplyGuest`; the host additionally calls `netBroadcast`. Entities carry a stable `id` (`_entId`, stamped at spawn) for cross-snapshot matching.
 
-Consequence: the guest's experience is entirely the host's screen; only the host's machine simulates anything. UI strings throughout are in Spanish.
+Not replicated (cosmetic gaps): enemy projectiles (`leaves`/arrows), `rays`, `iceBeams`, `nuggets`, `wallets`, host-side spark particles. UI strings throughout are in Spanish.
