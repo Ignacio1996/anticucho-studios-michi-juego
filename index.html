@@ -1312,22 +1312,37 @@ function updatePlayers(dt){
     if(p.punchAnim>0) p.punchAnim-=dt;
     if(p.hitFlash>0) p.hitFlash-=dt;
     // movement
-    let mx=0,my=0;
     const c=p.controls;
     const ks=p.keysrc||keys;
-    if(ks[c.up]) my-=1;
-    if(ks[c.down]) my+=1;
-    if(ks[c.left]) mx-=1;
-    if(ks[c.right]) mx+=1;
     p.animTime+=dt;
-    p.moving=!!(mx||my);
-    if(mx||my){
-      const l=Math.hypot(mx,my); mx/=l; my/=l;
-      p.facing.x=mx; p.facing.y=my;
-      p.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s');
-      const sp=effSpeed(p);
-      p.x+=mx*sp*dt; p.y+=my*sp*dt;
+    const rem=p.netRemote;
+    if(rem && rem.grace>0) rem.grace-=dt;
+    // Client-authoritative movement: a joined player simulates its OWN position locally (zero input
+    // round-trip) and streams us the pose; we adopt it verbatim, only clamping + wall-resolving so it
+    // can't clip through geometry. `grace` briefly ignores the stream right after we teleport the player
+    // (round start / revive / join) until its post-teleport pose catches up. Attacks stay host-side below.
+    if(rem && rem.pose && (!(rem.grace>0)) && p.alive && !p.pending){
+      const ps=rem.pose;
+      p.moving=ps.mv;
+      if(ps.mv){ p.facing.x=ps.fx; p.facing.y=ps.fy; p.dir=ps.dir; }
+      p.x=clamp(ps.x,0,WORLD_W); p.y=clamp(ps.y,0,WORLD_H);
       resolveCollision(p);
+    } else {
+      // local players (and the fallback before a guest's pose stream arrives): integrate from keys.
+      let mx=0,my=0;
+      if(ks[c.up]) my-=1;
+      if(ks[c.down]) my+=1;
+      if(ks[c.left]) mx-=1;
+      if(ks[c.right]) mx+=1;
+      p.moving=!!(mx||my);
+      if(mx||my){
+        const l=Math.hypot(mx,my); mx/=l; my/=l;
+        p.facing.x=mx; p.facing.y=my;
+        p.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s');
+        const sp=effSpeed(p);
+        p.x+=mx*sp*dt; p.y+=my*sp*dt;
+        resolveCollision(p);
+      }
     }
     if(p.special==='oro'){
       if(ks[c.punch]){ p.oroCharge=(p.oroCharge||0)+dt; if(p.oroCharge>=1.0){ fireLightning(p,'#ff9a2a',180); p.oroCharge=0; p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; p.oro=0; floatText(p.x,p.y-26,'ORO agotado','#ff9a2a'); } } }
@@ -1528,7 +1543,7 @@ function startBreak(){
   // Tierra/Piedra stacks expire at the end of each round
   for(const p of players){ p.tierra=0; p.piedra=0; p.rioGrabbed=false; }
   // co-op: fallen players return for the countdown (can grab Apuchis) at their cross
-  { const anchor=players.find(pp=>pp.alive); for(const p of players){ if(!p.alive){ if(anchor){ p.x=anchor.x+(p===players[0]?-40:40); p.y=anchor.y; } const joining=p.pending; p.pending=false; p.alive=true; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p); spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,joining?'¡ENTRA!':'RENACE','#aef7c2'); } } }
+  { const anchor=players.find(pp=>pp.alive); for(const p of players){ if(!p.alive){ if(anchor){ p.x=anchor.x+(p===players[0]?-40:40); p.y=anchor.y; } const joining=p.pending; p.pending=false; p.alive=true; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p); if(p.netRemote) p.netRemote.grace=0.5; spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,joining?'¡ENTRA!':'RENACE','#aef7c2'); } } }
   spawnBreakItems();
   const bonus = 20 + round*5;   // round completion bonus
   score += bonus;
@@ -3371,7 +3386,7 @@ function startGame(){
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'};
     for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
-    for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; }
+    for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
   } else if(mode===1){
     players.push(makePlayer(selChar1||'freddy', WORLD_W/2, (currentMap==='stonebridge')?344:WORLD_H/2, P1));
   } else {
@@ -3641,7 +3656,7 @@ function netRenderPlayer(sp){
 }
 function netPredictOwned(rp, me, cur, dt){
   if(!me.alive){ gPred.init=false; gPred.punchAnim=0; return; }   // dead → just show authoritative pose
-  if(!gPred.init){ gPred.x=me.x; gPred.y=me.y; gPred.animTime=me.animTime||0; gPred.init=true; }
+  if(!gPred.init){ gPred.x=me.x; gPred.y=me.y; gPred.animTime=me.animTime||0; gPred.fx=me.fx||0; gPred.fy=me.fy||1; gPred.dir=me.dir||'s'; gPred.moving=false; gPred.init=true; }
   const canMove=(state===STATE.PLAY||state===STATE.BREAK);   // no input during intro/pause/over
   const k=canMove ? (NET.guestKeys||{}) : {};
   let mx=0,my=0;
@@ -3651,21 +3666,29 @@ function netPredictOwned(rp, me, cur, dt){
   if(k['KeyD']||k['ArrowRight']) mx+=1;
   gPred.animTime+=dt;
   const moving=!!(mx||my);
+  gPred.moving=moving;
   if(moving){
     const l=Math.hypot(mx,my); mx/=l; my/=l;
-    rp.facing.x=mx; rp.facing.y=my;
-    rp.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s');
+    rp.facing.x=mx; rp.facing.y=my; gPred.fx=mx; gPred.fy=my;
+    rp.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s'); gPred.dir=rp.dir;
     const sp=effSpeed(me);                                 // same stat pipeline the host uses
     gPred.x+=mx*sp*dt; gPred.y+=my*sp*dt;
     const tmp={x:gPred.x, y:gPred.y, radius:me.radius}; resolveCollision(tmp); gPred.x=tmp.x; gPred.y=tmp.y;
   }
-  // reconcile against the latest authoritative pose: hard-snap on teleport (round start / revive /
-  // cliff death), otherwise ease toward it so small mispredictions never rubber-band.
+  // reconcile against the latest authoritative pose. The auth pose is a full round-trip behind us
+  // (our input had to reach the host and the snapshot travel back), so during sustained movement our
+  // prediction legitimately LEADS it by ~speed×latency. Easing toward auth every frame would drag that
+  // lead away and reintroduce exactly the latency we're predicting around — so we only correct the part
+  // of the error BEYOND a deadzone. Inside the deadzone (the normal latency lead) we trust prediction
+  // completely → zero felt latency on your own movement. Beyond it we ease (real drift/knockback), and a
+  // big jump hard-snaps (round start / revive / cliff death / gross desync).
   const auth=cur.players[NET.slot];
   if(auth && auth.alive){
-    const dd=Math.hypot(gPred.x-auth.x, gPred.y-auth.y);
-    if(dd>110){ gPred.x=auth.x; gPred.y=auth.y; }
-    else { gPred.x+=(auth.x-gPred.x)*0.12; gPred.y+=(auth.y-gPred.y)*0.12; }
+    const ex=auth.x-gPred.x, ey=auth.y-gPred.y, dd=Math.hypot(ex,ey);
+    const SNAP=150, DEAD=56;
+    if(dd>SNAP){ gPred.x=auth.x; gPred.y=auth.y; }
+    else if(dd>DEAD){ const pull=(dd-DEAD)/dd*0.2; gPred.x+=ex*pull; gPred.y+=ey*pull; }
+    // else: within the latency lead — no correction, no drag.
   }
   // predicted punch animation (visual only — real damage/knockback stay host-authoritative)
   const punch=!!(k['Space']||k['Comma']);
@@ -3797,12 +3820,18 @@ requestAnimationFrame(frame);
   const joinId = new URLSearchParams(location.search).get('r');
 
   // translate a guest's normalized input into the canonical control codes fed into its host-side player
-  function applyRemote(keysObj, d){
+  function applyRemote(guest, d){
+    const keysObj = guest.keys;
     keysObj['ArrowUp']    = !!d.u;
     keysObj['ArrowDown']  = !!d.dn;
     keysObj['ArrowLeft']  = !!d.l;
     keysObj['ArrowRight'] = !!d.r;
     keysObj['Comma']      = !!d.p;
+    // client-authoritative movement: adopt the pose the guest simulated locally (its own player runs
+    // with zero input latency). Attacks/damage stay host-authoritative via the keys above.
+    if(typeof d.x==='number' && typeof d.y==='number'){
+      guest.pose = { x:d.x, y:d.y, fx:d.fx||0, fy:d.fy||1, dir:d.dr||'s', mv:!!d.mv };
+    }
   }
 
   if(joinId){
@@ -3820,11 +3849,15 @@ requestAnimationFrame(frame);
     NET.guestKeys = gk;
     let lastSig = '';
     function inputPacket(){
-      return {
+      const pk = {
         u:  !!(gk['KeyW']||gk['ArrowUp']),    dn: !!(gk['KeyS']||gk['ArrowDown']),
         l:  !!(gk['KeyA']||gk['ArrowLeft']),  r:  !!(gk['KeyD']||gk['ArrowRight']),
         p:  !!(gk['Space']||gk['Comma'])
       };
+      // stream our locally-simulated pose so the host adopts it verbatim (client-authoritative movement,
+      // zero input round-trip). Only once prediction has a real position to report.
+      if(gPred.init){ pk.x=gPred.x; pk.y=gPred.y; pk.fx=gPred.fx; pk.fy=gPred.fy; pk.dr=gPred.dir; pk.mv=gPred.moving?1:0; }
+      return pk;
     }
     // send the instant input changes (force=true for the periodic heartbeat resend);
     // the channel is unreliable, so the heartbeat corrects any dropped/lost key change.
@@ -3854,8 +3887,10 @@ requestAnimationFrame(frame);
     });
     peer.on('error', e => setBanner('Error de conexión: ' + e.type));
 
-    // heartbeat: resend current state so a dropped packet (unreliable channel) can't stick a key
-    setInterval(() => sendInput(true), 120);
+    // stream our pose + input ~30×/s so the host tracks our client-authoritative position smoothly and
+    // any dropped packet (unreliable channel) self-corrects on the next tick. Instant key-toggle sends
+    // (above) still fire immediately so punches/attacks stay crisp.
+    setInterval(() => sendInput(true), 33);
 
   } else {
     // ----------------------------- HOST ------------------------------
@@ -3873,16 +3908,17 @@ requestAnimationFrame(frame);
       NET.conns.push(guest);
       const num = NET.conns.length;   // J2, J3, J4
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(num+1)+' listo)');
-      conn.on('data', d => applyRemote(guest.keys, d));   // guest→host input packets
+      conn.on('data', d => applyRemote(guest, d));   // guest→host input + pose packets
       conn.on('close', () => setStatus('J'+(guest.slot+1)+' se desconectó.'));
       // (snapshots are broadcast from the main loop via netBroadcast — nothing to set up per-connection)
       // if a game is already running, slot this guest in live
       if(inGame()){
-        if(players[guest.slot]) players[guest.slot].keysrc = guest.keys;
+        guest.grace=0.6;   // hold host-authoritative pos briefly until the guest's pose stream catches up
+        if(players[guest.slot]){ players[guest.slot].keysrc = guest.keys; players[guest.slot].netRemote = guest; }
         else if(players.length<4){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
           const p=makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'});
-          p.keysrc=guest.keys;
+          p.keysrc=guest.keys; p.netRemote=guest;
           // Joining mid-round? Sit them out (dead/hidden) until the next round starts, so nobody can
           // leave-and-rejoin at full health to dodge a loss. Joining during the break/intro is fine.
           if(state===STATE.PLAY){ p.pending=true; p.alive=false; p.hp=0; }
