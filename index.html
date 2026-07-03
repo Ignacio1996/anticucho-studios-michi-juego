@@ -3574,6 +3574,7 @@ requestAnimationFrame(frame);
     const peer = new Peer(); NET.peer = peer;
     peer.on('open', () => {
       const conn = peer.connect(joinId, { reliable:false }); NET.conn = conn;
+      conn.on('data', onAuth);   // authoritative position snapshots from the host
       conn.on('open',  () => setBanner('Conectado - esperando vídeo del anfitrión…'));
       conn.on('close', () => setBanner('Anfitrión desconectado.'));
     });
@@ -3592,6 +3593,96 @@ requestAnimationFrame(frame);
         });
       }
     }, 33);
+
+    // ---- client-side prediction: render OUR OWN player locally, in real time ----
+    // We overlay our own sprite on top of the host's video and drive it straight from
+    // local input, so movement feels instant. The host remains authoritative — we ease
+    // our predicted position toward the snapshots it streams (onAuth). Other players and
+    // all hits still come from the (slightly delayed) host video, which is fine.
+    const pcv = document.createElement('canvas');
+    pcv.id = 'predcv';
+    pcv.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:51;pointer-events:none;image-rendering:pixelated;display:none;';
+    document.body.appendChild(pcv);
+    const pctx = pcv.getContext('2d');
+    let auth = null, pred = null, lastPT = 0;
+    const me = { kind:'michi', dir:'s', moving:false, animTime:0, punchAnim:0, radius:15, alive:true, x:0, y:0, facing:{x:0,y:1}, _ph:false };
+
+    function onAuth(d){
+      if(!d || d.t!=='s') return;                 // ignore anything that isn't a state packet
+      if(!d.g){ auth=null; pred=null; return; }    // not in a live round → nothing to predict
+      if(d.kd) me.kind = d.kd;
+      if(d.r)  me.radius = d.r;
+      auth = d;
+      if(!pred) pred = { x:d.ax, y:d.ay };
+    }
+
+    function predFrame(now){
+      requestAnimationFrame(predFrame);
+      let dt=(now-lastPT)/1000; lastPT=now;
+      if(!(dt>0) || dt>0.05) dt=0.03;
+      if(!auth || !auth.g || !pred){ if(pcv.style.display!=='none') pcv.style.display='none'; return; }
+
+      // integrate our own input immediately at the host-provided effective speed
+      let mx=0,my=0;
+      if(gk['KeyW']||gk['ArrowUp'])    my-=1;
+      if(gk['KeyS']||gk['ArrowDown'])  my+=1;
+      if(gk['KeyA']||gk['ArrowLeft'])  mx-=1;
+      if(gk['KeyD']||gk['ArrowRight']) mx+=1;
+      me.moving = !!(mx||my);
+      me.animTime += dt;
+      if(mx||my){
+        const l=Math.hypot(mx,my); mx/=l; my/=l;
+        me.facing.x=mx; me.facing.y=my;
+        me.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s');
+        pred.x += mx*(auth.sp||150)*dt;
+        pred.y += my*(auth.sp||150)*dt;
+      }
+      // local punch animation (cosmetic only — the hit itself is host-authoritative)
+      const punch = !!(gk['Space']||gk['Comma']);
+      if(punch && !me._ph && me.punchAnim<=0) me.punchAnim = (CHARS[me.kind]?CHARS[me.kind].pd:0.3);
+      me._ph = punch;
+      if(me.punchAnim>0) me.punchAnim -= dt;
+
+      // reconcile toward the authoritative position: snap on big deltas (spawn, knockback,
+      // teleport); otherwise ease — harder as the error grows so we don't drift through walls.
+      const ex=auth.ax-pred.x, ey=auth.ay-pred.y, em=Math.hypot(ex,ey);
+      if(em>90){ pred.x=auth.ax; pred.y=auth.ay; }
+      else { const k=Math.min(1, ((me.moving?3:9) + em*0.06)*dt); pred.x+=ex*k; pred.y+=ey*k; }
+      me.alive = !!auth.al;
+
+      drawOverlay();
+    }
+
+    function drawOverlay(){
+      const vpW=innerWidth, vpH=innerHeight, dpr=Math.min(2, window.devicePixelRatio||1);
+      const bw=Math.round(vpW*dpr), bh=Math.round(vpH*dpr);
+      if(pcv.width!==bw||pcv.height!==bh){ pcv.width=bw; pcv.height=bh; }
+      pctx.setTransform(1,0,0,1,0,0);
+      pctx.clearRect(0,0,bw,bh);
+      pcv.style.display='block';
+      if(!me.alive) return;                        // dead → show only the host video
+      const C=CHARS[me.kind]; if(!C) return;
+      // map host canvas (W x H, shown in #remotevideo via object-fit:contain) to the viewport,
+      // then apply the same camera transform the host uses when drawing players.
+      const sc=Math.min(vpW/W, vpH/H)*dpr;
+      const offX=(bw - W*sc)/2, offY=(bh - H*sc)/2;
+      pctx.setTransform(sc,0,0,sc, offX - auth.cx*sc, offY - auth.cy*sc);
+      const p=me; p.x=pred.x; p.y=pred.y; const r=p.radius;
+      pctx.fillStyle='rgba(0,0,0,0.25)';
+      pctx.beginPath(); pctx.ellipse(p.x,p.y+r-2,r,r*0.4,0,0,TAU); pctx.fill();
+      if(C.loaded && C.loaded()){
+        const fr=charFrame(p), CELL=C.cell, DH=C.dh, s2=DH/CELL.h, DW=CELL.w*s2;
+        const dx=p.x-DW/2, dy=p.y+r-DH+5;
+        pctx.save();
+        if(fr.flip){ pctx.translate(p.x,0); pctx.scale(-1,1); pctx.translate(-p.x,0); }
+        if(fr.img && fr.img.naturalWidth) pctx.drawImage(fr.img,dx,dy,DW,DH);
+        pctx.restore();
+      } else {
+        pctx.fillStyle=C.color||'#4a78c0'; pctx.fillRect(p.x-r,p.y-r,r*2,r*2);
+      }
+    }
+
+    requestAnimationFrame(predFrame);
 
   } else {
     // ----------------------------- HOST ------------------------------
@@ -3646,6 +3737,26 @@ requestAnimationFrame(frame);
       }
     });
     peer.on('error', e => setStatus('Error PeerJS: ' + e.type));
+
+    // Stream each guest its OWN authoritative position + camera at ~30Hz so the
+    // guest can predict its own movement locally (client-side prediction). The host
+    // stays authoritative for hits and everyone else's positions.
+    setInterval(() => {
+      const playing = state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.DYING;
+      for(const guest of NET.conns){
+        if(!guest.conn || !guest.conn.open) continue;
+        const p = players[guest.slot];
+        try{
+          if(playing && p){
+            guest.conn.send({ t:'s', g:1, ax:p.x, ay:p.y, cx:camX, cy:camY,
+                              al:p.alive?1:0, kd:p.kind, r:p.radius, sp:effSpeed(p) });
+          } else {
+            guest.conn.send({ t:'s', g:0 });
+          }
+        }catch(e){}
+      }
+    }, 33);
+
     if(copyBtn && linkBox) copyBtn.onclick = () => {
       linkBox.select(); try{ document.execCommand('copy'); }catch(e){}
       copyBtn.textContent='¡Copiado!'; setTimeout(()=>copyBtn.textContent='Copiar',1500);
