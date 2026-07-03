@@ -761,6 +761,7 @@ function makePlayer(kind, x, y, controls){
     dir:'s', moving:false, animTime:0,
     cooldown: 0, punchAnim: 0, hitFlash:0, shieldFlash:0,
     alive: true, reviveProgress:0, oro:0, oroCharge:0, wasPunch:false, rioGrabbed:false, fell:false, fallT:0,
+    pending:false,   // online: joined mid-round → sits out until the next round begins (no full-HP mid-fight join)
   };
 }
 let players = [];
@@ -1527,7 +1528,7 @@ function startBreak(){
   // Tierra/Piedra stacks expire at the end of each round
   for(const p of players){ p.tierra=0; p.piedra=0; p.rioGrabbed=false; }
   // co-op: fallen players return for the countdown (can grab Apuchis) at their cross
-  { const anchor=players.find(pp=>pp.alive); for(const p of players){ if(!p.alive){ if(anchor){ p.x=anchor.x+(p===players[0]?-40:40); p.y=anchor.y; } p.alive=true; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p); spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,'RENACE','#aef7c2'); } } }
+  { const anchor=players.find(pp=>pp.alive); for(const p of players){ if(!p.alive){ if(anchor){ p.x=anchor.x+(p===players[0]?-40:40); p.y=anchor.y; } const joining=p.pending; p.pending=false; p.alive=true; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p); spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,joining?'¡ENTRA!':'RENACE','#aef7c2'); } } }
   spawnBreakItems();
   const bonus = 20 + round*5;   // round completion bonus
   score += bonus;
@@ -2111,6 +2112,7 @@ function michiFrame(p){
   return {img:[S.ew1,S.ew2,S.ew3][idx], flip:(d==='w')};
 }
 function drawPlayer(p){
+  if(p.pending) return;   // online: joined mid-round, not in play yet — draw nothing until they enter next round
   if(!p.alive){
     if(p.fell){
       if(p.fallT>0){ const k=clamp(p.fallT/0.5,0,1), C=CHARS[p.kind]; if(C.loaded()){ const fr=charFrame(p), CELL=C.cell, DH=C.dh*k, scale=DH/CELL.h, DW=CELL.w*scale, top=p.y-DH+p.radius+(1-k)*30, dx=p.x-DW/2; ctx.save(); ctx.globalAlpha=k; if(fr.flip){ctx.translate(p.x,0);ctx.scale(-1,1);ctx.translate(-p.x,0);} ctx.drawImage(fr.img,dx,top,DW,DH); ctx.restore(); } }
@@ -2862,6 +2864,14 @@ function drawHUD(){
     const w=200;
     ctx.fillStyle=p.color; ctx.font='bold 12px Courier New';
     ctx.fillText(p.name, px, 14);
+    if(p.pending){
+      // Joined mid-round \u2014 waiting for the next round to enter.
+      ctx.fillStyle='rgba(255,255,255,0.12)'; ctx.fillRect(px,19,w,12);
+      ctx.strokeStyle='#ffe14a'; ctx.lineWidth=1; ctx.strokeRect(px,19,w,12);
+      ctx.fillStyle='#ffe14a'; ctx.font='9px Courier New'; ctx.textAlign='center';
+      ctx.fillText('ENTRA EN LA PR\u00d3XIMA RONDA', px+w/2, 29); ctx.textAlign='left';
+      px += w+40; continue;
+    }
     drawBar(px, 19, w, 12, p.alive?p.hp/p.maxhp:0, '#ff5a4a');
     ctx.fillStyle='#fff'; ctx.font='10px Courier New';
     ctx.fillText(Math.ceil(p.hp)+'/'+p.maxhp, px+4, 29);
@@ -3501,6 +3511,7 @@ function _frameBody(now){
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
   if(state===STATE.INTRO) safe('introui',drawIntroUI);
   if(state===STATE.PAUSE) safe('pause',drawPause);
+  if(NET.role==='guest' && players[NET.slot] && players[NET.slot].pending) safe('joinwait',drawGuestJoinWaiting);
 
   ctx.restore();
   requestAnimationFrame(frame);
@@ -3567,7 +3578,7 @@ function netSerPlayer(p){
     alive:p.alive, fell:p.fell, fallT:p.fallT, deathAnim:(p.deathAnim==null?null:p.deathAnim), reviveProgress:p.reviveProgress||0,
     punchAnim:p.punchAnim, hitFlash:p.hitFlash, shieldFlash:p.shieldFlash, shields:p.shields,
     special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0,
-    tierra:p.tierra, piedra:p.piedra, fx:p.facing.x, fy:p.facing.y };
+    tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, fx:p.facing.x, fy:p.facing.y };
 }
 function netSerializeSnapshot(){
   const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0), estatic={}, ids=new Set();
@@ -3623,7 +3634,7 @@ function netApplyMeta(s){
 function netRenderPlayer(sp){
   return { kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
     dir:sp.dir, moving:sp.moving, animTime:sp.animTime, hp:sp.hp, maxhp:sp.maxhp, speed:sp.speed, cd:sp.cd,
-    alive:sp.alive, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, reviveProgress:sp.reviveProgress,
+    alive:sp.alive, pending:sp.pending, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, reviveProgress:sp.reviveProgress,
     punchAnim:sp.punchAnim, hitFlash:sp.hitFlash, shieldFlash:sp.shieldFlash, shields:sp.shields,
     special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge,
     tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy} };
@@ -3752,6 +3763,20 @@ function drawGuestWaiting(){
   ctx.fillText((NET.conn && NET.conn.open) ? 'Esperando al anfitrión…' : 'Conectando con el anfitrión…', W/2, H/2+6);
   ctx.textAlign='left';
 }
+// Guest joined while a round was in progress: show a banner until the next round brings them in.
+function drawGuestJoinWaiting(){
+  ctx.save();
+  const bw=Math.min(460,W-40), bh=74, bx=(W-bw)/2, by=H-bh-24;
+  ctx.fillStyle='rgba(15,11,8,0.82)'; ctx.strokeStyle='#ffe14a'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.rect(bx,by,bw,bh); ctx.fill(); ctx.stroke();
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffe14a'; ctx.font='bold 18px Courier New';
+  ctx.fillText('ENTRARÁS EN LA PRÓXIMA RONDA', W/2, by+30);
+  ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
+  ctx.fillText('Espera a que termine esta ronda para unirte…', W/2, by+52);
+  ctx.textAlign='left';
+  ctx.restore();
+}
 
 try{ initAudio(); }catch(e){}
 requestAnimationFrame(frame);
@@ -3857,7 +3882,11 @@ requestAnimationFrame(frame);
         else if(players.length<4){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
           const p=makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'});
-          p.keysrc=guest.keys; players.push(p);
+          p.keysrc=guest.keys;
+          // Joining mid-round? Sit them out (dead/hidden) until the next round starts, so nobody can
+          // leave-and-rejoin at full health to dodge a loss. Joining during the break/intro is fine.
+          if(state===STATE.PLAY){ p.pending=true; p.alive=false; p.hp=0; }
+          players.push(p);
         }
       }
     });
