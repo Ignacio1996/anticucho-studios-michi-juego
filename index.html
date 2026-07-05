@@ -3436,9 +3436,12 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
+const BUILD='v2026-07-05.2';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
+  ctx.textAlign='left'; ctx.fillStyle='rgba(255,233,176,0.5)'; ctx.font='11px Courier New';
+  ctx.fillText(BUILD, 10, H-10);
   if(mainMenuT<4){ return; }
   const opts=['MAPAS','JUGAR ONLINE','CÓMO JUGAR'];
   const pw=440, ph=200, px=W/2-pw/2, py=H-250;
