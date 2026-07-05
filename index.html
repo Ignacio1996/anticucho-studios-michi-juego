@@ -3107,7 +3107,18 @@ function girlFrame(e){
 const LLAMA_CELL={w:152,h:156};
 const LLAMA_SRC={"ew1": "assets/img_240.png", "ew2": "assets/img_241.png", "ew3": "assets/img_242.png", "esp1": "assets/img_243.png", "esp2": "assets/img_244.png", "nw1": "assets/img_245.png", "nw2": "assets/img_246.png", "nw3": "assets/img_247.png", "nsp1": "assets/img_248.png", "nsp2": "assets/img_249.png", "sw1": "assets/img_250.png", "sw2": "assets/img_251.png", "sw3": "assets/img_252.png", "ssp1": "assets/img_253.png", "ssp2": "assets/img_254.png"};
 const LLAMA_IMG={}; for(const k in LLAMA_SRC){ const im=new Image(); im.src=LLAMA_SRC[k]; LLAMA_IMG[k]=im; }
-const LLAMA_COLORS=[[120,82,46],[238,238,236],[223,203,166],[196,158,52],[46,46,52],[158,158,162]]; let LLAMA_VARC=null;
+// Color variants (tourist shirts/jeans/hair, llama + guinea fur) are PRE-GENERATED PNGs in
+// assets/var_*.png, loaded like any other sprite. They used to be recolored at runtime with
+// getImageData, but browsers block canvas pixel reads when the game is opened from file://
+// (tainted canvas), which broke every variant. The build*Variants functions below are kept as
+// the offline generators that produced those assets — they are never called at runtime.
+function loadVariantSets(prefix, keys, n){
+  const out=[];
+  for(let k=0;k<n;k++){ const set={}; for(const key of keys){ const im=new Image(); im.src='assets/var_'+prefix+'_'+k+'_'+key+'.png'; set[key]=im; } out.push(set); }
+  return out;
+}
+const LLAMA_COLORS=[[120,82,46],[238,238,236],[223,203,166],[196,158,52],[46,46,52],[158,158,162]];
+let LLAMA_VARC=loadVariantSets('llama', Object.keys(LLAMA_SRC), 6);
 function buildLlamaVariants(){
   // publish only on full success — getImageData throws on file:// (tainted canvas) and a
   // half-built table left the llamas invisible
@@ -3148,7 +3159,8 @@ function fireSpit(e,tgt){
 const TOUR_NEW={"man1": {"cell": {"w": 118, "h": 150}, "src": {"ew1": "assets/img_255.png", "ew2": "assets/img_256.png", "ew3": "assets/img_257.png", "nw1": "assets/img_258.png", "nw2": "assets/img_259.png", "sw1": "assets/img_260.png", "sw2": "assets/img_261.png", "d1": "assets/img_262.png", "d2": "assets/img_263.png", "d3": "assets/img_264.png"}, "dn": 3}, "man2": {"cell": {"w": 133, "h": 150}, "src": {"ew1": "assets/img_265.png", "ew2": "assets/img_266.png", "ew3": "assets/img_267.png", "nw1": "assets/img_268.png", "nw2": "assets/img_269.png", "sw1": "assets/img_270.png", "sw2": "assets/img_271.png", "d1": "assets/img_272.png", "d2": "assets/img_273.png", "d3": "assets/img_274.png"}, "dn": 3}, "woman1": {"cell": {"w": 136, "h": 150}, "src": {"ew1": "assets/img_275.png", "ew2": "assets/img_276.png", "ew3": "assets/img_277.png", "nw1": "assets/img_278.png", "nw2": "assets/img_279.png", "sw1": "assets/img_280.png", "sw2": "assets/img_281.png", "d1": "assets/img_282.png", "d2": "assets/img_283.png", "d3": "assets/img_284.png"}, "dn": 3}};
 const TOURDATA={girl:{cell:GIRL_CELL,img:GIRL_IMG,dn:4}};
 for(const _t in TOUR_NEW){ const _im={}; for(const _k in TOUR_NEW[_t].src){ const _i=new Image(); _i.src=TOUR_NEW[_t].src[_k]; _im[_k]=_i; } TOURDATA[_t]={cell:TOUR_NEW[_t].cell,img:_im,dn:TOUR_NEW[_t].dn}; }
-const TOUR_TYPES=['girl','man1','man2','woman1']; let TOUR_VARC={}, TOUR_TRIED={}, LLAMA_TRIED=false;
+const TOUR_TYPES=['girl','man1','man2','woman1'];
+const TOUR_VARC={}; for(const _t of TOUR_TYPES){ TOUR_VARC[_t]=loadVariantSets('tour_'+_t, Object.keys(TOURDATA[_t].img), 8); }
 function allLoaded(m){ for(const k in m){ if(!m[k] || !m[k].naturalWidth) return false; } return true; }
 function buildTourVariants(type){
   const T=TOURDATA[type], arr=[], BV={1:0.5,2:0.6,3:0.16};
@@ -3178,7 +3190,8 @@ function tourFrame(e){
 const GUINEA_CELL={w:154,h:120};
 const GUINEA_SRC={"ew1": "assets/img_285.png", "ew2": "assets/img_286.png", "nw1": "assets/img_287.png", "nw2": "assets/img_288.png", "sw1": "assets/img_289.png", "sw2": "assets/img_290.png", "sw3": "assets/img_291.png"};
 const GUINEA_IMG={}; for(const k in GUINEA_SRC){ const im=new Image(); im.src=GUINEA_SRC[k]; GUINEA_IMG[k]=im; }
-const GUINEA_COLORS=[[42,42,46],[200,160,44],[150,150,156]]; let GUINEA_VARC=null, GUINEA_TRIED=false;
+const GUINEA_COLORS=[[42,42,46],[200,160,44],[150,150,156]];
+let GUINEA_VARC=loadVariantSets('guinea', Object.keys(GUINEA_SRC), 3);
 function buildGuineaVariants(){
   // build into a local list and only publish on full success: getImageData throws a canvas-taint
   // SecurityError when the game runs from file://, and a half-built table made the cuyes invisible
@@ -3215,9 +3228,9 @@ function drawEnemy(e){
   else if(e.skin==='archer'){ fr=arFrame(e); CELL=AR_CELL; dhm=3.7; }
   else if(e.skin==='guachi'){ fr=guachiFrame(e); CELL=GUACHI_CELL; dhm=3.4; }
   else if(e.skin==='supay'){ fr=supayEnemyFrame(e); CELL=SUPAY_CELL; dhm=3.7; }
-  else if(e.skin==='tourist'){ const T=TOURDATA[e.ttype]||TOURDATA.girl, tf=tourFrame(e); let tim=T.img[tf.key]; if(!TOUR_VARC[e.ttype] && !TOUR_TRIED[e.ttype] && allLoaded(T.img)){ TOUR_TRIED[e.ttype]=true; try{ buildTourVariants(e.ttype); }catch(_e){} } if(TOUR_VARC[e.ttype]) tim=TOUR_VARC[e.ttype][e.gvar||0][tf.key]; fr={img:tim, flip:tf.flip}; CELL=T.cell; dhm=3.5; }
-  else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0){ if(!GUINEA_VARC && !GUINEA_TRIED && allLoaded(GUINEA_IMG)){ GUINEA_TRIED=true; try{ buildGuineaVariants(); }catch(_e){} } if(GUINEA_VARC && GUINEA_VARC[e.gpvar-1] && GUINEA_VARC[e.gpvar-1][gf.key]) gim=GUINEA_VARC[e.gpvar-1][gf.key]; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
-  else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; if(!LLAMA_VARC && !LLAMA_TRIED && allLoaded(LLAMA_IMG)){ LLAMA_TRIED=true; try{ buildLlamaVariants(); }catch(_e){} } if(LLAMA_VARC && LLAMA_VARC[e.lvar||0] && LLAMA_VARC[e.lvar||0][lf.key]) lim=LLAMA_VARC[e.lvar||0][lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
+  else if(e.skin==='tourist'){ const T=TOURDATA[e.ttype]||TOURDATA.girl, tf=tourFrame(e); let tim=T.img[tf.key]; const tv=TOUR_VARC[e.ttype]; if(tv && tv[e.gvar||0] && tv[e.gvar||0][tf.key] && tv[e.gvar||0][tf.key].naturalWidth) tim=tv[e.gvar||0][tf.key]; fr={img:tim, flip:tf.flip}; CELL=T.cell; dhm=3.5; }
+  else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0 && GUINEA_VARC[e.gpvar-1]){ const vi=GUINEA_VARC[e.gpvar-1][gf.key]; if(vi && vi.naturalWidth) gim=vi; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
+  else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; const lv=LLAMA_VARC[e.lvar||0]; if(lv && lv[lf.key] && lv[lf.key].naturalWidth) lim=lv[lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
   else { fr=chuFrame(e); CELL=CHU_CELL; dhm=2.9; }
   const ready = fr.img && (fr.img.naturalWidth||fr.img.width);
   let img=fr.img;
@@ -3438,7 +3451,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-05.4';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-05.5';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
