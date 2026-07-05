@@ -1357,8 +1357,18 @@ const GEAR_DEF = {
   muro:     { label:'PAREDES INCAS', color:'#d8d2c2', count:20 },
   torreta:  { label:'TORRETA',       color:'#caa66a', count:1  },
 };
+// shuffled bag: the 3 boss rounds of a run deal out all 3 powers in random order, so a full
+// playthrough always sees each power once (pure 1/3 rolls could skip one for games in a row)
+let gearBag=[];
+function nextGearDrop(){
+  if(!gearBag.length){
+    gearBag=['dinamita','muro','torreta'];
+    for(let i=gearBag.length-1;i>0;i--){ const j=randi(0,i); const t=gearBag[i]; gearBag[i]=gearBag[j]; gearBag[j]=t; }
+  }
+  return gearBag.pop();
+}
 function spawnBossDrop(x,y){
-  const type=['dinamita','muro','torreta'][randi(0,2)];
+  const type=nextGearDrop();
   const px=clamp(x,70,WORLD_W-70);
   let py;
   if(currentMap==='machu') py=clamp(y,MACHU_SKY+40,WORLD_H-90);
@@ -3451,7 +3461,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-05.5';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-05.6';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3880,7 +3890,7 @@ function startGame(){
   cliffs = (currentMap==='templo')?CLIFFS_TEMPLO:[];
   round=0; score=0; particles.length=0; enemies.length=0;
   apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
-  bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0;
+  bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
   players=[];
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
