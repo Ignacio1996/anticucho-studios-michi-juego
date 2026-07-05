@@ -3436,7 +3436,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-05.2';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-05.3';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3701,7 +3701,7 @@ function drawLobby(){
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
   ctx.fillText('Cópialo con el botón "Copiar" del recuadro arriba a la derecha ↗', W/2, 202);
   const n = 1 + NET.conns.length;
-  const rows = [{t:'J1 — TÚ (anfitrión)', on:true}];
+  const rows = [{t:'J1 — anfitrión', on:true}];
   for(let i=0;i<3;i++){ const c = i < NET.conns.length; rows.push({t:'J'+(i+2)+' — '+(c?'conectado':'esperando…'), on:c}); }
   rows.forEach((r,i)=>{
     const yy=276+i*44;
