@@ -952,7 +952,13 @@ function updateLeaves(dt){
     const l=leaves[i];
     l.x+=l.vx*dt; l.y+=l.vy*dt; l.life-=dt; if(!l.arrow && !l.fire && !l.spit) l.spin+=dt*7;
     let gone = l.life<=0 || l.x<-20||l.x>WORLD_W+20||l.y<-20||l.y>WORLD_H+20;
-    for(const p of players){ if(!p.alive) continue;
+    // Paredes Incas stop rocks/arrows/fireballs/spit — the projectile damages the block instead
+    if(!gone && incaWalls.length){
+      for(const w of incaWalls){
+        if(circleRectCollide(l.x,l.y,7,w)){ hitWall(w,l.dmg||8); spark(l.x,l.y,'#c9c2b2',5,80); gone=true; break; }
+      }
+    }
+    if(!gone) for(const p of players){ if(!p.alive) continue;
       const _py=p.y+(currentMap==='machu'?machuElev(p.x):0);
       if(dist(l.x,l.y,p.x,_py) < p.radius+9){
         p.hitFlash=1.0; cameraShake=3;
@@ -1337,6 +1343,10 @@ function killEnemy(e,p){
 // gadget pickup. Whoever grabs it first keeps it (single owner, also online). All gadgets are placed
 // with the gear key: F for J1, . (Period) for everyone else.
 const GRID = 40;                 // invisible placement grid for the Inca wall blocks
+// Wall blocks take real damage like a player would: melee enemies hit for their e.dmg (normal 8,
+// fast 5, large 20), projectiles for their l.dmg, bosses smash 80 per touch. 240 HP = 30 hits
+// from a base normal enemy (double the original 15-hit prototype).
+const WALL_HP = 240;
 const bossDrops = [];            // {id,type,x,y,bob}
 const bombs = [];                // Rata Blanca dynamite: {id,owner(player idx),x,y,t}
 const incaWalls = [];            // wall blocks; each is ALSO pushed into `obstacles` so collision/pathing just work
@@ -1393,12 +1403,12 @@ function useGear(p){
     if(placeTurret(p)){ p.gearCount--; if(p.gearCount<=0) p.gear='none'; }
   }
 }
-// Rata Blanca explosion = exactly the Gold-special lightning: radius 180, non-boss enemies die
-// outright, bosses lose the same maxhp fraction the ORO blast takes.
+// Rata Blanca explosion = the Gold-special lightning but slightly smaller (150 vs 180) so it
+// isn't overpowered: non-boss enemies die outright, bosses lose the same maxhp fraction.
 function explodeBomb(b){
   for(let i=enemies.length-1;i>=0;i--){
     const e=enemies[i]; if(e.dead) continue;
-    if(dist(b.x,b.y,e.x,e.y) < 180+e.radius){
+    if(dist(b.x,b.y,e.x,e.y) < 150+e.radius){
       if(e.boss){ e.hp-=e.maxhp*(e.giant?0.12:0.35); } else { e.hp=0; }
       e.hitFlash=0.12; e.stagger=0.3;
       const a=Math.atan2(e.y-b.y,e.x-b.x);
@@ -1407,8 +1417,8 @@ function explodeBomb(b){
       if(e.hp<=0) killEnemy(e,null);
     }
   }
-  fx_effects.push({kind:'zap', x:b.x, y:b.y, r:180, life:0.3, max:0.3, col:'#ff9a2a'});
-  fx_effects.push({kind:'shock', x:b.x, y:b.y, r:180, life:0.35, max:0.35});
+  fx_effects.push({kind:'zap', x:b.x, y:b.y, r:150, life:0.3, max:0.3, col:'#ff9a2a'});
+  fx_effects.push({kind:'shock', x:b.x, y:b.y, r:150, life:0.35, max:0.35});
   playZapSound(); cameraShake=10;
 }
 function rectsOverlap(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
@@ -1419,18 +1429,23 @@ function wallAreaFree(rect, placer){
   else { if(rect.x<8||rect.y<8||rect.x+rect.w>WORLD_W-8||rect.y+rect.h>WORLD_H-8) return false; }
   for(const o of obstacles){ if(rectsOverlap(rect,o)) return false; }
   for(const pl of players){ if(pl!==placer && pl.alive && circleRectCollide(pl.x,pl.y,pl.radius+2,rect)) return false; }
-  for(const e of enemies){ if(!e.dead && circleRectCollide(e.x,e.y,e.radius,rect)) return false; }
   for(const t of turrets){ if(circleRectCollide(t.x,t.y,18,rect)) return false; }
   if(cliffs.length){ for(const cx2 of [rect.x+4,rect.x+rect.w-4]) for(const cy2 of [rect.y+4,rect.y+rect.h-4]){ if(inCliff(cx2,cy2)) return false; } }
   return true;
 }
-function placeWall(p){
-  // snap to the invisible GRID cell one block ahead of the player's facing direction
+// the GRID cell one block ahead of the player's facing direction — shared by placement and the aim overlay
+function wallCellFor(p){
   const tx=p.x+p.facing.x*GRID, ty=p.y+p.facing.y*GRID;
-  const rect={x:Math.floor(tx/GRID)*GRID, y:Math.floor(ty/GRID)*GRID, w:GRID, h:GRID, t:'incaWall', hp:15, maxhp:15, id:_entId++};
+  return {x:Math.floor(tx/GRID)*GRID, y:Math.floor(ty/GRID)*GRID};
+}
+function placeWall(p){
+  const c=wallCellFor(p);
+  const rect={x:c.x, y:c.y, w:GRID, h:GRID, t:'incaWall', hp:WALL_HP, maxhp:WALL_HP, id:_entId++};
   if(!wallAreaFree(rect,p)){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#d8d2c2'); return false; }
   incaWalls.push(rect); obstacles.push(rect);
   resolveCollision(p);   // placing while overlapping the new block nudges the builder out
+  // enemies standing on the spot get shoved aside so the block always fits
+  for(const e of enemies){ if(!e.dead && circleRectCollide(e.x,e.y,e.radius,rect)) resolveCollision(e); }
   spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); playPickup();
   return true;
 }
@@ -1514,7 +1529,7 @@ function updateGear(dt){
   for(const e of enemies){ if(!e.boss||e.dead) continue;
     if(e._wallCd>0){ e._wallCd-=dt; continue; }
     for(const w of incaWalls){
-      if(circleRectCollide(e.x,e.y,(e.footR||e.radius)+6,w)){ e._wallCd=0.5; hitWall(w,5); cameraShake=5; break; }
+      if(circleRectCollide(e.x,e.y,(e.footR||e.radius)+6,w)){ e._wallCd=0.5; hitWall(w,80); cameraShake=5; break; }
     }
   }
 }
@@ -1565,7 +1580,7 @@ function drawBombs(){
   }
 }
 function drawIncaBlock(w){
-  const f=clamp(w.hp/(w.maxhp||15),0,1);
+  const f=clamp(w.hp/(w.maxhp||WALL_HP),0,1);
   ctx.fillStyle='#b8ad94'; ctx.fillRect(w.x,w.y,w.w,10);                    // sunlit top face
   ctx.fillStyle='#a0937c'; ctx.fillRect(w.x,w.y+10,w.w,w.h-10);            // front face
   ctx.strokeStyle='rgba(70,60,44,0.55)'; ctx.lineWidth=1.5;                // inca masonry joints
@@ -1584,6 +1599,32 @@ function drawIncaBlock(w){
   if(w.hp<w.maxhp){
     ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(w.x+4,w.y-8,w.w-8,4);
     ctx.fillStyle='#d8d2c2'; ctx.fillRect(w.x+4,w.y-8,(w.w-8)*f,4);
+  }
+}
+// While a player carries Paredes Incas, show a very faint red grid around them plus a clearer
+// red square on the exact cell where the next block will land (grey when the spot is invalid).
+function drawWallGrid(){
+  if(state!==STATE.PLAY && state!==STATE.BREAK) return;
+  for(const p of players){
+    if(!p.alive || p.pending || p.gear!=='muro' || !(p.gearCount>0)) continue;
+    const oy=(currentMap==='machu')?machuElev(p.x):0;
+    ctx.save(); if(oy) ctx.translate(0,oy);
+    const c0x=(Math.floor(p.x/GRID)-3)*GRID, c0y=(Math.floor(p.y/GRID)-3)*GRID, span=7*GRID;
+    ctx.strokeStyle='rgba(255,70,50,0.16)'; ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let i=0;i<=7;i++){
+      ctx.moveTo(c0x+i*GRID, c0y); ctx.lineTo(c0x+i*GRID, c0y+span);
+      ctx.moveTo(c0x, c0y+i*GRID); ctx.lineTo(c0x+span, c0y+i*GRID);
+    }
+    ctx.stroke();
+    const c=wallCellFor(p);
+    const ok=wallAreaFree({x:c.x, y:c.y, w:GRID, h:GRID}, p);
+    const pulse=0.75+0.25*Math.sin(time*6);
+    ctx.fillStyle= ok?('rgba(255,70,50,'+(0.14*pulse)+')'):'rgba(130,130,130,0.14)';
+    ctx.fillRect(c.x,c.y,GRID,GRID);
+    ctx.strokeStyle= ok?('rgba(255,90,64,'+(0.55*pulse)+')'):'rgba(160,160,160,0.4)'; ctx.lineWidth=2;
+    ctx.strokeRect(c.x+1,c.y+1,GRID-2,GRID-2);
+    ctx.restore();
   }
 }
 function drawTurret(t){
@@ -1768,10 +1809,13 @@ function updateEnemies(dt){
           const fd=flowDir(e);
           let los=true; const stp=Math.min(40,Math.max(3,Math.floor(d/12)));
           for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; let hit=false; for(const o of obstacles){ if(tx>o.x-6&&tx<o.x+o.w+6&&ty>o.y-6&&ty<o.y+o.h+6){hit=true;break;} } if(!hit && cliffs.length && inCliff(tx,ty)) hit=true; if(hit){los=false;break;} }
-          if(fd && !los){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
+          // hysteresis: once an enemy starts getting stuck, trust the flow field even if line of
+          // sight flickers open at a corner — stops the straight-line/flow oscillation on stairs
+          if(fd && (!los || (e._stuckT||0)>0.3)){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
         } else {
           const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il;
         }
+        if(e._detourT>0){ e._detourT-=dt; dx=e._detourX; dy=e._detourY; }   // sidestep around geometry
         let sp=e.speed;
         if(e.charge){ // fast variant: brief dash
           if(e.charging>0){ e.charging-=dt; sp=e.speed*2.3; }
@@ -1798,20 +1842,38 @@ function updateEnemies(dt){
     resolveCollision(e);
     if(cliffs.length && inCliff(e.x,e.y)){ spark(e.x,e.y,'#6a5a40',16,150); cameraShake=4; enemies.splice(i,1); continue; }
 
-    // Paredes Incas: an enemy that can't advance AND has a wall between it and the player
-    // pounds the nearest block (1 hit per swing, 15 hits per block). The moment a path opens
-    // it stops moving into the wall, un-sticks, and resumes the chase.
-    if(incaWalls.length && tgt){
+    // stuck detection: chasing but barely advancing (pressed against walls, stairs, cliff pockets)
+    if(tgt){
       const mvd=(e._lx==null)?1e9:dist(e.x,e.y,e._lx,e._ly);
       if(e.moving && mvd < e.speed*dt*0.35) e._stuckT=(e._stuckT||0)+dt;
       else e._stuckT=Math.max(0,(e._stuckT||0)-dt*2);
-      if(e._stuckT>0.7 && e.atkcd<=0 && segIncaBlocked(e.x,e.y,tgt.x,tgt.y)){
+      // Paredes Incas: walled off with no path -> pound the nearest block (damage = its melee dmg,
+      // like hitting a player). The moment a path opens it un-sticks and resumes the chase.
+      let atWall=false;
+      if(incaWalls.length && e._stuckT>0.7 && segIncaBlocked(e.x,e.y,tgt.x,tgt.y)){
         let w=null, wd=1e9;
         for(const iw of incaWalls){ const nx=clamp(e.x,iw.x,iw.x+iw.w), ny=clamp(e.y,iw.y,iw.y+iw.h); const dd=dist(e.x,e.y,nx,ny); if(dd<wd){wd=dd;w=iw;} }
         if(w && wd<e.radius+12){
-          e.atkcd=0.6; if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH;
-          hitWall(w,1);
+          atWall=true;
+          if(e.atkcd<=0){ e.atkcd=0.6; if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; hitWall(w,e.dmg||8); }
         }
+      }
+      // stuck on map geometry (terrace stairs, ruin corners, cliff pockets): sidestep along the
+      // obstacle for a moment to find a way around instead of grinding against it forever
+      if(!atWall && e._stuckT>0.8 && !(e._detourT>0)){
+        const ax=tgt.x-e.x, ay=tgt.y-e.y, al=Math.hypot(ax,ay)||1;
+        let px=-ay/al, py=ax/al;   // perpendicular to the chase direction
+        const open=(sx,sy)=>{ const qx=e.x+sx*52, qy=e.y+sy*52;
+          if(qx<20||qx>WORLD_W-20||qy<20||qy>WORLD_H-20) return false;
+          if(cliffs.length && inCliff(qx,qy)) return false;
+          for(const o of obstacles){ if(qx>o.x-e.radius&&qx<o.x+o.w+e.radius&&qy>o.y-e.radius&&qy<o.y+o.h+e.radius) return false; }
+          return true; };
+        const a1=open(px,py), a2=open(-px,-py);
+        if(a1 && a2){ if(e._detourSgn==null) e._detourSgn=(Math.random()<0.5?1:-1); if(e._detourSgn<0){ px=-px; py=-py; } }
+        else if(a2 && !a1){ px=-px; py=-py; e._detourSgn=-1; }
+        else e._detourSgn=1;
+        e._detourX=px; e._detourY=py; e._detourT=0.7;
+        e._stuckT=0.45;   // keep it warm so the next sidestep triggers quickly if still blocked
       }
     }
     e._lx=e.x; e._ly=e.y;
@@ -3045,7 +3107,9 @@ const LLAMA_SRC={"ew1": "assets/img_240.png", "ew2": "assets/img_241.png", "ew3"
 const LLAMA_IMG={}; for(const k in LLAMA_SRC){ const im=new Image(); im.src=LLAMA_SRC[k]; LLAMA_IMG[k]=im; }
 const LLAMA_COLORS=[[120,82,46],[238,238,236],[223,203,166],[196,158,52],[46,46,52],[158,158,162]]; let LLAMA_VARC=null;
 function buildLlamaVariants(){
-  LLAMA_VARC=[];
+  // publish only on full success — getImageData throws on file:// (tainted canvas) and a
+  // half-built table left the llamas invisible
+  const out=[];
   for(let k=0;k<LLAMA_COLORS.length;k++){
     const tg=LLAMA_COLORS[k], set={};
     for(const key in LLAMA_IMG){
@@ -3055,8 +3119,9 @@ function buildLlamaVariants(){
       for(let i=0;i<N;i+=4){ if(d[i+3]<8) continue; const r=d[i],g=d[i+1],b=d[i+2]; if(Math.max(r,g,b)/255<=0.20) continue; const f=(0.299*r+0.587*g+0.114*b)/255/0.9; d[i]=Math.min(255,Math.round(tg[0]*f)); d[i+1]=Math.min(255,Math.round(tg[1]*f)); d[i+2]=Math.min(255,Math.round(tg[2]*f)); }
       cx.putImageData(id,0,0); set[key]=cv;
     }
-    LLAMA_VARC.push(set);
+    out.push(set);
   }
+  LLAMA_VARC=out;
 }
 function llamaFrame(e){
   const d=e.dir;
@@ -3113,7 +3178,9 @@ const GUINEA_SRC={"ew1": "assets/img_285.png", "ew2": "assets/img_286.png", "nw1
 const GUINEA_IMG={}; for(const k in GUINEA_SRC){ const im=new Image(); im.src=GUINEA_SRC[k]; GUINEA_IMG[k]=im; }
 const GUINEA_COLORS=[[42,42,46],[200,160,44],[150,150,156]]; let GUINEA_VARC=null, GUINEA_TRIED=false;
 function buildGuineaVariants(){
-  GUINEA_VARC=[];
+  // build into a local list and only publish on full success: getImageData throws a canvas-taint
+  // SecurityError when the game runs from file://, and a half-built table made the cuyes invisible
+  const out=[];
   for(let k=0;k<GUINEA_COLORS.length;k++){
     const tg=GUINEA_COLORS[k], set={};
     for(const key in GUINEA_IMG){
@@ -3124,8 +3191,9 @@ function buildGuineaVariants(){
         if(hs[0]>=8 && hs[0]<=46 && hs[1]>0.42 && hs[2]>0.18 && hs[2]<0.80){ const f=(0.299*r+0.587*g+0.114*b)/255/0.42; d[i]=Math.min(255,Math.round(tg[0]*f)); d[i+1]=Math.min(255,Math.round(tg[1]*f)); d[i+2]=Math.min(255,Math.round(tg[2]*f)); } }
       cx.putImageData(id,0,0); set[key]=cv;
     }
-    GUINEA_VARC.push(set);
+    out.push(set);
   }
+  GUINEA_VARC=out;
 }
 function guineaFrame(e){
   const d=e.dir;
@@ -3146,8 +3214,8 @@ function drawEnemy(e){
   else if(e.skin==='guachi'){ fr=guachiFrame(e); CELL=GUACHI_CELL; dhm=3.4; }
   else if(e.skin==='supay'){ fr=supayEnemyFrame(e); CELL=SUPAY_CELL; dhm=3.7; }
   else if(e.skin==='tourist'){ const T=TOURDATA[e.ttype]||TOURDATA.girl, tf=tourFrame(e); let tim=T.img[tf.key]; if(!TOUR_VARC[e.ttype] && !TOUR_TRIED[e.ttype] && allLoaded(T.img)){ TOUR_TRIED[e.ttype]=true; try{ buildTourVariants(e.ttype); }catch(_e){} } if(TOUR_VARC[e.ttype]) tim=TOUR_VARC[e.ttype][e.gvar||0][tf.key]; fr={img:tim, flip:tf.flip}; CELL=T.cell; dhm=3.5; }
-  else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0){ if(!GUINEA_VARC && !GUINEA_TRIED && allLoaded(GUINEA_IMG)){ GUINEA_TRIED=true; try{ buildGuineaVariants(); }catch(_e){} } if(GUINEA_VARC) gim=GUINEA_VARC[e.gpvar-1][gf.key]; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
-  else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; if(!LLAMA_VARC && !LLAMA_TRIED && allLoaded(LLAMA_IMG)){ LLAMA_TRIED=true; try{ buildLlamaVariants(); }catch(_e){} } if(LLAMA_VARC) lim=LLAMA_VARC[e.lvar||0][lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
+  else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0){ if(!GUINEA_VARC && !GUINEA_TRIED && allLoaded(GUINEA_IMG)){ GUINEA_TRIED=true; try{ buildGuineaVariants(); }catch(_e){} } if(GUINEA_VARC && GUINEA_VARC[e.gpvar-1] && GUINEA_VARC[e.gpvar-1][gf.key]) gim=GUINEA_VARC[e.gpvar-1][gf.key]; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
+  else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; if(!LLAMA_VARC && !LLAMA_TRIED && allLoaded(LLAMA_IMG)){ LLAMA_TRIED=true; try{ buildLlamaVariants(); }catch(_e){} } if(LLAMA_VARC && LLAMA_VARC[e.lvar||0] && LLAMA_VARC[e.lvar||0][lf.key]) lim=LLAMA_VARC[e.lvar||0][lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
   else { fr=chuFrame(e); CELL=CHU_CELL; dhm=2.9; }
   const ready = fr.img && (fr.img.naturalWidth||fr.img.width);
   let img=fr.img;
@@ -3453,22 +3521,27 @@ function drawHelp(){
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('ORO', tx, ry-4);
   ctx.font='bold 15px Courier New';
   wrapLeft('Junta pepitas de oro que sueltan los enemigos. Al llegar a 50/50 desatas el Poder de Oro: un rayo dorado.', tx, ry+18, tw, 20);
-  ry+=94;
+  ry+=84;
   drawMiniCross(rx+18, ry-8, 1.1);
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('CO-OP (2 jugadores)', tx, ry-4);
   ctx.font='bold 15px Courier New';
   wrapLeft('Si tu compañero cae, aparece su cruz. Paráte 5s sobre ella para revivirlo. Al iniciar la siguiente ronda revive solo.', tx, ry+18, tw, 20);
-  ry+=94;
+  ry+=84;
   drawArrowIcon(rx+18, ry-8, 34);
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('OBJETIVO', tx, ry-4);
   ctx.font='bold 15px Courier New';
   wrapLeft('Sobrevive 20 rondas y derrota al jefe.', tx, ry+18, tw, 20);
-  ry+=70;
+  ry+=52;
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('CONTROLES', rx, ry);
   ctx.font='bold 15px Courier New';
-  ctx.fillText('J1: WASD mover  ·  Espacio golpear', rx, ry+24);
-  ctx.fillText('J2: Flechas mover  ·  Coma (,) golpear', rx, ry+46);
-  ctx.fillText('Los corazones curan vida. Golpea rocas para romperlas.', rx, ry+68);
+  ctx.fillText('J1: WASD mover · Espacio golpear · F poder de jefe', rx, ry+22);
+  ctx.fillText('J2: Flechas · Coma (,) golpear · (.) poder de jefe', rx, ry+42);
+  ry+=72;
+  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('PODERES DE JEFE  (rondas 5/10/15)', rx, ry);
+  ctx.font='bold 14px Courier New';
+  ctx.fillText('El jefe suelta un poder al caer; lo usa quien lo agarra:', rx, ry+20);
+  ctx.fillText('RATA BLANCA dinamita x5 (coloca y detona, misma tecla)', rx, ry+38);
+  ctx.fillText('PAREDES INCAS muros x20 · TORRETA torre con flechas', rx, ry+56);
   ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.font='bold 15px Courier New';
   ctx.fillText('Esc / Enter: volver', W/2, SB+8);
   ctx.textAlign='left';
@@ -3512,7 +3585,7 @@ function drawMenu(){
   ctx.fillStyle='#9a8f75'; ctx.font='13px Courier New';
   ctx.fillText('↑↓ elegir    Enter / Espacio para empezar', W/2, 460);
   ctx.font='11px Courier New'; ctx.fillStyle='#7a6f55';
-  ctx.fillText('J1: WASD mover, Espacio golpear    |    J2: Flechas mover, Coma (,) golpear', W/2, 540);
+  ctx.fillText('J1: WASD mover, Espacio golpear, F poder de jefe    |    J2: Flechas mover, Coma (,) golpear, Punto (.) poder de jefe', W/2, 540);
   ctx.fillStyle='#ffe14a'; ctx.font='bold 13px Courier New';
   ctx.fillText('ANTICUCHO STUDIOS', W/2, 632);
   ctx.fillStyle='#8a7f68'; ctx.font='11px Courier New';
@@ -3567,10 +3640,12 @@ function drawPause(){
   ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText('PAUSA', W/2, 96);
   ctx.font='13px Courier New'; ctx.fillStyle='#cdbf9a'; ctx.fillText('Pulsa Esc para continuar', W/2, 124);
-  ctx.fillStyle='#aef7c2'; ctx.font='bold 20px Courier New'; ctx.fillText('APUCHIS', W/2, 150);
-  ctx.fillStyle='#8a9f78'; ctx.font='12px Courier New'; ctx.fillText('(poderes duran 1 ronda)', W/2, 170);
+  // left column: Apuchis \u00b7 right column: boss-drop powers
+  const lx=W/2-440; ctx.textAlign='left';
+  ctx.fillStyle='#aef7c2'; ctx.font='bold 20px Courier New'; ctx.fillText('APUCHIS', lx, 168);
+  ctx.fillStyle='#8a9f78'; ctx.font='12px Courier New'; ctx.fillText('(duran 1 ronda)', lx+108, 168);
   const list=[['tierra','Tierra','Velocidad (m\u00e1x 3)'],['piedra','Piedra','Fuerza (m\u00e1x 3)'],['rio','Rio','Vida (full)'],['cuarzo','Cuarzo','Protecci\u00f3n (m\u00e1x 3)'],['morganita','Morganita','Rayo l\u00e1ser x3'],['safiro','Safiro','Explosi\u00f3n el\u00e9ctrica x1']];
-  const lx=W/2-200; let y=205; ctx.textAlign='left';
+  let y=205;
   for(const it of list){
     const img=APU_IMG[it[0]];
     if(img && img.naturalWidth){ const h=34, w=h*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, lx, y-26, w, h); }
@@ -3578,9 +3653,26 @@ function drawPause(){
     ctx.fillStyle='#e8e0cc'; ctx.font='15px Courier New'; ctx.fillText(it[2], lx+184, y);
     y+=42;
   }
+  const gx=W/2+60;
+  ctx.fillStyle='#ffd8a0'; ctx.font='bold 20px Courier New'; ctx.fillText('PODERES DE JEFE', gx, 168);
+  ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New'; ctx.fillText('(rondas 5 / 10 / 15)', gx+195, 168);
+  ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+  ctx.fillText('Vence al jefe y recoge el poder que suelta.', gx, 196);
+  ctx.fillText('Lo usa quien lo agarra \u00b7 Tecla: F (J1) o . (J2)', gx, 216);
+  const gear=[['dinamita','Dinamita x5: col\u00f3cala y det\u00f3nala','con la misma tecla'],
+              ['muro','Muros x20: bloquean enemigos y','sus disparos \u00b7 se colocan en la rejilla'],
+              ['torreta','Torre con flechas cada 3s: mata de','un tiro (los jefes resisten)']];
+  let gy=258;
+  for(const g of gear){
+    const G=GEAR_DEF[g[0]];
+    ctx.fillStyle=G.color; ctx.font='bold 16px Courier New'; ctx.fillText(G.label, gx, gy);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText(g[1], gx+16, gy+20); ctx.fillText(g[2], gx+16, gy+38);
+    gy+=68;
+  }
   if(players.length>1){
     ctx.textAlign='center'; ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New';
-    ctx.fillText('CO-OP: revive a tu compa\u00f1ero par\u00e1ndote 5s sobre su cruz', W/2, y+20);
+    ctx.fillText('CO-OP: revive a tu compa\u00f1ero par\u00e1ndote 5s sobre su cruz', W/2, 492);
   }
   ctx.textAlign='center';
   const popts=['CONTINUAR','AJUSTES','VOLVER AL MEN\u00da'];
@@ -3889,6 +3981,7 @@ function _frameBody(now){
   ctx.save(); ctx.translate(-camX,-camY);
   safe('arena',drawArena);
   if(currentMap==='machu'){ safe('buses',drawBuses); }
+  safe('wallgrid',drawWallGrid);
   // sort drawables by y for depth
   const _MO=(currentMap==='machu');
   const drawables=[...enemies.map(e=>({y:e.y,x:e.x,f:()=>drawEnemy(e)})),
@@ -4179,7 +4272,7 @@ function netApplyGuest(dt){
     if(sig!==gWallSig){
       gWallSig=sig;
       incaWalls.length=0;
-      for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:15, id:w2.id});
+      for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:WALL_HP, id:w2.id});
       const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS;
       obstacles=base.concat(incaWalls);
     } }
