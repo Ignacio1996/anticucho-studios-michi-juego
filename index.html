@@ -1032,7 +1032,7 @@ function fireBeam(p){
     if(proj<-e.radius) continue;
     const perp=Math.abs(rx*p.facing.y - ry*p.facing.x);
     if(perp < e.radius+16){
-      if(e.boss){ e.hp-=effDmg(p)*2.3; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
+      if(e.boss){ e.hp-=effDmg(p)*2.3; } else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.75; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
       e.vx+=p.facing.x*140; e.vy+=p.facing.y*140;
       spark(e.x,e.y,'#ff7ab0',6,120);
       if(e.hp<=0) killEnemy(e,p);
@@ -1046,7 +1046,7 @@ function fireLightning(p, col, R){
   for(let i=enemies.length-1;i>=0;i--){
     const e=enemies[i];
     if(dist(p.x,p.y,e.x,e.y) < RR+e.radius){
-      if(e.boss){ e.hp-=(col==='#ff9a2a')?e.maxhp*(e.giant?0.12:0.35):effDmg(p)*2.3; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
+      if(e.boss){ e.hp-=effDmg(p)*2.3; } else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.75; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
       const a=Math.atan2(e.y-p.y,e.x-p.x);
       e.vx+=Math.cos(a)*190; e.vy+=Math.sin(a)*190;
       spark(e.x,e.y,sc,6,140);
@@ -1403,13 +1403,15 @@ function useGear(p){
     if(placeTurret(p)){ p.gearCount--; if(p.gearCount<=0) p.gear='none'; }
   }
 }
-// Rata Blanca explosion = the Gold-special lightning but slightly smaller (150 vs 180) so it
-// isn't overpowered: non-boss enemies die outright, bosses lose the same maxhp fraction.
+// Rata Blanca explosion: normal/fast enemies die outright, throwers (leafers/archers) lose
+// 3/4 of their max health, bosses take 2x a regular hit from the bomb's owner — the same
+// damage rules the specials (Oro/Morganita/Safiro) use.
 function explodeBomb(b){
+  const ow=players[b.owner], bossDmg=ow?effDmg(ow)*2.3:70;
   for(let i=enemies.length-1;i>=0;i--){
     const e=enemies[i]; if(e.dead) continue;
     if(dist(b.x,b.y,e.x,e.y) < 150+e.radius){
-      if(e.boss){ e.hp-=e.maxhp*(e.giant?0.12:0.35); } else { e.hp=0; }
+      if(e.boss){ e.hp-=bossDmg; } else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.75; } else { e.hp=0; }
       e.hitFlash=0.12; e.stagger=0.3;
       const a=Math.atan2(e.y-b.y,e.x-b.x);
       e.vx+=Math.cos(a)*190; e.vy+=Math.sin(a)*190;
@@ -1516,7 +1518,7 @@ function updateGear(dt){
     if(!gone){ for(const o of obstacles){ if(circleRectCollide(r.x,r.y,4,o)){gone=true; spark(r.x,r.y,'#bfa77a',4,60); break;} } }
     if(!gone) for(const e of enemies){ if(e.dead) continue;
       if(dist(r.x,r.y,e.x,e.y)<e.radius+6){
-        if(e.boss){ e.hp-=40; } else { e.hp=0; }
+        if(e.boss){ e.hp-=30; } else { e.hp=0; }   // bosses take it like a regular player hit
         e.hitFlash=0.12; e.stagger=0.25;
         spark(e.x,e.y,'#d8c89a',6,110); playHitThud();
         if(e.hp<=0) killEnemy(e,null);
@@ -3436,7 +3438,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-05.3';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-05.4';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3664,7 +3666,7 @@ function drawPause(){
   ctx.fillText('Lo usa quien lo agarra \u00b7 Tecla: F (J1) o . (J2)', gx, 216);
   const gear=[['dinamita','Dinamita x5: col\u00f3cala y det\u00f3nala','con la misma tecla'],
               ['muro','Muros x20: bloquean enemigos y','sus disparos \u00b7 se colocan en la rejilla'],
-              ['torreta','Torre con flechas cada 3s: mata de','un tiro (los jefes resisten)']];
+              ['torreta','Torre con flechas cada 3s:','mata de un tiro']];
   let gy=258;
   for(const g of gear){
     const G=GEAR_DEF[g[0]];
