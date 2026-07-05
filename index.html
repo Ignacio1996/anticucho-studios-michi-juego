@@ -144,7 +144,7 @@ function playDeathMusic(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgM
 function playLosAndes(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
 function gameTrack(){ return currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
 function otherTrack(){ return currentMap==='stonebridge'?bgMusic:sbMusic; }
-function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(g){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }
+function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
 function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; try{ const a=routeEl(wowBase?wowBase.cloneNode():new Audio(AUDIO_SRC.wow)); a.volume=0.4*sfxVol; a.play().catch(()=>{}); }catch(e){} }
 function playPickup(){
   if(!actx) return;
@@ -765,6 +765,7 @@ function makePlayer(kind, x, y, controls){
     dir:'s', moving:false, animTime:0,
     cooldown: 0, punchAnim: 0, hitFlash:0, shieldFlash:0,
     alive: true, reviveProgress:0, oro:0, oroCharge:0, wasPunch:false, rioGrabbed:false, fell:false, fallT:0,
+    gear:'none', gearCount:0, wasGear:false,   // boss-drop gadget: 'dinamita' | 'muro' | 'torreta'
     pending:false,   // online: joined mid-round → sits out until the next round begins (no full-HP mid-fight join)
   };
 }
@@ -951,7 +952,13 @@ function updateLeaves(dt){
     const l=leaves[i];
     l.x+=l.vx*dt; l.y+=l.vy*dt; l.life-=dt; if(!l.arrow && !l.fire && !l.spit) l.spin+=dt*7;
     let gone = l.life<=0 || l.x<-20||l.x>WORLD_W+20||l.y<-20||l.y>WORLD_H+20;
-    for(const p of players){ if(!p.alive) continue;
+    // Paredes Incas stop rocks/arrows/fireballs/spit — the projectile damages the block instead
+    if(!gone && incaWalls.length){
+      for(const w of incaWalls){
+        if(circleRectCollide(l.x,l.y,7,w)){ hitWall(w,l.dmg||8); spark(l.x,l.y,'#c9c2b2',5,80); gone=true; break; }
+      }
+    }
+    if(!gone) for(const p of players){ if(!p.alive) continue;
       const _py=p.y+(currentMap==='machu'?machuElev(p.x):0);
       if(dist(l.x,l.y,p.x,_py) < p.radius+9){
         p.hitFlash=1.0; cameraShake=3;
@@ -1025,7 +1032,7 @@ function fireBeam(p){
     if(proj<-e.radius) continue;
     const perp=Math.abs(rx*p.facing.y - ry*p.facing.x);
     if(perp < e.radius+16){
-      if(e.boss){ e.hp-=effDmg(p)*2.3; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
+      if(e.boss){ e.hp-=effDmg(p)*2.3; } else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.75; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
       e.vx+=p.facing.x*140; e.vy+=p.facing.y*140;
       spark(e.x,e.y,'#ff7ab0',6,120);
       if(e.hp<=0) killEnemy(e,p);
@@ -1039,7 +1046,7 @@ function fireLightning(p, col, R){
   for(let i=enemies.length-1;i>=0;i--){
     const e=enemies[i];
     if(dist(p.x,p.y,e.x,e.y) < RR+e.radius){
-      if(e.boss){ e.hp-=(col==='#ff9a2a')?e.maxhp*(e.giant?0.12:0.35):effDmg(p)*2.3; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
+      if(e.boss){ e.hp-=effDmg(p)*2.3; } else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.75; } else { e.hp=0; } e.hitFlash=0.12; e.stagger=0.3;
       const a=Math.atan2(e.y-p.y,e.x-p.x);
       e.vx+=Math.cos(a)*190; e.vy+=Math.sin(a)*190;
       spark(e.x,e.y,sc,6,140);
@@ -1321,11 +1328,347 @@ function killEnemy(e,p){
       return;
     }
     floatText(e.x,e.y-34,(currentMap==='stonebridge'?'\u00a1BRUJA BLANCA DERROTADA!':currentMap==='templo'?'\u00a1JARJACHA DERROTADA!':currentMap==='machu'?(e.kind==='evan'?'\u00a1EVAN DERROTADO!':'\u00a1BRIAN DERROTADO!'):'\u00a1TEDDINGTON DERROTADO!'),'#ffe9b0');
+    // rounds 5/10/15: one gadget power per boss round — only the LAST boss standing drops it
+    // (matters on Machu Picchu, where Evan and Brian spawn together)
+    if(!enemies.some(en=>en.boss && !en.dead)) spawnBossDrop(e.x,e.y);
     return;
   }
   if(e.type==='normal'||e.type==='fast'){ dropNugget(e.x,e.y); }
   spark(e.x,e.y,e.color,12,160);
   floatText(e.x,e.y-10,'+'+e.pts,'#ffe680');
+}
+
+// ---------- Boss-drop gadgets (Rata Blanca / Paredes Incas / Torreta) ----------
+// Mid-game bosses (rounds 5/10/15 — the giant round-20 boss ends the game instead) drop ONE random
+// gadget pickup. Whoever grabs it first keeps it (single owner, also online). All gadgets are placed
+// with the gear key: F for J1, . (Period) for everyone else.
+const GRID = 40;                 // invisible placement grid for the Inca wall blocks
+// Wall blocks take real damage like a player would: melee enemies hit for their e.dmg (normal 8,
+// fast 5, large 20), projectiles for their l.dmg, bosses smash 80 per touch. 240 HP = 30 hits
+// from a base normal enemy (double the original 15-hit prototype).
+const WALL_HP = 240;
+const bossDrops = [];            // {id,type,x,y,bob}
+const bombs = [];                // Rata Blanca dynamite: {id,owner(player idx),x,y,t}
+const incaWalls = [];            // wall blocks; each is ALSO pushed into `obstacles` so collision/pathing just work
+const turrets = [];              // {id,x,y,hp,maxhp,cd,ang,hitFlash}
+const turretArrows = [];         // {x,y,vx,vy,life,spin}
+const GEAR_DEF = {
+  dinamita: { label:'RATA BLANCA',   color:'#ff6a4a', count:5  },
+  muro:     { label:'PAREDES INCAS', color:'#d8d2c2', count:20 },
+  torreta:  { label:'TORRETA',       color:'#caa66a', count:1  },
+};
+// shuffled bag: the 3 boss rounds of a run deal out all 3 powers in random order, so a full
+// playthrough always sees each power once (pure 1/3 rolls could skip one for games in a row)
+let gearBag=[];
+function nextGearDrop(){
+  if(!gearBag.length){
+    gearBag=['dinamita','muro','torreta'];
+    for(let i=gearBag.length-1;i>0;i--){ const j=randi(0,i); const t=gearBag[i]; gearBag[i]=gearBag[j]; gearBag[j]=t; }
+  }
+  return gearBag.pop();
+}
+function spawnBossDrop(x,y){
+  const type=nextGearDrop();
+  const px=clamp(x,70,WORLD_W-70);
+  let py;
+  if(currentMap==='machu') py=clamp(y,MACHU_SKY+40,WORLD_H-90);
+  else if(currentMap==='stonebridge') py=clamp(y,150,540);
+  else py=clamp(y,70,WORLD_H-70);
+  bossDrops.push({id:_entId++, type, x:Math.round(px), y:Math.round(py), bob:Math.random()*TAU});
+  floatText(px,py-38,'¡PODER ESPECIAL!','#ffe14a');
+}
+function updateBossDrops(dt){
+  for(let i=bossDrops.length-1;i>=0;i--){
+    const dr=bossDrops[i]; dr.bob+=dt*4;
+    let taken=false;
+    for(const p of players){ if(!p.alive||p.pending) continue;
+      if(dist(p.x,p.y,dr.x,dr.y)<p.radius+22){
+        const G=GEAR_DEF[dr.type];
+        p.gear=dr.type; p.gearCount=G.count;
+        floatText(p.x,p.y-30,'¡'+G.label+' x'+G.count+'!',G.color);
+        spark(dr.x,dr.y,G.color,20,170); playPickup(); taken=true; break;
+      }
+    }
+    if(taken) bossDrops.splice(i,1);
+  }
+}
+function ownedBombs(p){ const idx=players.indexOf(p); const arr=[]; for(const b of bombs){ if(b.owner===idx) arr.push(b); } return arr; }
+function useGear(p){
+  if(!p.alive) return;
+  // armed dynamite out in the field? the same key detonates it before anything else
+  const mine=ownedBombs(p);
+  if(mine.length){
+    for(const b of mine){ explodeBomb(b); const bi=bombs.indexOf(b); if(bi>=0) bombs.splice(bi,1); }
+    if(p.gear==='dinamita' && p.gearCount<=0) p.gear='none';
+    return;
+  }
+  if(p.gear==='none'||p.gearCount<=0) return;
+  if(p.gear==='dinamita'){
+    bombs.push({id:_entId++, owner:players.indexOf(p), x:Math.round(p.x), y:Math.round(p.y), t:0});
+    p.gearCount--;
+    floatText(p.x,p.y-26,'DINAMITA LISTA ('+p.gearCount+' más)','#ff6a4a'); playPickup();
+  } else if(p.gear==='muro'){
+    if(placeWall(p)){ p.gearCount--; if(p.gearCount<=0) p.gear='none'; }
+  } else if(p.gear==='torreta'){
+    if(placeTurret(p)){ p.gearCount--; if(p.gearCount<=0) p.gear='none'; }
+  }
+}
+// Rata Blanca explosion: normal/fast enemies die outright, throwers (leafers/archers) lose
+// 3/4 of their max health, bosses take 2x a regular hit from the bomb's owner — the same
+// damage rules the specials (Oro/Morganita/Safiro) use.
+function explodeBomb(b){
+  const ow=players[b.owner], bossDmg=ow?effDmg(ow)*2.3:70;
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i]; if(e.dead) continue;
+    if(dist(b.x,b.y,e.x,e.y) < 150+e.radius){
+      if(e.boss){ e.hp-=bossDmg; } else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.75; } else { e.hp=0; }
+      e.hitFlash=0.12; e.stagger=0.3;
+      const a=Math.atan2(e.y-b.y,e.x-b.x);
+      e.vx+=Math.cos(a)*190; e.vy+=Math.sin(a)*190;
+      spark(e.x,e.y,'#ff9a2a',6,140);
+      if(e.hp<=0) killEnemy(e,null);
+    }
+  }
+  fx_effects.push({kind:'zap', x:b.x, y:b.y, r:150, life:0.3, max:0.3, col:'#ff9a2a'});
+  fx_effects.push({kind:'shock', x:b.x, y:b.y, r:150, life:0.35, max:0.35});
+  playZapSound(); cameraShake=10;
+}
+function rectsOverlap(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+function wallAreaFree(rect, placer){
+  if(currentMap==='templo'){ if(rect.x<58||rect.y<58||rect.x+rect.w>WORLD_W-58||rect.y+rect.h>WORLD_H-58) return false; }
+  else if(currentMap==='machu'){ if(rect.x<38||rect.x+rect.w>WORLD_W-38||rect.y<MACHU_SKY+8||rect.y+rect.h>WORLD_H-30-Math.max(machuElev(rect.x),machuElev(rect.x+rect.w))) return false; }
+  else if(currentMap==='stonebridge'){ if(rect.x<8||rect.x+rect.w>WORLD_W-8||rect.y<116||rect.y+rect.h>572) return false; }
+  else { if(rect.x<8||rect.y<8||rect.x+rect.w>WORLD_W-8||rect.y+rect.h>WORLD_H-8) return false; }
+  for(const o of obstacles){ if(rectsOverlap(rect,o)) return false; }
+  for(const pl of players){ if(pl!==placer && pl.alive && circleRectCollide(pl.x,pl.y,pl.radius+2,rect)) return false; }
+  for(const t of turrets){ if(circleRectCollide(t.x,t.y,18,rect)) return false; }
+  if(cliffs.length){ for(const cx2 of [rect.x+4,rect.x+rect.w-4]) for(const cy2 of [rect.y+4,rect.y+rect.h-4]){ if(inCliff(cx2,cy2)) return false; } }
+  return true;
+}
+// the GRID cell one block ahead of the player's facing direction — shared by placement and the aim overlay
+function wallCellFor(p){
+  const tx=p.x+p.facing.x*GRID, ty=p.y+p.facing.y*GRID;
+  return {x:Math.floor(tx/GRID)*GRID, y:Math.floor(ty/GRID)*GRID};
+}
+function placeWall(p){
+  const c=wallCellFor(p);
+  const rect={x:c.x, y:c.y, w:GRID, h:GRID, t:'incaWall', hp:WALL_HP, maxhp:WALL_HP, id:_entId++};
+  if(!wallAreaFree(rect,p)){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#d8d2c2'); return false; }
+  incaWalls.push(rect); obstacles.push(rect);
+  resolveCollision(p);   // placing while overlapping the new block nudges the builder out
+  // enemies standing on the spot get shoved aside so the block always fits
+  for(const e of enemies){ if(!e.dead && circleRectCollide(e.x,e.y,e.radius,rect)) resolveCollision(e); }
+  spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); playPickup();
+  return true;
+}
+function placeTurret(p){
+  const tx=clamp(p.x+p.facing.x*52, 40, WORLD_W-40), ty=clamp(p.y+p.facing.y*52, 40, WORLD_H-40);
+  let ok=true;
+  const spot={x:tx-14,y:ty-14,w:28,h:28};
+  for(const o of obstacles){ if(rectsOverlap(spot,o)){ok=false;break;} }
+  if(ok && cliffs.length && inCliff(tx,ty)) ok=false;
+  if(ok){ for(const t of turrets){ if(dist(tx,ty,t.x,t.y)<48){ok=false;break;} } }
+  if(ok && currentMap==='machu' && (ty<MACHU_SKY+20||ty>WORLD_H-30-machuElev(tx))) ok=false;
+  if(ok && currentMap==='stonebridge' && (ty<126||ty>562)) ok=false;
+  if(!ok){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#caa66a'); return false; }
+  turrets.push({id:_entId++, x:Math.round(tx), y:Math.round(ty), hp:50, maxhp:50, cd:1.2, ang:0, hitFlash:0});
+  spark(tx,ty,'#caa66a',14,130); floatText(tx,ty-34,'¡TORRETA!','#caa66a'); playPickup();
+  return true;
+}
+function hitWall(w,n){
+  w.hp-=n; spark(w.x+w.w/2, w.y+10, '#c9c2b2', 5, 90);
+  if(w.hp<=0){
+    const wi=incaWalls.indexOf(w); if(wi>=0) incaWalls.splice(wi,1);
+    const oi=obstacles.indexOf(w); if(oi>=0) obstacles.splice(oi,1);
+    spark(w.x+w.w/2, w.y+w.h/2, '#d8d2c2', 18, 150); playHitThud();
+    floatText(w.x+w.w/2, w.y, '¡MURO DESTRUIDO!', '#d8d2c2');
+  }
+}
+function hitTurret(t,n){
+  t.hp-=n; t.hitFlash=0.15; spark(t.x,t.y-20,'#caa66a',5,90);
+  if(t.hp<=0){
+    const i=turrets.indexOf(t); if(i>=0) turrets.splice(i,1);
+    spark(t.x,t.y-16,'#caa66a',22,170); floatText(t.x,t.y-36,'¡TORRETA DESTRUIDA!','#ff8a6a');
+    playHitThud(); cameraShake=6;
+  }
+}
+// true when the straight line from (x1,y1) to (x2,y2) crosses any player-built Inca wall
+function segIncaBlocked(x1,y1,x2,y2){
+  for(const w of incaWalls){
+    const rx=w.x,ry=w.y,rx2=w.x+w.w,ry2=w.y+w.h;
+    if(segSeg(x1,y1,x2,y2,rx,ry,rx2,ry)||segSeg(x1,y1,x2,y2,rx2,ry,rx2,ry2)||
+       segSeg(x1,y1,x2,y2,rx2,ry2,rx,ry2)||segSeg(x1,y1,x2,y2,rx,ry2,rx,ry)) return true;
+  }
+  return false;
+}
+function updateGear(dt){
+  // dynamite fuse sparkle
+  for(const b of bombs){ b.t=(b.t||0)+dt; if(Math.random()<0.25) spark(b.x+4,b.y-16,'#ffe24a',1,35); }
+  // turrets: track the nearest enemy, loose an arrow every 3s at the nearest one in line of sight
+  for(const t of turrets){
+    if(t.hitFlash>0) t.hitFlash-=dt;
+    t.cd-=dt;
+    let aim=null, ad=1e9;
+    for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<ad){ad=dd;aim=e;} }
+    if(aim) t.ang=Math.atan2(aim.y-(t.y-26), aim.x-t.x);
+    if(t.cd<=0 && aim && ad<560){
+      let best=null, bd=1e9;
+      for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<bd && dd<560 && !segBlocked(t.x,t.y-26,e.x,e.y)){bd=dd;best=e;} }
+      if(best){
+        const a=Math.atan2(best.y-(t.y-26), best.x-t.x);
+        turretArrows.push({x:t.x, y:t.y-26, vx:Math.cos(a)*340, vy:Math.sin(a)*340, life:2.2, spin:a});
+        t.ang=a; t.cd=3; spark(t.x,t.y-26,'#d8c89a',4,60);
+      } else t.cd=0.4;   // everything walled off — retry soon instead of waiting the full 3s
+    }
+  }
+  // turret arrows: instant-kill normal enemies, chip bosses
+  for(let i=turretArrows.length-1;i>=0;i--){
+    const r=turretArrows[i]; r.x+=r.vx*dt; r.y+=r.vy*dt; r.life-=dt;
+    let gone=r.life<=0||r.x<-30||r.x>WORLD_W+30||r.y<-30||r.y>WORLD_H+30;
+    if(!gone){ for(const o of obstacles){ if(circleRectCollide(r.x,r.y,4,o)){gone=true; spark(r.x,r.y,'#bfa77a',4,60); break;} } }
+    if(!gone) for(const e of enemies){ if(e.dead) continue;
+      if(dist(r.x,r.y,e.x,e.y)<e.radius+6){
+        if(e.boss){ e.hp-=30; } else { e.hp=0; }   // bosses take it like a regular player hit
+        e.hitFlash=0.12; e.stagger=0.25;
+        spark(e.x,e.y,'#d8c89a',6,110); playHitThud();
+        if(e.hp<=0) killEnemy(e,null);
+        gone=true; break;
+      }
+    }
+    if(gone) turretArrows.splice(i,1);
+  }
+  // bosses are too big to be fenced in — they smash wall blocks on contact (5 dmg per swing)
+  for(const e of enemies){ if(!e.boss||e.dead) continue;
+    if(e._wallCd>0){ e._wallCd-=dt; continue; }
+    for(const w of incaWalls){
+      if(circleRectCollide(e.x,e.y,(e.footR||e.radius)+6,w)){ e._wallCd=0.5; hitWall(w,80); cameraShake=5; break; }
+    }
+  }
+}
+function drawBossDrops(){
+  for(const dr of bossDrops){
+    const G=GEAR_DEF[dr.type]; if(!G) continue;
+    const oy=(currentMap==='machu')?machuElev(dr.x):0;
+    const y=dr.y+Math.sin(dr.bob)*4+oy;
+    ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(dr.x,dr.y+14+oy,16,5,0,0,TAU); ctx.fill();
+    ctx.save(); ctx.shadowColor=G.color; ctx.shadowBlur=14+6*Math.sin(time*5);
+    ctx.fillStyle='#7a5230'; ctx.fillRect(dr.x-14,y-12,28,24);
+    ctx.fillStyle='#8c6238'; ctx.fillRect(dr.x-14,y-12,28,5);
+    ctx.strokeStyle='#432c16'; ctx.lineWidth=2; ctx.strokeRect(dr.x-14,y-12,28,24);
+    if(dr.type==='dinamita'){
+      ctx.fillStyle='#d43a2a'; ctx.fillRect(dr.x-6,y-6,4,13); ctx.fillRect(dr.x+2,y-6,4,13);
+      ctx.fillStyle='#ffe24a'; ctx.fillRect(dr.x-5,y-9,2,3); ctx.fillRect(dr.x+3,y-9,2,3);
+    } else if(dr.type==='muro'){
+      ctx.fillStyle='#c9c2b2'; ctx.fillRect(dr.x-8,y-6,7,6); ctx.fillRect(dr.x+1,y-6,7,6); ctx.fillRect(dr.x-4,y+1,7,6);
+      ctx.strokeStyle='#6b6253'; ctx.lineWidth=1; ctx.strokeRect(dr.x-8,y-6,7,6); ctx.strokeRect(dr.x+1,y-6,7,6); ctx.strokeRect(dr.x-4,y+1,7,6);
+    } else {
+      ctx.strokeStyle='#e8d8a8'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(dr.x-6,y+7); ctx.lineTo(dr.x+5,y-5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(dr.x+1,y+1,7,-2.4,0.7); ctx.stroke();
+    }
+    ctx.restore();
+    if(Math.random()<0.12) spark(dr.x+rand(-14,14), y+rand(-12,12), '#fff8c0', 1, 25);
+    ctx.fillStyle=G.color; ctx.font='bold 11px Courier New'; ctx.textAlign='center';
+    ctx.fillText('¡'+G.label+'!', dr.x, y-22); ctx.textAlign='left';
+  }
+}
+function drawBombs(){
+  for(const b of bombs){
+    const oy=(currentMap==='machu')?machuElev(b.x):0, y=b.y+oy;
+    ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(b.x,y+9,10,3.5,0,0,TAU); ctx.fill();
+    const blink=Math.floor((b.t||0)*5)%2===0;
+    ctx.save();
+    for(let k=-1;k<=1;k++){   // classic three-stick dynamite bundle
+      const sy=y-12+(k===0?-2:0), sh=20+(k===0?2:0);
+      ctx.fillStyle=k===0?'#e04a34':'#c93a28'; ctx.fillRect(b.x-3.5+k*6, sy, 7, sh);
+      ctx.fillStyle='#8a1f14'; ctx.fillRect(b.x-3.5+k*6, sy, 7, 3);
+      ctx.fillStyle='#f0e6d0'; ctx.fillRect(b.x-3.5+k*6, sy+sh*0.45, 7, 2);
+    }
+    ctx.fillStyle='#3a2a1a'; ctx.fillRect(b.x-10,y-4,20,4);
+    ctx.strokeStyle='#d8c89a'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(b.x,y-14); ctx.quadraticCurveTo(b.x+6,y-22,b.x+3,y-18); ctx.stroke();
+    if(blink){ ctx.fillStyle='#ffe24a'; ctx.shadowColor='#ffe24a'; ctx.shadowBlur=10; ctx.beginPath(); ctx.arc(b.x+3,y-18,2.5,0,TAU); ctx.fill(); }
+    ctx.restore();
+  }
+}
+function drawIncaBlock(w){
+  const f=clamp(w.hp/(w.maxhp||WALL_HP),0,1);
+  ctx.fillStyle='#b8ad94'; ctx.fillRect(w.x,w.y,w.w,10);                    // sunlit top face
+  ctx.fillStyle='#a0937c'; ctx.fillRect(w.x,w.y+10,w.w,w.h-10);            // front face
+  ctx.strokeStyle='rgba(70,60,44,0.55)'; ctx.lineWidth=1.5;                // inca masonry joints
+  const midY=w.y+10+(w.h-12)/2;
+  ctx.beginPath();
+  ctx.moveTo(w.x+2,midY); ctx.lineTo(w.x+w.w-2,midY);
+  ctx.moveTo(w.x+w.w*0.35,w.y+11); ctx.lineTo(w.x+w.w*0.35,midY);
+  ctx.moveTo(w.x+w.w*0.68,midY); ctx.lineTo(w.x+w.w*0.68,w.y+w.h-2);
+  ctx.stroke();
+  ctx.strokeStyle='#4a3f2c'; ctx.lineWidth=2; ctx.strokeRect(w.x+1,w.y+1,w.w-2,w.h-2);
+  if(f<0.67){ ctx.strokeStyle='rgba(40,32,22,0.7)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(w.x+6,w.y+8); ctx.lineTo(w.x+14,w.y+20); ctx.lineTo(w.x+10,w.y+32); ctx.stroke(); }
+  if(f<0.34){ ctx.strokeStyle='rgba(40,32,22,0.7)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(w.x+w.w-6,w.y+6); ctx.lineTo(w.x+w.w-16,w.y+18); ctx.lineTo(w.x+w.w-8,w.y+30); ctx.stroke();
+    ctx.fillStyle='rgba(40,32,22,0.22)'; ctx.fillRect(w.x+2,w.y+2,w.w-4,w.h-4); }
+  if(w.hp<w.maxhp){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(w.x+4,w.y-8,w.w-8,4);
+    ctx.fillStyle='#d8d2c2'; ctx.fillRect(w.x+4,w.y-8,(w.w-8)*f,4);
+  }
+}
+// While a player carries Paredes Incas, show a very faint red grid around them plus a clearer
+// red square on the exact cell where the next block will land (grey when the spot is invalid).
+function drawWallGrid(){
+  if(state!==STATE.PLAY && state!==STATE.BREAK) return;
+  for(const p of players){
+    if(!p.alive || p.pending || p.gear!=='muro' || !(p.gearCount>0)) continue;
+    const oy=(currentMap==='machu')?machuElev(p.x):0;
+    ctx.save(); if(oy) ctx.translate(0,oy);
+    const c0x=(Math.floor(p.x/GRID)-3)*GRID, c0y=(Math.floor(p.y/GRID)-3)*GRID, span=7*GRID;
+    ctx.strokeStyle='rgba(255,70,50,0.16)'; ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let i=0;i<=7;i++){
+      ctx.moveTo(c0x+i*GRID, c0y); ctx.lineTo(c0x+i*GRID, c0y+span);
+      ctx.moveTo(c0x, c0y+i*GRID); ctx.lineTo(c0x+span, c0y+i*GRID);
+    }
+    ctx.stroke();
+    const c=wallCellFor(p);
+    const ok=wallAreaFree({x:c.x, y:c.y, w:GRID, h:GRID}, p);
+    const pulse=0.75+0.25*Math.sin(time*6);
+    ctx.fillStyle= ok?('rgba(255,70,50,'+(0.14*pulse)+')'):'rgba(130,130,130,0.14)';
+    ctx.fillRect(c.x,c.y,GRID,GRID);
+    ctx.strokeStyle= ok?('rgba(255,90,64,'+(0.55*pulse)+')'):'rgba(160,160,160,0.4)'; ctx.lineWidth=2;
+    ctx.strokeRect(c.x+1,c.y+1,GRID-2,GRID-2);
+    ctx.restore();
+  }
+}
+function drawTurret(t){
+  const x=t.x, y=t.y;
+  ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(x,y+4,16,5,0,0,TAU); ctx.fill();
+  ctx.strokeStyle='#6a4626'; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.moveTo(x-10,y+4); ctx.lineTo(x-4,y-20); ctx.moveTo(x+10,y+4); ctx.lineTo(x+4,y-20); ctx.stroke();
+  ctx.strokeStyle='#59391e'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x-8,y-6); ctx.lineTo(x+8,y-6); ctx.stroke();
+  ctx.fillStyle='#80572f'; ctx.fillRect(x-11,y-26,22,7);
+  ctx.fillStyle='#9a6f3e'; ctx.fillRect(x-11,y-26,22,2);
+  ctx.strokeStyle='#3f2914'; ctx.lineWidth=1; ctx.strokeRect(x-11,y-26,22,7);
+  ctx.save(); ctx.translate(x,y-30); ctx.rotate(t.ang||0);
+  if(t.hitFlash>0){ ctx.shadowColor='#ff6a4a'; ctx.shadowBlur=10; }
+  ctx.fillStyle='#5e3e22'; ctx.fillRect(-5,-3,16,6);
+  ctx.strokeStyle='#d8c89a'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(8,0,8,-1.9,1.9); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(8+Math.cos(-1.9)*8, Math.sin(-1.9)*8); ctx.lineTo(1,0); ctx.lineTo(8+Math.cos(1.9)*8, Math.sin(1.9)*8); ctx.stroke();
+  ctx.restore();
+  if(t.hp<t.maxhp){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(x-14,y-46,28,5);
+    ctx.fillStyle='#8fd07a'; ctx.fillRect(x-14,y-46,28*clamp(t.hp/t.maxhp,0,1),5);
+  }
+}
+function drawTurretArrows(){
+  for(const r of turretArrows){
+    const oy=(currentMap==='machu')?machuElev(r.x):0;
+    ctx.save(); ctx.translate(r.x,r.y+oy); ctx.rotate(r.spin);
+    ctx.strokeStyle='#8a6a3a'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(-9,0); ctx.lineTo(7,0); ctx.stroke();
+    ctx.fillStyle='#d8d2c2'; ctx.beginPath(); ctx.moveTo(11,0); ctx.lineTo(5,-3); ctx.lineTo(5,3); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#cfe39a'; ctx.fillRect(-10,-2.5,4,5);
+    ctx.restore();
+  }
 }
 
 // ---------- Camera shake ----------
@@ -1364,6 +1707,10 @@ function updatePlayers(dt){
       else { if(p.wasPunch && p.oroCharge>0 && p.oroCharge<0.28) tryPunch(p); p.oroCharge=0; }
       p.wasPunch = !!ks[c.punch];
     } else { if(ks[c.punch]) tryPunch(p); p.wasPunch=!!ks[c.punch]; }
+    // gear key (F for J1 / . for the rest): place or detonate the boss-drop gadget (edge-triggered)
+    const gkd=!!(c.gear && ks[c.gear]);
+    if(gkd && !p.wasGear) useGear(p);
+    p.wasGear=gkd;
     if(p.alive && cliffs.length && inCliff(p.x,p.y)){ p.alive=false; p.fell=true; p.fallT=0.5; p.deathAnim=null; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,'#6a5a40',22,180); cameraShake=7; }
   }
 }
@@ -1447,6 +1794,14 @@ function updateEnemies(dt){
     e.vx*=0.86; e.vy*=0.86;
 
     const {p:tgt,d} = nearestPlayer(e);
+    // Torreta: melee enemies switch to the turret when it's strictly closer than every player
+    // (players always win ties, and archers keep shooting players)
+    let turTgt=null;
+    if(turrets.length && tgt && !e.archer){
+      let bt=null, btd=1e9;
+      for(const t of turrets){ const td=dist(e.x,e.y,t.x,t.y); if(td<btd){btd=td;bt=t;} }
+      if(bt && btd<d) turTgt=bt;
+    }
     if(e.ttype && tgt) e.faceRight=(tgt.x>=e.x);
     e.animTime += dt;
     e.moving = false;
@@ -1459,14 +1814,20 @@ function updateEnemies(dt){
         if(!e.shotDone && e.aiming<=(e.supay?0.9:e.llama?0.6:0.7)){ if(e.supay) fireSupayballs(e,tgt); else if(e.llama) fireSpit(e,tgt); else fireArrow(e,tgt); e.shotDone=true; }
       } else {
         let dx,dy;
-        if(currentMap==='templo'||currentMap==='machu'){
+        if(turTgt){
+          const td=dist(e.x,e.y,turTgt.x,turTgt.y)||1;
+          dx=(turTgt.x-e.x)/td; dy=(turTgt.y-e.y)/td;
+        } else if(currentMap==='templo'||currentMap==='machu'){
           const fd=flowDir(e);
           let los=true; const stp=Math.min(40,Math.max(3,Math.floor(d/12)));
           for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; let hit=false; for(const o of obstacles){ if(tx>o.x-6&&tx<o.x+o.w+6&&ty>o.y-6&&ty<o.y+o.h+6){hit=true;break;} } if(!hit && cliffs.length && inCliff(tx,ty)) hit=true; if(hit){los=false;break;} }
-          if(fd && !los){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
+          // hysteresis: once an enemy starts getting stuck, trust the flow field even if line of
+          // sight flickers open at a corner — stops the straight-line/flow oscillation on stairs
+          if(fd && (!los || (e._stuckT||0)>0.3)){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
         } else {
           const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il;
         }
+        if(e._detourT>0){ e._detourT-=dt; dx=e._detourX; dy=e._detourY; }   // sidestep around geometry
         let sp=e.speed;
         if(e.charge){ // fast variant: brief dash
           if(e.charging>0){ e.charging-=dt; sp=e.speed*2.3; }
@@ -1493,6 +1854,42 @@ function updateEnemies(dt){
     resolveCollision(e);
     if(cliffs.length && inCliff(e.x,e.y)){ spark(e.x,e.y,'#6a5a40',16,150); cameraShake=4; enemies.splice(i,1); continue; }
 
+    // stuck detection: chasing but barely advancing (pressed against walls, stairs, cliff pockets)
+    if(tgt){
+      const mvd=(e._lx==null)?1e9:dist(e.x,e.y,e._lx,e._ly);
+      if(e.moving && mvd < e.speed*dt*0.35) e._stuckT=(e._stuckT||0)+dt;
+      else e._stuckT=Math.max(0,(e._stuckT||0)-dt*2);
+      // Paredes Incas: walled off with no path -> pound the nearest block (damage = its melee dmg,
+      // like hitting a player). The moment a path opens it un-sticks and resumes the chase.
+      let atWall=false;
+      if(incaWalls.length && e._stuckT>0.7 && segIncaBlocked(e.x,e.y,tgt.x,tgt.y)){
+        let w=null, wd=1e9;
+        for(const iw of incaWalls){ const nx=clamp(e.x,iw.x,iw.x+iw.w), ny=clamp(e.y,iw.y,iw.y+iw.h); const dd=dist(e.x,e.y,nx,ny); if(dd<wd){wd=dd;w=iw;} }
+        if(w && wd<e.radius+12){
+          atWall=true;
+          if(e.atkcd<=0){ e.atkcd=0.6; if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; hitWall(w,e.dmg||8); }
+        }
+      }
+      // stuck on map geometry (terrace stairs, ruin corners, cliff pockets): sidestep along the
+      // obstacle for a moment to find a way around instead of grinding against it forever
+      if(!atWall && e._stuckT>0.8 && !(e._detourT>0)){
+        const ax=tgt.x-e.x, ay=tgt.y-e.y, al=Math.hypot(ax,ay)||1;
+        let px=-ay/al, py=ax/al;   // perpendicular to the chase direction
+        const open=(sx,sy)=>{ const qx=e.x+sx*52, qy=e.y+sy*52;
+          if(qx<20||qx>WORLD_W-20||qy<20||qy>WORLD_H-20) return false;
+          if(cliffs.length && inCliff(qx,qy)) return false;
+          for(const o of obstacles){ if(qx>o.x-e.radius&&qx<o.x+o.w+e.radius&&qy>o.y-e.radius&&qy<o.y+o.h+e.radius) return false; }
+          return true; };
+        const a1=open(px,py), a2=open(-px,-py);
+        if(a1 && a2){ if(e._detourSgn==null) e._detourSgn=(Math.random()<0.5?1:-1); if(e._detourSgn<0){ px=-px; py=-py; } }
+        else if(a2 && !a1){ px=-px; py=-py; e._detourSgn=-1; }
+        else e._detourSgn=1;
+        e._detourX=px; e._detourY=py; e._detourT=0.7;
+        e._stuckT=0.45;   // keep it warm so the next sidestep triggers quickly if still blocked
+      }
+    }
+    e._lx=e.x; e._ly=e.y;
+
     // contact damage (Cuarzo shields absorb whole hits)
     if(tgt && d < e.radius+tgt.radius+2 && e.atkcd<=0){
       e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } tgt.hitFlash=1.0; cameraShake=4;
@@ -1505,6 +1902,11 @@ function updateEnemies(dt){
         spark(tgt.x,tgt.y,'#ff5050',6,100);
         if(tgt.hp<=0){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
       }
+    }
+    // turret melee: 1 hit per swing, 50 hits to bring it down (player contact takes priority above)
+    else if(turTgt && e.atkcd<=0 && dist(e.x,e.y,turTgt.x,turTgt.y) < e.radius+20){
+      e.atkcd=0.6; if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH;
+      hitTurret(turTgt,1);
     }
   }
 }
@@ -1589,6 +1991,8 @@ function updatePlay(dt){
   updateRevive(dt);
   if(amuleto) updateAmuleto(dt);
   updateWallets(dt);
+  updateGear(dt);
+  updateBossDrops(dt);
   // spawn enemies gradually
   if(spawnQueue>0){
     spawnTimer-=dt;
@@ -1611,6 +2015,8 @@ function updateBreak(dt){
   updateNuggets(dt);
   updateEffects(dt);
   updateLeaves(dt);
+  updateGear(dt);
+  updateBossDrops(dt);
   breakTimer-=dt;
   if(breakTimer<=0) startRound();
   if(players.every(p=>!p.alive) && !players.some(p=>p.fell&&p.fallT>0)) gameOver();
@@ -2711,9 +3117,22 @@ function girlFrame(e){
 const LLAMA_CELL={w:152,h:156};
 const LLAMA_SRC={"ew1": "assets/img_240.png", "ew2": "assets/img_241.png", "ew3": "assets/img_242.png", "esp1": "assets/img_243.png", "esp2": "assets/img_244.png", "nw1": "assets/img_245.png", "nw2": "assets/img_246.png", "nw3": "assets/img_247.png", "nsp1": "assets/img_248.png", "nsp2": "assets/img_249.png", "sw1": "assets/img_250.png", "sw2": "assets/img_251.png", "sw3": "assets/img_252.png", "ssp1": "assets/img_253.png", "ssp2": "assets/img_254.png"};
 const LLAMA_IMG={}; for(const k in LLAMA_SRC){ const im=new Image(); im.src=LLAMA_SRC[k]; LLAMA_IMG[k]=im; }
-const LLAMA_COLORS=[[120,82,46],[238,238,236],[223,203,166],[196,158,52],[46,46,52],[158,158,162]]; let LLAMA_VARC=null;
+// Color variants (tourist shirts/jeans/hair, llama + guinea fur) are PRE-GENERATED PNGs in
+// assets/var_*.png, loaded like any other sprite. They used to be recolored at runtime with
+// getImageData, but browsers block canvas pixel reads when the game is opened from file://
+// (tainted canvas), which broke every variant. The build*Variants functions below are kept as
+// the offline generators that produced those assets — they are never called at runtime.
+function loadVariantSets(prefix, keys, n){
+  const out=[];
+  for(let k=0;k<n;k++){ const set={}; for(const key of keys){ const im=new Image(); im.src='assets/var_'+prefix+'_'+k+'_'+key+'.png'; set[key]=im; } out.push(set); }
+  return out;
+}
+const LLAMA_COLORS=[[120,82,46],[238,238,236],[223,203,166],[196,158,52],[46,46,52],[158,158,162]];
+let LLAMA_VARC=loadVariantSets('llama', Object.keys(LLAMA_SRC), 6);
 function buildLlamaVariants(){
-  LLAMA_VARC=[];
+  // publish only on full success — getImageData throws on file:// (tainted canvas) and a
+  // half-built table left the llamas invisible
+  const out=[];
   for(let k=0;k<LLAMA_COLORS.length;k++){
     const tg=LLAMA_COLORS[k], set={};
     for(const key in LLAMA_IMG){
@@ -2723,8 +3142,9 @@ function buildLlamaVariants(){
       for(let i=0;i<N;i+=4){ if(d[i+3]<8) continue; const r=d[i],g=d[i+1],b=d[i+2]; if(Math.max(r,g,b)/255<=0.20) continue; const f=(0.299*r+0.587*g+0.114*b)/255/0.9; d[i]=Math.min(255,Math.round(tg[0]*f)); d[i+1]=Math.min(255,Math.round(tg[1]*f)); d[i+2]=Math.min(255,Math.round(tg[2]*f)); }
       cx.putImageData(id,0,0); set[key]=cv;
     }
-    LLAMA_VARC.push(set);
+    out.push(set);
   }
+  LLAMA_VARC=out;
 }
 function llamaFrame(e){
   const d=e.dir;
@@ -2749,7 +3169,8 @@ function fireSpit(e,tgt){
 const TOUR_NEW={"man1": {"cell": {"w": 118, "h": 150}, "src": {"ew1": "assets/img_255.png", "ew2": "assets/img_256.png", "ew3": "assets/img_257.png", "nw1": "assets/img_258.png", "nw2": "assets/img_259.png", "sw1": "assets/img_260.png", "sw2": "assets/img_261.png", "d1": "assets/img_262.png", "d2": "assets/img_263.png", "d3": "assets/img_264.png"}, "dn": 3}, "man2": {"cell": {"w": 133, "h": 150}, "src": {"ew1": "assets/img_265.png", "ew2": "assets/img_266.png", "ew3": "assets/img_267.png", "nw1": "assets/img_268.png", "nw2": "assets/img_269.png", "sw1": "assets/img_270.png", "sw2": "assets/img_271.png", "d1": "assets/img_272.png", "d2": "assets/img_273.png", "d3": "assets/img_274.png"}, "dn": 3}, "woman1": {"cell": {"w": 136, "h": 150}, "src": {"ew1": "assets/img_275.png", "ew2": "assets/img_276.png", "ew3": "assets/img_277.png", "nw1": "assets/img_278.png", "nw2": "assets/img_279.png", "sw1": "assets/img_280.png", "sw2": "assets/img_281.png", "d1": "assets/img_282.png", "d2": "assets/img_283.png", "d3": "assets/img_284.png"}, "dn": 3}};
 const TOURDATA={girl:{cell:GIRL_CELL,img:GIRL_IMG,dn:4}};
 for(const _t in TOUR_NEW){ const _im={}; for(const _k in TOUR_NEW[_t].src){ const _i=new Image(); _i.src=TOUR_NEW[_t].src[_k]; _im[_k]=_i; } TOURDATA[_t]={cell:TOUR_NEW[_t].cell,img:_im,dn:TOUR_NEW[_t].dn}; }
-const TOUR_TYPES=['girl','man1','man2','woman1']; let TOUR_VARC={}, TOUR_TRIED={}, LLAMA_TRIED=false;
+const TOUR_TYPES=['girl','man1','man2','woman1'];
+const TOUR_VARC={}; for(const _t of TOUR_TYPES){ TOUR_VARC[_t]=loadVariantSets('tour_'+_t, Object.keys(TOURDATA[_t].img), 8); }
 function allLoaded(m){ for(const k in m){ if(!m[k] || !m[k].naturalWidth) return false; } return true; }
 function buildTourVariants(type){
   const T=TOURDATA[type], arr=[], BV={1:0.5,2:0.6,3:0.16};
@@ -2779,9 +3200,12 @@ function tourFrame(e){
 const GUINEA_CELL={w:154,h:120};
 const GUINEA_SRC={"ew1": "assets/img_285.png", "ew2": "assets/img_286.png", "nw1": "assets/img_287.png", "nw2": "assets/img_288.png", "sw1": "assets/img_289.png", "sw2": "assets/img_290.png", "sw3": "assets/img_291.png"};
 const GUINEA_IMG={}; for(const k in GUINEA_SRC){ const im=new Image(); im.src=GUINEA_SRC[k]; GUINEA_IMG[k]=im; }
-const GUINEA_COLORS=[[42,42,46],[200,160,44],[150,150,156]]; let GUINEA_VARC=null, GUINEA_TRIED=false;
+const GUINEA_COLORS=[[42,42,46],[200,160,44],[150,150,156]];
+let GUINEA_VARC=loadVariantSets('guinea', Object.keys(GUINEA_SRC), 3);
 function buildGuineaVariants(){
-  GUINEA_VARC=[];
+  // build into a local list and only publish on full success: getImageData throws a canvas-taint
+  // SecurityError when the game runs from file://, and a half-built table made the cuyes invisible
+  const out=[];
   for(let k=0;k<GUINEA_COLORS.length;k++){
     const tg=GUINEA_COLORS[k], set={};
     for(const key in GUINEA_IMG){
@@ -2792,8 +3216,9 @@ function buildGuineaVariants(){
         if(hs[0]>=8 && hs[0]<=46 && hs[1]>0.42 && hs[2]>0.18 && hs[2]<0.80){ const f=(0.299*r+0.587*g+0.114*b)/255/0.42; d[i]=Math.min(255,Math.round(tg[0]*f)); d[i+1]=Math.min(255,Math.round(tg[1]*f)); d[i+2]=Math.min(255,Math.round(tg[2]*f)); } }
       cx.putImageData(id,0,0); set[key]=cv;
     }
-    GUINEA_VARC.push(set);
+    out.push(set);
   }
+  GUINEA_VARC=out;
 }
 function guineaFrame(e){
   const d=e.dir;
@@ -2813,9 +3238,9 @@ function drawEnemy(e){
   else if(e.skin==='archer'){ fr=arFrame(e); CELL=AR_CELL; dhm=3.7; }
   else if(e.skin==='guachi'){ fr=guachiFrame(e); CELL=GUACHI_CELL; dhm=3.4; }
   else if(e.skin==='supay'){ fr=supayEnemyFrame(e); CELL=SUPAY_CELL; dhm=3.7; }
-  else if(e.skin==='tourist'){ const T=TOURDATA[e.ttype]||TOURDATA.girl, tf=tourFrame(e); let tim=T.img[tf.key]; if(!TOUR_VARC[e.ttype] && !TOUR_TRIED[e.ttype] && allLoaded(T.img)){ TOUR_TRIED[e.ttype]=true; try{ buildTourVariants(e.ttype); }catch(_e){} } if(TOUR_VARC[e.ttype]) tim=TOUR_VARC[e.ttype][e.gvar||0][tf.key]; fr={img:tim, flip:tf.flip}; CELL=T.cell; dhm=3.5; }
-  else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0){ if(!GUINEA_VARC && !GUINEA_TRIED && allLoaded(GUINEA_IMG)){ GUINEA_TRIED=true; try{ buildGuineaVariants(); }catch(_e){} } if(GUINEA_VARC) gim=GUINEA_VARC[e.gpvar-1][gf.key]; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
-  else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; if(!LLAMA_VARC && !LLAMA_TRIED && allLoaded(LLAMA_IMG)){ LLAMA_TRIED=true; try{ buildLlamaVariants(); }catch(_e){} } if(LLAMA_VARC) lim=LLAMA_VARC[e.lvar||0][lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
+  else if(e.skin==='tourist'){ const T=TOURDATA[e.ttype]||TOURDATA.girl, tf=tourFrame(e); let tim=T.img[tf.key]; const tv=TOUR_VARC[e.ttype]; if(tv && tv[e.gvar||0] && tv[e.gvar||0][tf.key] && tv[e.gvar||0][tf.key].naturalWidth) tim=tv[e.gvar||0][tf.key]; fr={img:tim, flip:tf.flip}; CELL=T.cell; dhm=3.5; }
+  else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0 && GUINEA_VARC[e.gpvar-1]){ const vi=GUINEA_VARC[e.gpvar-1][gf.key]; if(vi && vi.naturalWidth) gim=vi; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
+  else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; const lv=LLAMA_VARC[e.lvar||0]; if(lv && lv[lf.key] && lv[lf.key].naturalWidth) lim=lv[lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
   else { fr=chuFrame(e); CELL=CHU_CELL; dhm=2.9; }
   const ready = fr.img && (fr.img.naturalWidth||fr.img.width);
   let img=fr.img;
@@ -2932,6 +3357,19 @@ function drawHUD(){
     drawBar(px, 19, w, 12, p.alive?p.hp/p.maxhp:0, '#ff5a4a');
     ctx.fillStyle='#fff'; ctx.font='10px Courier New';
     ctx.fillText(Math.ceil(p.hp)+'/'+p.maxhp, px+4, 29);
+    { // boss-drop gadget status (count + key hint, plus a blinking DETONAR while a bomb is armed)
+      const pi=players.indexOf(p), gkey=(pi===0?'F':'.');
+      const armed=bombs.some(b=>b.owner===pi);
+      if(p.gear && p.gear!=='none' && GEAR_DEF[p.gear]){
+        const G=GEAR_DEF[p.gear];
+        ctx.fillStyle=G.color; ctx.font='bold 10px Courier New'; ctx.textAlign='right';
+        ctx.fillText(G.label+' x'+p.gearCount+' ['+gkey+']', px+w, 40); ctx.textAlign='left';
+      }
+      if(armed && Math.floor(time*4)%2===0){
+        ctx.fillStyle='#ff6a4a'; ctx.font='bold 10px Courier New';
+        ctx.fillText('¡DETONAR ['+gkey+']!', px+4, 40);
+      }
+    }
     ctx.font='bold 11px Courier New'; ctx.textAlign='right';
     if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO 50/50 \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); }
     ctx.textAlign='left';
@@ -2949,6 +3387,10 @@ function drawBreakUI(){
   ctx.fillText('Recoge Apuchis: te potencian para la siguiente ronda!', W/2, H-44);
   ctx.font='10px Courier New'; ctx.fillStyle='#cdbf9a';
   ctx.fillText('TIERRA Velocidad  \u00b7  PIEDRA Fuerza  \u00b7  RIO Vida  \u00b7  CUARZO Escudo  \u00b7  MORGANITA Rayo  \u00b7  SAFIRO Rel\u00e1mpago', W/2, H-24);
+  if(players.some(p=>p.gear&&p.gear!=='none')){
+    ctx.fillStyle='#ffd8a0'; ctx.font='11px Courier New';
+    ctx.fillText('PODER DE JEFE: usa F (J1) o . (los dem\u00e1s) para colocarlo', W/2, H-60);
+  }
   ctx.textAlign='left';
 }
 
@@ -3019,9 +3461,12 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
+const BUILD='v2026-07-05.6';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
+  ctx.textAlign='left'; ctx.fillStyle='rgba(255,233,176,0.5)'; ctx.font='11px Courier New';
+  ctx.fillText(BUILD, 10, H-10);
   if(mainMenuT<4){ return; }
   const opts=['MAPAS','JUGAR ONLINE','CÓMO JUGAR'];
   const pw=440, ph=200, px=W/2-pw/2, py=H-250;
@@ -3104,22 +3549,27 @@ function drawHelp(){
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('ORO', tx, ry-4);
   ctx.font='bold 15px Courier New';
   wrapLeft('Junta pepitas de oro que sueltan los enemigos. Al llegar a 50/50 desatas el Poder de Oro: un rayo dorado.', tx, ry+18, tw, 20);
-  ry+=94;
+  ry+=84;
   drawMiniCross(rx+18, ry-8, 1.1);
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('CO-OP (2 jugadores)', tx, ry-4);
   ctx.font='bold 15px Courier New';
   wrapLeft('Si tu compañero cae, aparece su cruz. Paráte 5s sobre ella para revivirlo. Al iniciar la siguiente ronda revive solo.', tx, ry+18, tw, 20);
-  ry+=94;
+  ry+=84;
   drawArrowIcon(rx+18, ry-8, 34);
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('OBJETIVO', tx, ry-4);
   ctx.font='bold 15px Courier New';
   wrapLeft('Sobrevive 20 rondas y derrota al jefe.', tx, ry+18, tw, 20);
-  ry+=70;
+  ry+=52;
   ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('CONTROLES', rx, ry);
   ctx.font='bold 15px Courier New';
-  ctx.fillText('J1: WASD mover  ·  Espacio golpear', rx, ry+24);
-  ctx.fillText('J2: Flechas mover  ·  Coma (,) golpear', rx, ry+46);
-  ctx.fillText('Los corazones curan vida. Golpea rocas para romperlas.', rx, ry+68);
+  ctx.fillText('J1: WASD mover · Espacio golpear · F poder de jefe', rx, ry+22);
+  ctx.fillText('J2: Flechas · Coma (,) golpear · (.) poder de jefe', rx, ry+42);
+  ry+=72;
+  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('PODERES DE JEFE  (rondas 5/10/15)', rx, ry);
+  ctx.font='bold 14px Courier New';
+  ctx.fillText('El jefe suelta un poder al caer; lo usa quien lo agarra:', rx, ry+20);
+  ctx.fillText('RATA BLANCA dinamita x5 (coloca y detona, misma tecla)', rx, ry+38);
+  ctx.fillText('PAREDES INCAS muros x20 · TORRETA torre con flechas', rx, ry+56);
   ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.font='bold 15px Courier New';
   ctx.fillText('Esc / Enter: volver', W/2, SB+8);
   ctx.textAlign='left';
@@ -3163,7 +3613,7 @@ function drawMenu(){
   ctx.fillStyle='#9a8f75'; ctx.font='13px Courier New';
   ctx.fillText('↑↓ elegir    Enter / Espacio para empezar', W/2, 460);
   ctx.font='11px Courier New'; ctx.fillStyle='#7a6f55';
-  ctx.fillText('J1: WASD mover, Espacio golpear    |    J2: Flechas mover, Coma (,) golpear', W/2, 540);
+  ctx.fillText('J1: WASD mover, Espacio golpear, F poder de jefe    |    J2: Flechas mover, Coma (,) golpear, Punto (.) poder de jefe', W/2, 540);
   ctx.fillStyle='#ffe14a'; ctx.font='bold 13px Courier New';
   ctx.fillText('ANTICUCHO STUDIOS', W/2, 632);
   ctx.fillStyle='#8a7f68'; ctx.font='11px Courier New';
@@ -3218,10 +3668,12 @@ function drawPause(){
   ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText('PAUSA', W/2, 96);
   ctx.font='13px Courier New'; ctx.fillStyle='#cdbf9a'; ctx.fillText('Pulsa Esc para continuar', W/2, 124);
-  ctx.fillStyle='#aef7c2'; ctx.font='bold 20px Courier New'; ctx.fillText('APUCHIS', W/2, 150);
-  ctx.fillStyle='#8a9f78'; ctx.font='12px Courier New'; ctx.fillText('(poderes duran 1 ronda)', W/2, 170);
+  // left column: Apuchis \u00b7 right column: boss-drop powers
+  const lx=W/2-440; ctx.textAlign='left';
+  ctx.fillStyle='#aef7c2'; ctx.font='bold 20px Courier New'; ctx.fillText('APUCHIS', lx, 168);
+  ctx.fillStyle='#8a9f78'; ctx.font='12px Courier New'; ctx.fillText('(duran 1 ronda)', lx+108, 168);
   const list=[['tierra','Tierra','Velocidad (m\u00e1x 3)'],['piedra','Piedra','Fuerza (m\u00e1x 3)'],['rio','Rio','Vida (full)'],['cuarzo','Cuarzo','Protecci\u00f3n (m\u00e1x 3)'],['morganita','Morganita','Rayo l\u00e1ser x3'],['safiro','Safiro','Explosi\u00f3n el\u00e9ctrica x1']];
-  const lx=W/2-200; let y=205; ctx.textAlign='left';
+  let y=205;
   for(const it of list){
     const img=APU_IMG[it[0]];
     if(img && img.naturalWidth){ const h=34, w=h*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, lx, y-26, w, h); }
@@ -3229,9 +3681,26 @@ function drawPause(){
     ctx.fillStyle='#e8e0cc'; ctx.font='15px Courier New'; ctx.fillText(it[2], lx+184, y);
     y+=42;
   }
+  const gx=W/2+60;
+  ctx.fillStyle='#ffd8a0'; ctx.font='bold 20px Courier New'; ctx.fillText('PODERES DE JEFE', gx, 168);
+  ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New'; ctx.fillText('(rondas 5 / 10 / 15)', gx+195, 168);
+  ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+  ctx.fillText('Vence al jefe y recoge el poder que suelta.', gx, 196);
+  ctx.fillText('Lo usa quien lo agarra \u00b7 Tecla: F (J1) o . (J2)', gx, 216);
+  const gear=[['dinamita','Dinamita x5: col\u00f3cala y det\u00f3nala','con la misma tecla'],
+              ['muro','Muros x20: bloquean enemigos y','sus disparos \u00b7 se colocan en la rejilla'],
+              ['torreta','Torre con flechas cada 3s:','mata de un tiro']];
+  let gy=258;
+  for(const g of gear){
+    const G=GEAR_DEF[g[0]];
+    ctx.fillStyle=G.color; ctx.font='bold 16px Courier New'; ctx.fillText(G.label, gx, gy);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText(g[1], gx+16, gy+20); ctx.fillText(g[2], gx+16, gy+38);
+    gy+=68;
+  }
   if(players.length>1){
     ctx.textAlign='center'; ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New';
-    ctx.fillText('CO-OP: revive a tu compa\u00f1ero par\u00e1ndote 5s sobre su cruz', W/2, y+20);
+    ctx.fillText('CO-OP: revive a tu compa\u00f1ero par\u00e1ndote 5s sobre su cruz', W/2, 492);
   }
   ctx.textAlign='center';
   const popts=['CONTINUAR','AJUSTES','VOLVER AL MEN\u00da'];
@@ -3257,7 +3726,7 @@ function drawLobby(){
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
   ctx.fillText('Cópialo con el botón "Copiar" del recuadro arriba a la derecha ↗', W/2, 202);
   const n = 1 + NET.conns.length;
-  const rows = [{t:'J1 — TÚ (anfitrión)', on:true}];
+  const rows = [{t:'J1 — anfitrión', on:true}];
   for(let i=0;i<3;i++){ const c = i < NET.conns.length; rows.push({t:'J'+(i+2)+' — '+(c?'conectado':'esperando…'), on:c}); }
   rows.forEach((r,i)=>{
     const yy=276+i*44;
@@ -3413,20 +3882,23 @@ function drawSelect(){
 }
 function startGame(){
   resumeCumbia();
-  obstacles = (currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS; arenaBG=null; arenaTrees=null;
+  // copy the map's obstacle list — Inca wall blocks get pushed/spliced into `obstacles` at runtime,
+  // so the pristine per-map arrays must never be mutated
+  obstacles = ((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
   WORLD_W = (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
   WORLD_H = (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H; camX=0; camY=0;
   cliffs = (currentMap==='templo')?CLIFFS_TEMPLO:[];
   round=0; score=0; particles.length=0; enemies.length=0;
   apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
   players=[];
-  const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space'};
-  const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'};
+  const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
+  const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   if(NET.hosting){
     const sy0=(currentMap==='stonebridge')?344:WORLD_H/2;
     const total=Math.min(4, Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
-    const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'};
+    const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
     for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; }
     randomizeOnlineChars();   // everyone (host included) starts on a random character
@@ -3537,10 +4009,13 @@ function _frameBody(now){
   ctx.save(); ctx.translate(-camX,-camY);
   safe('arena',drawArena);
   if(currentMap==='machu'){ safe('buses',drawBuses); }
+  safe('wallgrid',drawWallGrid);
   // sort drawables by y for depth
   const _MO=(currentMap==='machu');
   const drawables=[...enemies.map(e=>({y:e.y,x:e.x,f:()=>drawEnemy(e)})),
-                   ...players.map(p=>({y:p.y,x:p.x,f:()=>drawPlayer(p)}))];
+                   ...players.map(p=>({y:p.y,x:p.x,f:()=>drawPlayer(p)})),
+                   ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,f:()=>drawIncaBlock(w)})),
+                   ...turrets.map(t=>({y:t.y+4,x:t.x,f:()=>drawTurret(t)}))];
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, f:()=>drawProp(o)}); } } }
   if(state===STATE.BREAK){
     for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
@@ -3563,6 +4038,9 @@ function _frameBody(now){
   safe('hearts',drawHearts);
   safe('nuggets',drawNuggets);
   safe('wallets',drawWallets);
+  safe('tarrows',drawTurretArrows);
+  safe('bombs',drawBombs);
+  safe('bossdrops',drawBossDrops);
   safe('torches',drawTorches);
   safe('treeborder',drawTreeBorder);
   safe('particles',drawParticles);
@@ -3641,6 +4119,7 @@ function netSerPlayer(p){
     alive:p.alive, fell:p.fell, fallT:p.fallT, deathAnim:(p.deathAnim==null?null:p.deathAnim), reviveProgress:p.reviveProgress||0,
     punchAnim:p.punchAnim, hitFlash:p.hitFlash, shieldFlash:p.shieldFlash, shields:p.shields,
     special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0,
+    gear:p.gear||'none', gearCount:p.gearCount||0,
     tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, fx:p.facing.x, fy:p.facing.y };
 }
 function netSerializeSnapshot(){
@@ -3660,7 +4139,9 @@ function netSerializeSnapshot(){
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
     fx:      fx_effects.map(netSerEnt),
     leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),
-    nuggets: nuggets.map(netSerEnt),  wallets: wallets.map(netSerEnt) };
+    nuggets: nuggets.map(netSerEnt),  wallets: wallets.map(netSerEnt),
+    bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
+    drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) };
 }
 function netBroadcast(dt){
   if(NET.role!=='host' || !NET.conns.length) return;
@@ -3675,7 +4156,7 @@ let gBuf=[];                 // recent snapshots, each stamped with local receiv
 const gEnemMap={};           // enemy id -> persistent render object (keeps locally-advanced anim clocks)
 const gApuMap={};            // apuchi id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
-let gPrevRound=-999, gProjSeq=-1;
+let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 function netOnSnapshot(d){
   if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; return; }
   if(!d._snap) return;
@@ -3689,8 +4170,9 @@ function netApplyMeta(s){
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
   if(currentMap!==s.currentMap){
     currentMap=s.currentMap;
-    obstacles=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS;
+    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice();
     cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
+    gWallSig=null;   // force the wall/obstacle rebuild on the fresh map
   }
   WORLD_W=s.worldW; WORLD_H=s.worldH;
 }
@@ -3700,6 +4182,7 @@ function netRenderPlayer(sp){
     alive:sp.alive, pending:sp.pending, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, reviveProgress:sp.reviveProgress,
     punchAnim:sp.punchAnim, hitFlash:sp.hitFlash, shieldFlash:sp.shieldFlash, shields:sp.shields,
     special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge,
+    gear:sp.gear, gearCount:sp.gearCount,
     tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy} };
 }
 function netPredictOwned(rp, me, cur, dt){
@@ -3805,9 +4288,25 @@ function netApplyGuest(dt){
     iceBeams.length=0; for(const b2 of cur.ice||[])    iceBeams.push({...b2});
     nuggets.length=0;  for(const g of cur.nuggets||[]) nuggets.push({...g});
     wallets.length=0;  for(const w of cur.wallets||[]) wallets.push({...w});
+    turretArrows.length=0; for(const r2 of cur.tarrows||[]) turretArrows.push({...r2});
   }
+  // boss-drop gadgets: bombs / turrets / drop crates replicate wholesale each snapshot
+  bombs.length=0;     for(const b3 of cur.bombs||[])   bombs.push({...b3});
+  turrets.length=0;   for(const t2 of cur.turrets||[]) turrets.push({...t2});
+  bossDrops.length=0; for(const d2 of cur.drops||[])   bossDrops.push({...d2});
+  // Inca walls also live inside `obstacles` (own-player prediction collides with them), so the
+  // obstacle list is rebuilt from the pristine map layout whenever the replicated wall set changes
+  { let sig=''; for(const w2 of cur.incaW||[]) sig+=w2.id+':'+w2.hp+',';
+    if(sig!==gWallSig){
+      gWallSig=sig;
+      incaWalls.length=0;
+      for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:WALL_HP, id:w2.id});
+      const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS;
+      obstacles=base.concat(incaWalls);
+    } }
   for(const l of leaves){  l.x+=(l.vx||0)*dt; l.y+=(l.vy||0)*dt; }
   for(const r of rays){    r.x+=(r.vx||0)*dt; r.y+=(r.vy||0)*dt; }
+  for(const r2 of turretArrows){ r2.x+=(r2.vx||0)*dt; r2.y+=(r2.vy||0)*dt; }
   for(const g of nuggets){ g.x+=(g.vx||0)*dt; g.y+=(g.vy||0)*dt; g.bob=(g.bob||0)+dt*8; }
   for(const b2 of iceBeams){ b2.life-=dt; }               // fade the beam smoothly; resync restores it
   for(const w of wallets){ w.bob=(w.bob||0)+dt*4; w.spin=(w.spin||0)+dt*1.5; }
@@ -3866,6 +4365,7 @@ requestAnimationFrame(frame);
     keysObj['ArrowLeft']  = !!d.l;
     keysObj['ArrowRight'] = !!d.r;
     keysObj['Comma']      = !!d.p;
+    keysObj['Period']     = !!d.g;
   }
 
   if(joinId){
@@ -3886,14 +4386,14 @@ requestAnimationFrame(frame);
       return {
         u:  !!(gk['KeyW']||gk['ArrowUp']),    dn: !!(gk['KeyS']||gk['ArrowDown']),
         l:  !!(gk['KeyA']||gk['ArrowLeft']),  r:  !!(gk['KeyD']||gk['ArrowRight']),
-        p:  !!(gk['Space']||gk['Comma'])
+        p:  !!(gk['Space']||gk['Comma']),     g:  !!(gk['KeyF']||gk['Period'])
       };
     }
     // send the instant input changes (force=true for the periodic heartbeat resend);
     // the channel is unreliable, so the heartbeat corrects any dropped/lost key change.
     function sendInput(force){
       if(!(NET.conn && NET.conn.open)) return;
-      const p = inputPacket(), sig = (p.u?1:0)+''+(p.dn?1:0)+(p.l?1:0)+(p.r?1:0)+(p.p?1:0);
+      const p = inputPacket(), sig = (p.u?1:0)+''+(p.dn?1:0)+(p.l?1:0)+(p.r?1:0)+(p.p?1:0)+(p.g?1:0);
       if(!force && sig===lastSig) return;   // nothing changed → don't spam (also swallows key-repeat)
       lastSig = sig;
       try{ NET.conn.send(p); }catch(e){}
@@ -3944,7 +4444,7 @@ requestAnimationFrame(frame);
         if(players[guest.slot]) players[guest.slot].keysrc = guest.keys;
         else if(players.length<4){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
-          const p=makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'});
+          const p=makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
           p.keysrc=guest.keys;
           // Joining mid-round? Sit them out (dead/hidden) until the next round starts, so nobody can
           // leave-and-rejoin at full health to dodge a loss. Joining during the break/intro is fine.
