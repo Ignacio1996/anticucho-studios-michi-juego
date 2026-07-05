@@ -1471,7 +1471,7 @@ function placeTurret(p){
   if(ok && currentMap==='machu' && (ty<MACHU_SKY+20||ty>WORLD_H-30-machuElev(tx))) ok=false;
   if(ok && currentMap==='stonebridge' && (ty<126||ty>562)) ok=false;
   if(!ok){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#caa66a'); return false; }
-  turrets.push({id:_entId++, x:Math.round(tx), y:Math.round(ty), hp:50, maxhp:50, cd:1.2, ang:0, hitFlash:0});
+  turrets.push({id:_entId++, x:Math.round(tx), y:Math.round(ty), hp:40, maxhp:40, cd:1.2, ang:0, hitFlash:0});
   spark(tx,ty,'#caa66a',14,130); floatText(tx,ty-34,'¡TORRETA!','#caa66a'); playPickup();
   return true;
 }
@@ -1528,7 +1528,9 @@ function updateGear(dt){
     if(!gone){ for(const o of obstacles){ if(circleRectCollide(r.x,r.y,4,o)){gone=true; spark(r.x,r.y,'#bfa77a',4,60); break;} } }
     if(!gone) for(const e of enemies){ if(e.dead) continue;
       if(dist(r.x,r.y,e.x,e.y)<e.radius+6){
-        if(e.boss){ e.hp-=30; } else { e.hp=0; }   // bosses take it like a regular player hit
+        if(e.boss){ e.hp-=30; }                                    // bosses take it like a regular player hit
+        else if(e.leafer||e.archer){ e.hp-=e.maxhp*0.34; }         // throwers need 3 arrows
+        else { e.hp=0; }
         e.hitFlash=0.12; e.stagger=0.25;
         spark(e.x,e.y,'#d8c89a',6,110); playHitThud();
         if(e.hp<=0) killEnemy(e,null);
@@ -3461,7 +3463,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-05.6';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-05.7';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3689,7 +3691,7 @@ function drawPause(){
   ctx.fillText('Lo usa quien lo agarra \u00b7 Tecla: F (J1) o . (J2)', gx, 216);
   const gear=[['dinamita','Dinamita x5: col\u00f3cala y det\u00f3nala','con la misma tecla'],
               ['muro','Muros x20: bloquean enemigos y','sus disparos \u00b7 se colocan en la rejilla'],
-              ['torreta','Torre con flechas cada 3s:','mata de un tiro']];
+              ['torreta','Torre con flechas cada 3s: mata de','un tiro (lanzadores aguantan 3)']];
   let gy=258;
   for(const g of gear){
     const G=GEAR_DEF[g[0]];
