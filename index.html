@@ -61,6 +61,9 @@ let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deat
 let masterGain=null, streamDest=null;   // master bus + a tap fed to online guests
 let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
 let pauseView='main', pauseSel=0, setSel=0;
+// Online: the host's pause is a LOCAL overlay only — the shared simulation keeps running and guests
+// keep playing (the pause is never broadcast). Toggled instead of the global STATE.PAUSE.
+let netLocalPause=false;
 function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; }
 function adjustVol(sel,delta){ if(sel===0){ musicVol=clamp(musicVol+delta,0,1); applyMusicVol(); } else { sfxVol=clamp(sfxVol+delta,0,1); if(sfxGain) sfxGain.gain.value=sfxVol; } try{ localStorage.setItem('fm_musicVol',musicVol); localStorage.setItem('fm_sfxVol',sfxVol); }catch(e){} } let lastWow=0, plinCount=0;
 AUDIO_SRC.menu="assets/snd_019.mp3";
@@ -560,13 +563,14 @@ function tinted(img, key, color){
 
 // ---------- Input ----------
 const keys = {};
+const NO_KEYS = Object.freeze({});   // frozen empty key map: used to freeze a player's input
 const NET = { role:'local', peer:null, conn:null, conns:[], link:'', hosting:false,   // host: conns = up to 3 guests
   guestReady:false, slot:1, snap:null, guestKeys:null, waitState:'' };                 // guest: replicated-state fields
 addEventListener('keydown', e => {
   initAudio();
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Comma'].includes(e.code)) e.preventDefault();
-  if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else togglePause(); }
+  if (e.code === 'Escape'){ if((state===STATE.PAUSE||netLocalPause) && pauseView==='settings'){ pauseView='main'; } else togglePause(); }
   // menu/shop interactions
   handleMenuKey(e.code);
 });
@@ -766,9 +770,33 @@ function makePlayer(kind, x, y, controls){
 }
 let players = [];
 
+// Online: give every player (host included) a fresh, random playable character each round, so
+// anyone can end up as any character. Swap the character identity + base combat stats but keep the
+// player's earned progress (shields / special / oro) and their current health as a fraction.
+function reassignKind(p, kind){
+  const C=CHARS[kind]; const base={...C.base};
+  const frac = (p.maxhp>0) ? clamp(p.hp/p.maxhp,0,1) : 1;
+  p.kind=kind; p.name=C.name; p.color=C.color; p.radius=base.radius; p.base=base;
+  p.maxhp=base.maxhp; p.hp=Math.max(1, Math.round(base.maxhp*frac));
+  p.dmg=base.dmg; p.knock=base.knock; p.speed=base.speed; p.cd=base.cd;
+}
+function shuffledChars(){
+  const a=CHAR_LIST.slice();
+  for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; }
+  return a;
+}
+function randomizeOnlineChars(){
+  if(!NET.hosting) return;        // online host only (NET.role defaults to 'host' even for local play)
+  const order=shuffledChars();    // distinct chars (CHAR_LIST has 4, max 4 players) -> no duplicates
+  for(let i=0;i<players.length;i++) reassignKind(players[i], order[i%order.length]);
+}
+
 const TIERRA_MULT=[1,1.18,1.34,1.5];   // speed per stack
 const PIEDRA_MULT=[1,1.3,1.6,2.0];     // damage per stack
-function effSpeed(p){ return p.speed * TIERRA_MULT[p.tierra] * ((round>=20)?1.34:1) * ((currentMap==='machu'||currentMap==='templo')?1.2:1) * ((currentMap==='amazonas'&&round>=17)?1.34:1); }
+// Speed stays constant from round 1 to the last round on any given map — the only way to go
+// faster is by stacking Tierra apuchis. (The machu/templo ×1.2 is a per-map constant, applied
+// every round and matched on enemies, not a late-round ramp.)
+function effSpeed(p){ return p.speed * TIERRA_MULT[p.tierra] * ((currentMap==='machu'||currentMap==='templo')?1.2:1); }
 function effDmg(p){ return p.dmg * PIEDRA_MULT[p.piedra]; }
 function effCd(p){ return p.cd; }
 function effKnock(p){ return p.knock; }
@@ -1314,7 +1342,9 @@ function updatePlayers(dt){
     // movement
     let mx=0,my=0;
     const c=p.controls;
-    const ks=p.keysrc||keys;
+    // While the online host has its LOCAL pause overlay open, freeze only its own player
+    // (no keysrc = the local keyboard). Guests (keysrc set) keep playing normally.
+    const ks=(netLocalPause && !p.keysrc) ? NO_KEYS : (p.keysrc||keys);
     if(ks[c.up]) my-=1;
     if(ks[c.down]) my+=1;
     if(ks[c.left]) mx-=1;
@@ -1486,6 +1516,7 @@ function updateBreakItems(dt){
       const a=apuchis[i];
       if(dist(p.x,p.y,a.x,a.y) < p.radius+a.r){
         if(a.type==='rio' && (p.rioGrabbed || p.hp>=p.maxhp)) continue;   // 1 Rio each, and not when full
+        if(apuMaxed(p,a.type)) continue;   // already at max stack for this power -> leave it for the others (don't waste it)
         collectApuchi(p,a.type);
         if(a.type==='rio') p.rioGrabbed=true;
         spark(a.x,a.y,APU_DEF[a.type].color,14,150);
@@ -1493,6 +1524,14 @@ function updateBreakItems(dt){
       }
     }
   }
+}
+// True when the player is already at the max stack for a capped power, so grabbing another
+// would be wasted — the pickup is left on the ground for a teammate instead.
+function apuMaxed(p,type){
+  if(type==='tierra') return p.tierra>=3;
+  if(type==='piedra') return p.piedra>=3;
+  if(type==='cuarzo') return p.shields>=3;
+  return false;
 }
 function collectApuchi(p,type){
   const D=APU_DEF[type]; let msg=D.label;
@@ -1512,6 +1551,7 @@ function enemiesForRound(r){ return Math.round(4 + r*1.7 + Math.pow(r,1.15)); }
 function startRound(){
   round++;
   state = STATE.PLAY;
+  randomizeOnlineChars();   // online: reshuffle everyone's character for the new round
   // Slight extra difficulty for 3-4 players (kept well below the added firepower, so never impossible)
   const partyMul = (players.length>=4) ? 1.3 : (players.length===3) ? 1.15 : 1;
   spawnQueue = Math.max(3, Math.round(enemiesForRound(round)*MAP_CFG[currentMap].countMul*((currentMap==='stonebridge'&&mode===2)?1.2:1)*(mode===1?0.7:1)*partyMul));
@@ -2853,9 +2893,26 @@ function drawApuStatus(p,x,y){
 function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,52);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 18px Courier New'; ctx.textAlign='center';
-  if(state===STATE.PLAY){ ctx.fillText('RONDA '+round, W/2, 22); }
-  if(state===STATE.PLAY){ ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New';
-    ctx.fillText('Enemigos: '+(enemies.filter(en=>!en.dead).length+spawnQueue), W/2, 40); }
+  if(state===STATE.PLAY){
+    const cnt='Enemigos: '+(enemies.filter(en=>!en.dead).length+spawnQueue);
+    if(players.length>=3){
+      // 3-4 players (online): the health bars fill the whole top strip and boss bars fill the
+      // centre just below it, so a centered round label gets covered. Tuck it into a badge in the
+      // top-right corner (below PUNTOS) where nothing else draws.
+      const label='RONDA '+round;
+      ctx.font='bold 16px Courier New';
+      const bw=Math.max(ctx.measureText(label).width, ctx.measureText(cnt).width)+24, by=56, bx=W-8-bw;
+      ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(bx,by,bw,40);
+      ctx.strokeStyle='rgba(255,225,74,0.45)'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,40);
+      ctx.textAlign='right';
+      ctx.fillStyle='#ffe9b0'; ctx.font='bold 16px Courier New'; ctx.fillText(label, W-20, by+18);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W-20, by+33);
+      ctx.textAlign='center';
+    } else {
+      ctx.fillText('RONDA '+round, W/2, 22);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 40);
+    }
+  }
   ctx.font='14px Courier New'; ctx.textAlign='right';
   ctx.fillStyle='#ffd24a'; ctx.fillText('PUNTOS '+score, W-14, 22);
   ctx.textAlign='left';
@@ -2899,7 +2956,7 @@ function drawBreakUI(){
 function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY; }
 function playMenuMusic(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
 function stopMenuMusic(){ try{ if(menuMusic) menuMusic.pause(); }catch(e){} }
-function gotoMainMenu(){ stopVoices(); state=STATE.MAINMENU; mainSel=0; mainMenuT=99; playMenuMusic(); }
+function gotoMainMenu(){ stopVoices(); netLocalPause=false; state=STATE.MAINMENU; mainSel=0; mainMenuT=99; playMenuMusic(); }
 
 function rrect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 function drawImageCover(img){
@@ -3200,7 +3257,7 @@ function drawLobby(){
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
   ctx.fillText('Cópialo con el botón "Copiar" del recuadro arriba a la derecha ↗', W/2, 202);
   const n = 1 + NET.conns.length;
-  const rows = [{t:'J1 — '+(CHAR_LIST[0]||'freddy').toUpperCase()+' (tú, anfitrión)', on:true}];
+  const rows = [{t:'J1 — TÚ (anfitrión)', on:true}];
   for(let i=0;i<3;i++){ const c = i < NET.conns.length; rows.push({t:'J'+(i+2)+' — '+(c?'conectado':'esperando…'), on:c}); }
   rows.forEach((r,i)=>{
     const yy=276+i*44;
@@ -3238,7 +3295,7 @@ function handleMenuKey(code){
     if(code==='Enter'||code==='Space') startGame();
     else if(code==='Escape') exitLobby();
   } else if(state===STATE.SELECT){ handleSelectKey(code);
-  } else if(state===STATE.PAUSE){
+  } else if(state===STATE.PAUSE||netLocalPause){
     if(pauseView==='settings'){
       if(code==='ArrowUp'||code==='ArrowDown'||code==='KeyW'||code==='KeyS') setSel=(setSel+1)%2;
       else if(code==='ArrowLeft'||code==='KeyA') adjustVol(setSel,-0.1);
@@ -3372,6 +3429,7 @@ function startGame(){
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma'};
     for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; }
+    randomizeOnlineChars();   // everyone (host included) starts on a random character
   } else if(mode===1){
     players.push(makePlayer(selChar1||'freddy', WORLD_W/2, (currentMap==='stonebridge')?344:WORLD_H/2, P1));
   } else {
@@ -3384,6 +3442,11 @@ function startGame(){
 }
 
 function togglePause(){
+  // Online host: pause only the local view. Keep simulating + broadcasting so nobody else freezes.
+  if(NET.role==='host' && NET.conns.length){
+    if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO){ netLocalPause=!netLocalPause; pauseView='main'; pauseSel=0; }
+    return;
+  }
   if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO){ prevState=state; state=STATE.PAUSE; pauseView='main'; pauseSel=0; }
   else if(state===STATE.PAUSE){ state=prevState; }
 }
@@ -3510,7 +3573,7 @@ function _frameBody(now){
   safe('bossbars',drawBossBars);
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
   if(state===STATE.INTRO) safe('introui',drawIntroUI);
-  if(state===STATE.PAUSE) safe('pause',drawPause);
+  if(state===STATE.PAUSE||netLocalPause) safe('pause',drawPause);
   if(NET.role==='guest' && players[NET.slot] && players[NET.slot].pending) safe('joinwait',drawGuestJoinWaiting);
 
   ctx.restore();
