@@ -1322,7 +1322,9 @@ function killEnemy(e,p){
       return;
     }
     floatText(e.x,e.y-34,(currentMap==='stonebridge'?'\u00a1BRUJA BLANCA DERROTADA!':currentMap==='templo'?'\u00a1JARJACHA DERROTADA!':currentMap==='machu'?(e.kind==='evan'?'\u00a1EVAN DERROTADO!':'\u00a1BRIAN DERROTADO!'):'\u00a1TEDDINGTON DERROTADO!'),'#ffe9b0');
-    spawnBossDrop(e.x,e.y);   // rounds 5/10/15: mid-game bosses drop a random gadget power
+    // rounds 5/10/15: one gadget power per boss round — only the LAST boss standing drops it
+    // (matters on Machu Picchu, where Evan and Brian spawn together)
+    if(!enemies.some(en=>en.boss && !en.dead)) spawnBossDrop(e.x,e.y);
     return;
   }
   if(e.type==='normal'||e.type==='fast'){ dropNugget(e.x,e.y); }
