@@ -293,7 +293,7 @@ const TED_SRC={
   sp2:"assets/img_033.png",
 };
 const TED={}; for(const k in TED_SRC){ const im=new Image(); im.src=TED_SRC[k]; TED[k]=im; }
-const JAR_STOREH=260, JAR_DH=168, JAR_PUNCH_DUR=0.5, JAR_STUCK=3.4, JAR_WINDUP=1.0;
+const JAR_STOREH=260, JAR_DH=168, JAR_PUNCH_DUR=0.5, JAR_STUCK=1.9, JAR_WINDUP=1.0;
 const JAR_META={"ew1": {"w": 123, "h": 183, "feetX": 67.8, "feetY": 183}, "ew2": {"w": 110, "h": 180, "feetX": 49.8, "feetY": 180}, "ew3": {"w": 92, "h": 175, "feetX": 36.8, "feetY": 175}, "ea1": {"w": 124, "h": 182, "feetX": 63.8, "feetY": 182}, "ea2": {"w": 193, "h": 180, "feetX": 68.8, "feetY": 180}, "nw1": {"w": 100, "h": 180, "feetX": 52.8, "feetY": 180}, "nw2": {"w": 151, "h": 169, "feetX": 46.8, "feetY": 169}, "nw3": {"w": 100, "h": 180, "feetX": 43.8, "feetY": 180}, "na1": {"w": 129, "h": 196, "feetX": 83.8, "feetY": 196}, "na2": {"w": 129, "h": 190, "feetX": 53.8, "feetY": 190}, "na3": {"w": 171, "h": 163, "feetX": 58.8, "feetY": 163}, "sw1": {"w": 103, "h": 200, "feetX": 51.8, "feetY": 200}, "sw2": {"w": 102, "h": 184, "feetX": 48.8, "feetY": 184}, "sw3": {"w": 100, "h": 205, "feetX": 45.8, "feetY": 205}, "sa1": {"w": 155, "h": 212, "feetX": 72.8, "feetY": 212}, "sa2": {"w": 198, "h": 183, "feetX": 92.8, "feetY": 183}};
 const JAR_SRC={"ew1": "assets/img_034.png", "ew2": "assets/img_035.png", "ew3": "assets/img_036.png", "ea1": "assets/img_037.png", "ea2": "assets/img_038.png", "nw1": "assets/img_039.png", "nw2": "assets/img_040.png", "nw3": "assets/img_041.png", "na1": "assets/img_042.png", "na2": "assets/img_043.png", "na3": "assets/img_044.png", "sw1": "assets/img_045.png", "sw2": "assets/img_046.png", "sw3": "assets/img_047.png", "sa1": "assets/img_048.png", "sa2": "assets/img_049.png"};
 const JAR={}; for(const k in JAR_SRC){ const im=new Image(); im.src=JAR_SRC[k]; JAR[k]=im; }
@@ -1966,7 +1966,7 @@ function startRound(){
   round++;
   state = STATE.PLAY;
   // Slight extra difficulty for 3-4 players (kept well below the added firepower, so never impossible)
-  const partyMul = (players.length>=4) ? 1.3 : (players.length===3) ? 1.15 : 1;
+  const partyMul = (players.length>=4) ? 1.15 : (players.length===3) ? 1.10 : 1;
   spawnQueue = Math.max(3, Math.round(enemiesForRound(round)*MAP_CFG[currentMap].countMul*((currentMap==='stonebridge'&&mode===2)?1.2:1)*(mode===1?0.7:1)*partyMul));
   spawnTimer = 0;
   if(round%5===0 && currentMap==='machu'){ spawnQueue=Math.round(spawnQueue*0.5); spawnMachuBoss('evan', round===20, 0); spawnMachuBoss('brian', round===20, 1); }
@@ -2750,7 +2750,7 @@ function fireSupayballs(e,tgt){
 function spawnGiantBoss(){
   enemies.push({ id:_entId++, boss:true, giant:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
     x:WORLD_W/2, y:(currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):96)), radius:48,
-    hp:6000, maxhp:6000, dmg:(currentMap==='templo'?40:0), speed:(currentMap==='templo'?110:currentMap==='machu'?36:30),
+    hp:6900, maxhp:6900, dmg:(currentMap==='templo'?40:0), speed:(currentMap==='templo'?110:currentMap==='machu'?36:30),
     dir:'s', moving:false, animTime:Math.random()*2,
     punching:0, whipDone:false, punchDir:'s', whipCd:2.6,
     hitFlash:0, stuck:0, punchRight:true, stagger:0, vx:0, vy:0, wob:0, pts:1000 });
@@ -2759,7 +2759,7 @@ function spawnGiantBoss(){
 function spawnBoss(r){
   enemies.push({ id:_entId++, boss:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
     x:(WORLD_W>W?WORLD_W/2:W/2), y:(currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):80)), radius:40,
-    hp:500+r*100, maxhp:500+r*100, dmg:20+r*1.5, speed:(currentMap==='templo'?120:currentMap==='machu'?Math.round(Math.min(60,34+r)*1.2):Math.min(60,34+r)),
+    hp:Math.round((500+r*100)*1.15), maxhp:Math.round((500+r*100)*1.15), dmg:20+r*1.5, speed:(currentMap==='templo'?120:currentMap==='machu'?Math.round(Math.min(60,34+r)*1.2):Math.min(60,34+r)),
     dir:'s', moving:false, animTime:Math.random()*2,
     punching:0, whipDone:false, punchDir:'s', whipCd:2.4,
     hitFlash:0, stuck:0, punchRight:true, stagger:0, vx:0, vy:0, wob:0, pts:200+r*25 });
@@ -3027,7 +3027,7 @@ function spawnMachuBoss(kind,giant,row){
   const r=round;
   enemies.push({ id:_entId++, boss:true, giant:!!giant, type:'boss', kind:kind,
     x: WORLD_W/2 + (row?200:-200), y: MACHU_SKY+140, radius: giant?56:42, footR: giant?30:22,
-    hp:(giant?5200:480+r*95), maxhp:(giant?5200:480+r*95), dmg:0,
+    hp:(giant?5980:Math.round((480+r*95)*1.15)), maxhp:(giant?5980:Math.round((480+r*95)*1.15)), dmg:0,
     speed:(kind==='evan'?118:46),
     dir:'s', moving:false, animTime:Math.random()*2,
     punching:0, windup:0, punchMax:EVAN_PUNCH, whipDone:false, punchDir:'s', whipCd:1.4,
@@ -4117,6 +4117,47 @@ const NET_ESTATIC = ['type','skin','kind','radius','footR','maxhp','tint','color
   'gvar','lvar','gpvar','charge','leafer','archer','supay','llama','boss','giant','barRow','punchMax','dmg','speed'];
 const NET_ESTATIC_SET = new Set(NET_ESTATIC);
 
+// ---- online cue replication: gameplay SFX + floating texts ----
+// The host queues each cue as a tiny {t,n,a} / {t:'ft',…} event that rides the next few snapshots;
+// guests replay them through their LOCAL audio elements / particle list. No audio is ever streamed.
+// Events are resent for ~4 snapshots (the data channel is unreliable) and deduped by id on the guest.
+let netEvtId=0; const netEvtQ=[];
+function netQEvt(ev){ if(NET.role==='host' && NET.conns.length){ ev.i=++netEvtId; ev.q=netSeq; netEvtQ.push(ev); } }
+function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
+{ // wrap the shared-gameplay sound triggers + floatText so every host-side call also queues a net event
+  const _ft=floatText;
+  floatText=function(x,y,txt,color){ netQEvt({t:'ft',x,y,txt,c:color}); _ft(x,y,txt,color); };
+  const wrapSnd=(n,fn)=>function(a){ netQSnd(n,a); return fn(a); };
+  playHitThud=wrapSnd('hit',playHitThud);       playPickup=wrapSnd('pk',playPickup);
+  playCoin=wrapSnd('coin',playCoin);            playOroPower=wrapSnd('oro',playOroPower);
+  playZapSound=wrapSnd('zap',playZapSound);     playBeamSound=wrapSnd('beam',playBeamSound);
+  playCameraClick=wrapSnd('cam',playCameraClick); playMagic=wrapSnd('magic',playMagic);
+  playHee=wrapSnd('hee',playHee);               playHeeGiant=wrapSnd('heeg',playHeeGiant);
+  playBrujaAttack=wrapSnd('bruja',playBrujaAttack); playCharDeath=wrapSnd('die',playCharDeath);
+  const _pps=playPunchSound;   // punch voices key off the puncher's character
+  playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
+}
+const gPunchP={};   // guest: per-kind stand-in players so the sumac/shooshy voice cadence counters persist
+const NET_SND={
+  hit:()=>playHitThud(), pk:()=>playPickup(), coin:()=>playCoin(), oro:()=>playOroPower(),
+  zap:()=>playZapSound(), beam:()=>playBeamSound(), cam:()=>playCameraClick(), magic:()=>playMagic(),
+  hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
+  die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k}))
+};
+let gLastEvt=0, gEvtSynced=false;
+function netPlayEvts(d){
+  // first snapshot after joining: don't replay the resend backlog, just set the dedupe watermark
+  if(!gEvtSynced){ gEvtSynced=true; for(const ev of d.evts||[]) if(ev.i>gLastEvt) gLastEvt=ev.i; return; }
+  if(!d.evts) return;
+  for(const ev of d.evts){
+    if(ev.i<=gLastEvt) continue; gLastEvt=ev.i;
+    try{
+      if(ev.t==='ft') floatText(ev.x,ev.y,ev.txt,ev.c);
+      else if(ev.t==='s'){ const f=NET_SND[ev.n]; if(f) f(ev.a); }
+    }catch(e){}
+  }
+}
+
 // ---- host: serialize the live world into a compact, always-serializable snapshot ----
 function netSerEnt(e){  // copy primitive fields only → drops object refs / functions so BinaryPack never chokes
   const o={}; for(const k in e){ const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
@@ -4144,7 +4185,8 @@ function netSerializeSnapshot(){
     if(kf || (seq-fs)<NET_YOUNG) estatic[e.id]=netSerEnemyStatic(e);
   }
   if(kf){ for(const id of netFirstSeen.keys()) if(!ids.has(id)) netFirstSeen.delete(id); }  // prune despawned
-  return { _snap:1, seq,
+  while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();   // drop SFX/text events already resent ~4 times
+  return { _snap:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
     state, round, score, spawnQueue, breakTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
@@ -4178,6 +4220,7 @@ function netOnSnapshot(d){
   gBuf.push(d); if(gBuf.length>16) gBuf.shift();
   NET.snap=d; NET.guestReady=true;
   if(typeof d.you==='number') NET.slot=d.you;
+  netPlayEvts(d);   // replay the host's SFX/floating-text cues through local audio/particles
 }
 function _byId(arr){ const m={}; for(const e of arr) m[e.id]=e; return m; }
 function netApplyMeta(s){
@@ -4482,7 +4525,10 @@ requestAnimationFrame(frame);
         if(players[guest.slot]){ players[guest.slot].keysrc = guest.keys; players[guest.slot].netRemote = guest; }
         else if(players.length<4){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
-          const p=makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
+          // mid-game joiner: random character, but NEVER one already taken by another player
+          const taken=new Set(players.map(pp=>pp.kind));
+          const kind=shuffledChars().find(k=>!taken.has(k))||'michi';
+          const p=makePlayer(kind, WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
           p.keysrc=guest.keys; p.netRemote=guest;
           // Joining mid-round? Sit them out (dead/hidden) until the next round starts, so nobody can
           // leave-and-rejoin at full health to dodge a loss. Joining during the break/intro is fine.
