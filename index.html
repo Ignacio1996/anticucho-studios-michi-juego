@@ -57,7 +57,7 @@ const W = cv.width, H = cv.height;
 
 // ---------- Audio ----------
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
-let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, plinBase=null, plin2Base=null, wowBase=null, actx=null, sfxGain=null, audioStarted=false;
+let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, actx=null, sfxGain=null, audioStarted=false;
 let masterGain=null, streamDest=null;   // master bus + a tap fed to online guests
 let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
 let pauseView='main', pauseSel=0, setSel=0;
@@ -99,6 +99,47 @@ MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg"
 // but online multiplayer already requires a served http(s) origin.
 const AUDIO_DIRECT = (location.protocol==='file:');
 function routeEl(el){ if(AUDIO_DIRECT) return el; try{ if(actx && masterGain){ actx.createMediaElementSource(el).connect(masterGain); } }catch(e){} return el; }
+// ---- SFX playback via decoded Web Audio buffers (cached per file) ----
+// The old path created a fresh <audio> element per sound and routed each through
+// createMediaElementSource(); a source node pins its element in the graph forever, so every SFX
+// leaked a live media player — after minutes of play the browser hits its media-player cap and
+// audio first stutters, then new sounds go silent. BufferSource nodes are fire-and-forget and
+// still feed masterGain, so the WebRTC stream capture keeps hearing them.
+const SFX_BUF={}, SFX_LOADING={};
+function sfxBuffer(src){
+  if(!actx || AUDIO_DIRECT || !src) return null;   // file:// can't fetch() → element fallback
+  const b=SFX_BUF[src]; if(b) return b;
+  if(b!==false && !SFX_LOADING[src]){
+    SFX_LOADING[src]=true;
+    try{
+      fetch(src).then(r=>r.arrayBuffer()).then(ab=>actx.decodeAudioData(ab))
+        .then(buf=>{ SFX_BUF[src]=buf; delete SFX_LOADING[src]; })
+        .catch(()=>{ SFX_BUF[src]=false; delete SFX_LOADING[src]; });   // undecodable → element fallback for good
+    }catch(e){ delete SFX_LOADING[src]; }
+  }
+  return null;
+}
+// rate<1 also lowers pitch — same effect as the old preservesPitch=false + playbackRate trick.
+function playSfx(src, vol, rate){
+  const buf=sfxBuffer(src);
+  if(buf){
+    try{
+      const s=actx.createBufferSource(); s.buffer=buf; if(rate) s.playbackRate.value=rate;
+      const g=actx.createGain(); g.gain.value=vol;   // sfxGain applies the user's SFX volume on top
+      s.connect(g); g.connect(sfxGain); s.start();
+      s.onended=()=>{ try{ g.disconnect(); }catch(e){} };
+      return { stop(){ try{ s.stop(); }catch(e){} }, onended(cb){ const p=s.onended; s.onended=()=>{ if(p) p(); cb(); }; } };
+    }catch(e){}
+  }
+  // first play of a file (decode still in flight) or file:// origin: one-shot <audio> element
+  try{
+    const a=routeEl(new Audio(src)); a.volume=vol*sfxVol;
+    if(rate){ a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=rate; }
+    a.play().catch(()=>{});
+    return { stop(){ try{ a.pause(); a.currentTime=0; }catch(e){} }, onended(cb){ a.addEventListener('ended',cb); } };
+  }catch(e){}
+  return null;
+}
 function initAudio(){
   if(!audioStarted){
     audioStarted=true;
@@ -111,38 +152,36 @@ function initAudio(){
     try{ deathMusic=routeEl(new Audio(AUDIO_SRC.death)); deathMusic.loop=true; deathMusic.volume=0.5; }catch(e){}
     try{ losAndesMusic=routeEl(new Audio(AUDIO_SRC.losandes)); losAndesMusic.loop=true; losAndesMusic.volume=0.5; }catch(e){}
     applyMusicVol();
-    try{ plinBase=new Audio(AUDIO_SRC.plin); plinBase.load(); }catch(e){}
-    try{ plin2Base=new Audio(AUDIO_SRC.plin2); plin2Base.load(); }catch(e){}
-    try{ wowBase=new Audio(AUDIO_SRC.wow); wowBase.load(); }catch(e){}
+    // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
+    try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
   }
   try{ if(actx && actx.state==='suspended') actx.resume(); if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
-function playPlin(){ plinCount++; const p2=(plinCount%7===0); const base=p2?plin2Base:plinBase, src=p2?AUDIO_SRC.plin2:AUDIO_SRC.plin;
-  try{ const a=routeEl(base?base.cloneNode():new Audio(src)); a.volume=0.4*sfxVol; a.play().catch(()=>{}); }catch(e){} }
+function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
 let voices=[];
-function playOne(src,vol){ try{ const a=routeEl(new Audio(src)); a.volume=vol*sfxVol; voices.push(a); a.addEventListener('ended',()=>{ const k=voices.indexOf(a); if(k>=0) voices.splice(k,1); }); a.play().catch(()=>{}); return a; }catch(e){} }
-function stopVoices(){ for(const a of voices){ try{ a.pause(); a.currentTime=0; }catch(e){} } voices.length=0; }
+function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
+function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
 function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); }
 function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], 0.95); }
 function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], 0.95); }
 function playRoundStart(r){
   const boss=(r%5===0);
-  if(currentMap==='stonebridge'){ if(boss && r>=20){ try{ const a=routeEl(new Audio(AUDIO_SRC.bruja_round)); a.volume=0.75*sfxVol; a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=0.62; a.play().catch(()=>{}); }catch(e){} } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
+  if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
   if(currentMap==='machu'){ playOne(boss ? AUDIO_SRC.evan_round : AUDIO_SRC.mp_round, 0.85); return; }
   if(currentMap==='templo'){ if(boss){ if(r>=20) playOne(AUDIO_SRC.jar_intro2, 0.5); else playOne(AUDIO_SRC.jar_intro, 0.81); } else { playOne(AUDIO_SRC.guachi_intro,0.85); } return; }
-  if(r>=20){ try{ const a=routeEl(new Audio(AUDIO_SRC.tedintro)); a.volume=0.6*sfxVol; a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=0.62; a.play().catch(()=>{}); }catch(e){} return; }
+  if(r>=20){ playSfx(AUDIO_SRC.tedintro, 0.6, 0.62); return; }
   playOne(boss ? AUDIO_SRC.tedintro : AUDIO_SRC.chulla, 0.6);
 }
 function playMagic(){ playOne(AUDIO_SRC.magic, 0.3); }
-function playBrujaAttack(giant){ try{ const a=routeEl(new Audio(AUDIO_SRC.bruja_attack)); a.volume=0.72*sfxVol; if(giant){ a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=0.62; } a.play().catch(()=>{}); }catch(e){} }
-function playHeeGiant(){ try{ const a=routeEl(new Audio(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]])); a.volume=0.62*sfxVol; a.preservesPitch=false; a.mozPreservesPitch=false; a.webkitPreservesPitch=false; a.playbackRate=0.62; a.play().catch(()=>{}); }catch(e){} }
+function playBrujaAttack(giant){ playSfx(AUDIO_SRC.bruja_attack, 0.72, giant?0.62:0); }
+function playHeeGiant(){ playSfx(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.62, 0.62); }
 function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
 function playDeathMusic(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
 function playLosAndes(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
 function gameTrack(){ return currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
 function otherTrack(){ return currentMap==='stonebridge'?bgMusic:sbMusic; }
 function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
-function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; try{ const a=routeEl(wowBase?wowBase.cloneNode():new Audio(AUDIO_SRC.wow)); a.volume=0.4*sfxVol; a.play().catch(()=>{}); }catch(e){} }
+function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; playSfx(AUDIO_SRC.wow, 0.4); }
 function playPickup(){
   if(!actx) return;
   try{
@@ -158,7 +197,7 @@ function playPickup(){
     });
   }catch(e){}
 }
-function playCameraClick(){ try{ const a=routeEl(new Audio(AUDIO_SRC.camclick)); a.volume=0.5*sfxVol; a.play().catch(()=>{}); }catch(e){} }
+function playCameraClick(){ playSfx(AUDIO_SRC.camclick, 0.5); }
 function playBeamSound(){
   if(!actx) return;
   try{
@@ -4187,7 +4226,7 @@ function netSerializeSnapshot(){
   if(kf){ for(const id of netFirstSeen.keys()) if(!ids.has(id)) netFirstSeen.delete(id); }  // prune despawned
   while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();   // drop SFX/text events already resent ~4 times
   return { _snap:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
-    state, round, score, spawnQueue, breakTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
+    state, round, score, spawnQueue, breakTimer, introTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
@@ -4213,6 +4252,7 @@ const gEnemMap={};           // enemy id -> persistent render object (keeps loca
 const gApuMap={};            // apuchi id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
+let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
 function netOnSnapshot(d){
   if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; return; }
   if(!d._snap) return;
@@ -4244,8 +4284,8 @@ function netRenderPlayer(sp){
 }
 function netPredictOwned(rp, me, cur, dt){
   if(!me.alive){ gPred.init=false; gPred.punchAnim=0; return; }   // dead → just show authoritative pose
-  if(!gPred.init){ gPred.x=me.x; gPred.y=me.y; gPred.animTime=me.animTime||0; gPred.fx=me.fx||0; gPred.fy=me.fy||1; gPred.dir=me.dir||'s'; gPred.moving=false; gPred.init=true; }
-  const canMove=(state===STATE.PLAY||state===STATE.BREAK);   // no input during intro/pause/over
+  if(!gPred.init){ gPred.x=me.x; gPred.y=me.y; gPred.animTime=me.animTime||0; gPred.fx=(typeof me.fx==='number'?me.fx:0); gPred.fy=(typeof me.fy==='number'?me.fy:1); gPred.dir=me.dir||'s'; gPred.moving=false; gPred.init=true; }
+  const canMove=(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO);   // host allows movement during the intro countdown too (updateIntro→updatePlayers); no input during pause/over
   const k=canMove ? (NET.guestKeys||{}) : {};
   let mx=0,my=0;
   if(k['KeyW']||k['ArrowUp'])    my-=1;
@@ -4297,6 +4337,18 @@ function netApplyGuest(dt){
   const cur=NET.snap; if(!cur) return;
   netApplyMeta(cur);
   if(state===STATE.PAUSE) dt=0;   // host paused the sim: freeze local anim clocks / dead reckoning / prediction too
+  // round-1 intro: the condor isn't in the snapshot (its animation is fully determined by introTimer),
+  // so resync the countdown from the host and run the condor logic locally — same visuals, local audio.
+  if(state===STATE.INTRO){
+    if(gIntroSeq!==cur.seq){ gIntroSeq=cur.seq; introTimer=cur.introTimer||0; }
+    else introTimer=Math.max(0, introTimer-dt);          // smooth the countdown between ~18Hz snapshots
+    if(!condor && (15-introTimer)<14){
+      condor={ x:WORLD_W/2, y:(WORLD_H>H?WORLD_H*0.42:H*0.40), scale:0, spin:0, animTime:0, pose:3,
+               apSnd:true, lvSnd:true,   // the host relays its playMagic() cues via net events — don't double them
+               msg:false };              // the condor voice line is NOT relayed → play it locally
+    }
+    updateCondor(dt);
+  } else condor=null;
   const nowP=performance.now(), renderT=nowP-NET_INTERP;
   // pick the two snapshots bracketing the (delayed) render time for position interpolation
   let a=null, b=null;
@@ -4436,7 +4488,11 @@ requestAnimationFrame(frame);
     // client-authoritative movement: adopt the pose the guest simulated locally (its own player runs
     // with zero input latency). Attacks/damage stay host-authoritative via the keys above.
     if(typeof d.x==='number' && typeof d.y==='number'){
-      guest.pose = { x:d.x, y:d.y, fx:d.fx||0, fy:d.fy||1, dir:d.dr||'s', mv:!!d.mv };
+      // NOTE: fx/fy legitimately hit 0 when aiming along an axis — `d.fy||1` would turn a
+      // horizontal aim into a diagonal one (that bent Morganita beams 45° for guests).
+      guest.pose = { x:d.x, y:d.y,
+        fx:(typeof d.fx==='number'?d.fx:0), fy:(typeof d.fy==='number'?d.fy:1),
+        dir:d.dr||'s', mv:!!d.mv };
     }
   }
 
