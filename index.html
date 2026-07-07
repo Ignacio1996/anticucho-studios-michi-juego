@@ -637,6 +637,11 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 ['pointerdown','mousedown','mousemove','touchstart','click'].forEach(ev=>addEventListener(ev, ()=>{ try{ initAudio(); }catch(e){} }));
+// Browsers suspend the AudioContext when the tab is backgrounded (and under autoplay policy).
+// On a served origin all audio — music included — is routed through it, so once suspended
+// everything goes silent until the next keypress calls initAudio. Once unlocked, resume() works
+// without a fresh gesture, so recover the moment the tab is visible again.
+addEventListener('visibilitychange', ()=>{ try{ if(!document.hidden && actx && actx.state==='suspended') actx.resume(); }catch(e){} });
 
 // ---------- Helpers ----------
 const rand = (a,b) => a + Math.random()*(b-a);
