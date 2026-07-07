@@ -1507,7 +1507,7 @@ function placeTurret(p){
   if(ok && currentMap==='machu' && (ty<MACHU_SKY+20||ty>WORLD_H-30-machuElev(tx))) ok=false;
   if(ok && currentMap==='stonebridge' && (ty<126||ty>562)) ok=false;
   if(!ok){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#caa66a'); return false; }
-  turrets.push({id:_entId++, x:Math.round(tx), y:Math.round(ty), hp:40, maxhp:40, cd:1.2, ang:0, hitFlash:0});
+  turrets.push({id:_entId++, x:Math.round(tx), y:Math.round(ty), hp:48, maxhp:48, cd:1.2, ang:0, hitFlash:0});
   spark(tx,ty,'#caa66a',14,130); floatText(tx,ty-34,'¡TORRETA!','#caa66a'); playPickup();
   return true;
 }
