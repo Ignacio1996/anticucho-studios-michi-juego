@@ -3559,7 +3559,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-12.4';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-12.5';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3988,7 +3988,7 @@ function enterSelect(){ state=STATE.SELECT; selPending=false; pvpPending=false; 
 function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0; }
 function handleSelectKey(code){
   if(selPending) return;
-  if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; } else { state=STATE.MENU; menuSel=0; } return; }
+  if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
   if(selMode===1){
     if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+3)%4;
     else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%4;
@@ -4508,7 +4508,7 @@ function handlePvpKey(code){
   }
   // Escape itself is handled by togglePause() (shared with the guests' {pt:1} request)
   if(!pvp.paused) return;
-  if(code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') pvp.pauseSel=(pvp.pauseSel+1)%2;
+  if(code==='ArrowLeft'||code==='KeyA'||code==='ArrowRight'||code==='KeyD') pvp.pauseSel=(pvp.pauseSel+1)%2;   // the two options sit side by side
   if(code==='Enter'||code==='Space'){ if(pvp.pauseSel===0) pvpResume(); else pvpExit(true); }
 }
 function pvpResume(){
@@ -4758,7 +4758,7 @@ function drawPvp(){
         ctx.fillText((i===pvp.pauseSel?'▶ ':'')+o, ox, oy);
       });
       ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
-      ctx.fillText('↑↓ elegir · Enter: seleccionar · Esc: continuar', W/2, 156);
+      ctx.fillText('←→ elegir · Enter: seleccionar · Esc: continuar', W/2, 156);
     }
     // ---- instructions ----
     const lx=W/2-450;
