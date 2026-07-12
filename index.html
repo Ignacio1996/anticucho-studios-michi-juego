@@ -91,6 +91,7 @@ AUDIO_SRC.jar_intro="assets/snd_043.mp3";
 AUDIO_SRC.jar_intro2="assets/snd_044.mp3";
 AUDIO_SRC.guachi_intro="assets/snd_045.mp3";
 AUDIO_SRC.pvpbg="assets/snd_046.mp3";
+AUDIO_SRC.pvpboom="assets/snd_047.mp4";   // AAC audio — browsers decode it like any other SFX
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
 // On file:// origins createMediaElementSource() succeeds but emits silence (the media
@@ -193,6 +194,7 @@ function playRoundStart(r){
   playOne(boss ? AUDIO_SRC.tedintro : AUDIO_SRC.chulla, 0.6);
 }
 function playMagic(){ playOne(AUDIO_SRC.magic, 0.3); }
+function playPvpBoom(){ playSfx(AUDIO_SRC.pvpboom, 0.8); }
 function playBrujaAttack(giant){ playSfx(AUDIO_SRC.bruja_attack, 0.72, giant?0.62:0); }
 function playHeeGiant(){ playSfx(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.62, 0.62); }
 function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
@@ -3557,7 +3559,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-12.3';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-12.4';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3616,7 +3618,7 @@ function wrapLeftCentered(text,cx,y,maxw,lh){
   lines.forEach((ln,i)=>ctx.fillText(ln,cx,y+i*lh));
 }
 
-// mode chooser shown after JUGAR / JUGAR ONLINE: Horda (survival) or PVP (bomberman duel)
+// mode chooser shown after JUGAR / JUGAR ONLINE: Horda (survival) or PVP (bomb duel)
 function drawModos(){
   drawBannerBG();
   ctx.textAlign='center';
@@ -3626,7 +3628,7 @@ function drawModos(){
   ctx.fillText('Elige el modo de juego', W/2, 130);
   const cards=[
     {t:'HORDA', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe', d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', locked:false},
-    {t:'PVP',   d1:'Duelo estilo bomberman: bombas,',  d2:'Apuchis y un solo golpe', d3:NET.hosting?'2-4 jugadores':'2 jugadores', locked:false},
+    {t:'PVP',   d1:'Duelo explosivo: bombas, Apuchis',  d2:'y un solo golpe', d3:NET.hosting?'2-4 jugadores':'2 jugadores', locked:false},
   ];
   const cw=330, chh=280, gap=60, x0=(W-2*cw-gap)/2, cy=190;
   cards.forEach((m,i)=>{
@@ -3692,7 +3694,7 @@ function drawHelp(){
   ry+=94;
   ctx.fillStyle='#ffb44a'; ctx.font='bold 20px Courier New'; ctx.fillText('PVP', rx, ry);
   ctx.fillStyle='#ffffff'; ctx.font='bold 13px Courier New';
-  wrapLeft('Duelo bomberman (2 local · 2-4 online): pon bombas con tu botón de golpe, rompe cajas, recoge Apuchis y sé el último en pie. Un golpe de fuego = KO. La explosión avanza en cruz por la rejilla y la piedra tallada la bloquea. Con Safiro tus bombas solo explotan cuando pulsas F (J1) o punto (J2). Gana 3 rondas — ¡a los 90s empieza el derrumbe!', rx, ry+20, SR-rx, 18);
+  wrapLeft('Duelo explosivo (2 local · 2-4 online): pon bombas con tu botón de golpe, rompe cajas, recoge Apuchis y sé el último en pie. Un golpe de fuego = KO. La explosión avanza en cruz por la rejilla y la piedra tallada la bloquea. Con Safiro tus bombas solo explotan cuando pulsas F (J1) o punto (J2). Gana 3 rondas — ¡a los 90s empieza el derrumbe!', rx, ry+20, SR-rx, 18);
   ry+=152;
   ctx.fillStyle='#ffffff'; ctx.font='bold 20px Courier New'; ctx.fillText('CONTROLES', rx, ry);
   ctx.font='bold 13px Courier New';
@@ -3860,7 +3862,7 @@ function drawLobby(){
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText(lobbyMode==='pvp'?'SALA ONLINE — PVP':'SALA ONLINE', W/2, 96);
   ctx.fillStyle='#8cc24a'; ctx.font='16px Courier New';
-  ctx.fillText(lobbyMode==='pvp'?'Duelo bomberman 2-4 jugadores · comparte el enlace (hasta 3 amigos)':'Comparte el enlace con tus amigos (hasta 3)', W/2, 134);
+  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-4 jugadores · comparte el enlace (hasta 3 amigos)':'Comparte el enlace con tus amigos (hasta 3)', W/2, 134);
   ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
   ctx.fillText(NET.link || 'Generando enlace…', W/2, 178);
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
@@ -4071,7 +4073,7 @@ function startGame(){
   else startIntro();
 }
 
-// ================= VERSUS — bomberman-style local 2P duel =================
+// ================= VERSUS — grid bomb-duel PVP mode =================
 // Free pixel movement, but everything else is grid-exact: bombs snap to tiles, blasts are
 // per-tile flames in the 4 cardinal directions (stopped cold by unbreakable stone; the first
 // breakable crate absorbs the flame unless the bomb pierces), and Apuchis are the POWER-UPS
@@ -4147,28 +4149,54 @@ function startPvpRound(){
   for(let r=0;r<PVP_ROWS;r++){ const row=[]; for(let c=0;c<PVP_COLS;c++){
     row.push((c%2===1 && r%2===1) ? 1 : (Math.random()<0.74 ? 2 : 0));
   } g.push(row); }
-  // spawn pockets: all four corners + two tiles along each edge stay clear so round 1 isn't a guaranteed self-kill
-  const CE=PVP_COLS-1, RE=PVP_ROWS-1;
-  const CZ=[[0,0],[1,0],[2,0],[0,1],[0,2],
-            [CE,RE],[CE-1,RE],[CE-2,RE],[CE,RE-1],[CE,RE-2],
-            [CE,0],[CE-1,0],[CE-2,0],[CE,1],[CE,2],
-            [0,RE],[1,RE],[2,RE],[0,RE-1],[0,RE-2]];
-  for(const z of CZ){ if(g[z[1]][z[0]]===2) g[z[1]][z[0]]=0; }
+  // random spawns: anywhere on the grid (never a pillar), kept far apart; each spawn gets a
+  // cleared cross-pocket (2 tiles per open direction) so round 1 isn't a guaranteed self-kill
+  const spots=pvpPickSpawns(Math.max(2,players.length));
+  for(const s of spots){
+    g[s[1]][s[0]]=0;
+    for(const d of [[1,0],[-1,0],[0,1],[0,-1]]){
+      for(let k=1;k<=2;k++){
+        const cc=s[0]+d[0]*k, rr=s[1]+d[1]*k;
+        if(cc<0||rr<0||cc>=PVP_COLS||rr>=PVP_ROWS) break;
+        if(g[rr][cc]===1) break;          // pillar: this direction is a dead end, leave the rest
+        if(g[rr][cc]===2) g[rr][cc]=0;
+      }
+    }
+  }
   pvp.grid=g; pvp.bombs.length=0; pvp.flames.length=0; pvp.items.length=0;
   pvp.sudden=0; pvp.suddenOn=false; pvp.dropT=0; pvp.spiral=pvpBuildSpiral(); pvp.spiralI=0; pvp.winner=-1; pvp.warnCell=null;
   particles.length=0;
-  const spots=[[0,0],[CE,RE],[CE,0],[0,RE]];
   players.forEach((p,i)=>{
     const sp=spots[i%spots.length];
     p.x=pvpC2X(sp[0]); p.y=pvpR2Y(sp[1]);
     p.alive=!p.departed; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.pending=false;
-    p.dir=(sp[1]===0)?'s':'n'; p.moving=false; p.animTime=0; p.punchAnim=0; p.hitFlash=0; p.shieldFlash=0;
+    p.dir=(sp[1]<PVP_ROWS/2)?'s':'n'; p.moving=false; p.animTime=0; p.punchAnim=0; p.hitFlash=0; p.shieldFlash=0;
     p.shields=0; p.special='none'; p.oroCharge=0; p.gear='none'; p.gearCount=0;
     p.pvpRange=1; p.pvpMaxB=1; p.pvpSpd=1; p.pvpKick=false; p.pvpPierce=false; p.pvpRemote=false;
     p.pvpCnt={piedra:0,tierra:0,cuarzo:0,rio:0,morganita:0,safiro:0};
     p.wasPunch=true; p.wasGear=true;   // require a fresh key press once the round starts
   });
   pvp.sub='count'; pvp.count=3.0; pvp.t=0;
+}
+// pick n non-pillar tiles as far apart as possible: try a large min-distance first,
+// relax it until a placement fits (corners as the never-fails fallback)
+function pvpPickSpawns(n){
+  const cand=[];
+  for(let r=0;r<PVP_ROWS;r++)for(let c=0;c<PVP_COLS;c++){ if(!(c%2===1&&r%2===1)) cand.push([c,r]); }
+  for(let D=7;D>=3;D-=0.5){
+    for(let attempt=0;attempt<30;attempt++){
+      const pool=cand.slice();
+      for(let i=pool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=pool[i]; pool[i]=pool[j]; pool[j]=t; }
+      const picks=[];
+      for(const t of pool){
+        let ok=true;
+        for(const q of picks){ if(Math.hypot(t[0]-q[0],t[1]-q[1])<D){ ok=false; break; } }
+        if(ok){ picks.push(t); if(picks.length===n) break; }
+      }
+      if(picks.length===n) return picks;
+    }
+  }
+  return [[0,0],[PVP_COLS-1,PVP_ROWS-1],[PVP_COLS-1,0],[0,PVP_ROWS-1]].slice(0,n);
 }
 function pvpBuildSpiral(){
   const order=[]; let t=0,b=PVP_ROWS-1,l=0,r=PVP_COLS-1;
@@ -4394,7 +4422,7 @@ function pvpDetonateBomb(b0){
       }
     }
     cameraShake=Math.max(cameraShake,8);
-    playZapSound();
+    playPvpBoom(); netQSnd('pboom');
   }
 }
 function pvpSpawnItem(c,r){
@@ -4478,7 +4506,7 @@ function handlePvpKey(code){
     else if(code==='Escape'){ pvpExit(true); }
     return;
   }
-  if(code==='Escape'){ if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; } return; }
+  // Escape itself is handled by togglePause() (shared with the guests' {pt:1} request)
   if(!pvp.paused) return;
   if(code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') pvp.pauseSel=(pvp.pauseSel+1)%2;
   if(code==='Enter'||code==='Space'){ if(pvp.pauseSel===0) pvpResume(); else pvpExit(true); }
@@ -4715,23 +4743,55 @@ function drawPvp(){
     ctx.textAlign='left';
   }
   if(pvp.paused){
-    ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(0,0,W,H);
-    ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 38px Courier New';
-    ctx.fillText('PAUSA', W/2, H/2-84);
+    ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
+    ctx.fillText('PAUSA', W/2, 70);
     if(NET.role==='guest'){
       ctx.fillStyle='#cdbf9a'; ctx.font='15px Courier New';
-      ctx.fillText('El anfitrión pausó la partida…', W/2, H/2-10);
+      ctx.fillText('Pausada — Esc para pedir continuar', W/2, 108);
     } else {
       const popts=['CONTINUAR','VOLVER AL MENÚ'];
       popts.forEach((o,i)=>{
-        const oy=H/2-24+i*52;
-        if(i===pvp.pauseSel){ ctx.fillStyle='rgba(255,210,74,0.18)'; ctx.fillRect(W/2-190,oy-30,380,44); ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(W/2-190,oy-30,380,44); }
-        ctx.fillStyle=i===pvp.pauseSel?'#fff':'#bdb190'; ctx.font='bold 20px Courier New';
-        ctx.fillText((i===pvp.pauseSel?'▶ ':'')+o, W/2, oy);
+        const ox=W/2+(i===0?-200:200), oy=116;
+        if(i===pvp.pauseSel){ ctx.fillStyle='rgba(255,210,74,0.18)'; ctx.fillRect(ox-170,oy-26,340,38); ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(ox-170,oy-26,340,38); }
+        ctx.fillStyle=i===pvp.pauseSel?'#fff':'#bdb190'; ctx.font='bold 18px Courier New';
+        ctx.fillText((i===pvp.pauseSel?'▶ ':'')+o, ox, oy);
       });
-      ctx.fillStyle='#9a8f75'; ctx.font='13px Courier New';
-      ctx.fillText('↑↓ elegir   ·   Enter: seleccionar   ·   Esc: continuar', W/2, H/2+92);
+      ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
+      ctx.fillText('↑↓ elegir · Enter: seleccionar · Esc: continuar', W/2, 156);
     }
+    // ---- instructions ----
+    const lx=W/2-450;
+    ctx.textAlign='left';
+    ctx.fillStyle='#aef7c2'; ctx.font='bold 19px Courier New'; ctx.fillText('APUCHIS', lx, 212);
+    ctx.fillStyle='#8a9f78'; ctx.font='12px Courier New'; ctx.fillText('(salen de las cajas rotas)', lx+100, 212);
+    const info=[['piedra','Piedra','+1 alcance de explosión'],['tierra','Tierra','+velocidad'],
+                ['cuarzo','Cuarzo','+1 bomba a la vez'],['rio','Rio','patea bombas: deslizan hasta chocar'],
+                ['morganita','Morganita','la explosión atraviesa cajas'],['safiro','Safiro','detonador: F (J1) / punto (J2)']];
+    let iy=252;
+    for(const it of info){
+      drawIconFit(APU_IMG[it[0]], lx+16, iy-6, 32);
+      ctx.fillStyle=APU_DEF[it[0]].color; ctx.font='bold 15px Courier New'; ctx.fillText(it[1], lx+42, iy);
+      ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New'; ctx.fillText(it[2], lx+152, iy);
+      iy+=44;
+    }
+    const rx=W/2+60;
+    ctx.fillStyle='#ffd8a0'; ctx.font='bold 19px Courier New'; ctx.fillText('CONTROLES', rx, 212);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    if(!pvpOnline && NET.role!=='guest'){
+      ctx.fillText('J1: WASD mover · Espacio bomba · F detonar', rx, 240);
+      ctx.fillText('J2: Flechas mover · Coma bomba · Punto detonar', rx, 262);
+    } else {
+      ctx.fillText('Mover: WASD o Flechas', rx, 240);
+      ctx.fillText('Bomba: Espacio o Coma · Detonar: F o Punto', rx, 262);
+    }
+    ctx.fillStyle='#ffd8a0'; ctx.font='bold 19px Courier New'; ctx.fillText('REGLAS', rx, 310);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText('Un golpe de fuego = KO · el humo no quema', rx, 338);
+    ctx.fillText('La explosión avanza en cruz por la rejilla;', rx, 360);
+    ctx.fillText('la piedra tallada la bloquea', rx, 382);
+    ctx.fillText('Último en pie gana la ronda · gana '+PVP_WINS, rx, 404);
+    ctx.fillText('A los '+PVP_SUDDEN+'s: ¡derrumbe! La arena se cierra', rx, 426);
     ctx.textAlign='left';
   }
 }
@@ -4740,6 +4800,12 @@ function togglePause(){
   // Online: the host owns the pause. Entering STATE.PAUSE freezes the authoritative simulation, and
   // netBroadcast keeps streaming snapshots (state:'pause' included) so every guest freezes + sees the
   // overlay too. Guests request a toggle by sending {pt:1} to the host (see initNet).
+  if(state===STATE.PVP){   // PVP pause (host Esc AND guest {pt:1} land here; replicated via pvp snapshots)
+    if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){
+      if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; }
+    }
+    return;
+  }
   if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO){ prevState=state; state=STATE.PAUSE; pauseView='main'; pauseSel=0; }
   else if(state===STATE.PAUSE){ state=prevState; }
 }
@@ -4953,7 +5019,7 @@ const NET_SND={
   zap:()=>playZapSound(), beam:()=>playBeamSound(), cam:()=>playCameraClick(), magic:()=>playMagic(),
   hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
   die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k})),
-  sel:k=>playCharSelect(k)
+  sel:k=>playCharSelect(k), pboom:()=>playPvpBoom()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
