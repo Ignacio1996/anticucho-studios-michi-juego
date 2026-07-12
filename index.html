@@ -57,11 +57,11 @@ const W = cv.width, H = cv.height;
 
 // ---------- Audio ----------
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
-let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, actx=null, sfxGain=null, audioStarted=false;
+let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, pvpMusic=null, actx=null, sfxGain=null, audioStarted=false;
 let masterGain=null, streamDest=null;   // master bus + a tap fed to online guests
 let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
 let pauseView='main', pauseSel=0, setSel=0;
-function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; }
+function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.4*musicVol; }
 function adjustVol(sel,delta){ if(sel===0){ musicVol=clamp(musicVol+delta,0,1); applyMusicVol(); } else { sfxVol=clamp(sfxVol+delta,0,1); if(sfxGain) sfxGain.gain.value=sfxVol; } try{ localStorage.setItem('fm_musicVol',musicVol); localStorage.setItem('fm_sfxVol',sfxVol); }catch(e){} } let lastWow=0, plinCount=0;
 AUDIO_SRC.menu="assets/snd_019.mp3";
 AUDIO_SRC.freddy_sel="assets/snd_020.mp3";
@@ -90,6 +90,8 @@ AUDIO_SRC.evan_round='assets/snd_042.mp3';
 AUDIO_SRC.jar_intro="assets/snd_043.mp3";
 AUDIO_SRC.jar_intro2="assets/snd_044.mp3";
 AUDIO_SRC.guachi_intro="assets/snd_045.mp3";
+AUDIO_SRC.pvpbg="assets/snd_046.mp3";
+AUDIO_SRC.pvpboom="assets/snd_047.mp4";   // AAC audio — browsers decode it like any other SFX
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
 // On file:// origins createMediaElementSource() succeeds but emits silence (the media
@@ -169,6 +171,7 @@ function initAudio(){
     try{ evMusic=routeEl(new Audio(AUDIO_SRC.elvalle)); evMusic.loop=true; evMusic.volume=0.34; }catch(e){}
     try{ deathMusic=routeEl(new Audio(AUDIO_SRC.death)); deathMusic.loop=true; deathMusic.volume=0.5; }catch(e){}
     try{ losAndesMusic=routeEl(new Audio(AUDIO_SRC.losandes)); losAndesMusic.loop=true; losAndesMusic.volume=0.5; }catch(e){}
+    try{ pvpMusic=routeEl(new Audio(AUDIO_SRC.pvpbg)); pvpMusic.loop=true; pvpMusic.volume=0.4; }catch(e){}
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
@@ -191,14 +194,15 @@ function playRoundStart(r){
   playOne(boss ? AUDIO_SRC.tedintro : AUDIO_SRC.chulla, 0.6);
 }
 function playMagic(){ playOne(AUDIO_SRC.magic, 0.3); }
+function playPvpBoom(){ playSfx(AUDIO_SRC.pvpboom, 0.8); }
 function playBrujaAttack(giant){ playSfx(AUDIO_SRC.bruja_attack, 0.72, giant?0.62:0); }
 function playHeeGiant(){ playSfx(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.62, 0.62); }
 function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
 function playDeathMusic(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
 function playLosAndes(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
-function gameTrack(){ return currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
+function gameTrack(){ return currentMap==='pvp'?pvpMusic:currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
 function otherTrack(){ return currentMap==='stonebridge'?bgMusic:sbMusic; }
-function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
+function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(pvpMusic&&pvpMusic!==g)pvpMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
 function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; playSfx(AUDIO_SRC.wow, 0.4); }
 function playPickup(){
   if(!actx) return;
@@ -646,9 +650,11 @@ const clamp = (v,a,b) => v<a?a:(v>b?b:v);
 const TAU = Math.PI*2;
 
 // ---------- Game State ----------
-const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help' };
+const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help', PVP:'pvp', MODOS:'modos' };
 let state = STATE.LOADING;
 let mainSel=0, mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapLockShake=0, currentMap='amazonas';
+let pvpPending=false;   // the SELECT screen was entered from PVP → start the duel instead of a Horda run
+let modeSel=0;          // MODOS screen selection: 0 Horda · 1 PVP
 let WORLD_W=W, WORLD_H=H, camX=0, camY=0;
 let flowGrid=null, flowCols=0, flowRows=0, flowCell=46, flowTimer=0;
 let bossFlowGrid=null, bossFlowCols=0, bossFlowRows=0, bossFlowTimer=0;
@@ -3487,8 +3493,8 @@ function drawBreakUI(){
 }
 
 // ---------- New menu system (main menu / mapas / como jugar) ----------
-function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY; }
-function playMenuMusic(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
+function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY||state===STATE.MODOS; }
+function playMenuMusic(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(pvpMusic){ pvpMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
 function stopMenuMusic(){ try{ if(menuMusic) menuMusic.pause(); }catch(e){} }
 function gotoMainMenu(){ stopVoices(); state=STATE.MAINMENU; mainSel=0; mainMenuT=99; playMenuMusic(); }
 
@@ -3553,14 +3559,14 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-05.7';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-12.5';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
   ctx.textAlign='left'; ctx.fillStyle='rgba(255,233,176,0.5)'; ctx.font='11px Courier New';
   ctx.fillText(BUILD, 10, H-10);
   if(mainMenuT<4){ return; }
-  const opts=['MAPAS','JUGAR ONLINE','CÓMO JUGAR'];
+  const opts=['JUGAR','JUGAR ONLINE','CÓMO JUGAR'];
   const pw=440, ph=200, px=W/2-pw/2, py=H-250;
   ctx.fillStyle='rgba(18,12,6,0.6)'; rrect(px,py,pw,ph,14); ctx.fill();
   ctx.strokeStyle='rgba(255,210,74,0.55)'; ctx.lineWidth=2; rrect(px,py,pw,ph,14); ctx.stroke();
@@ -3612,58 +3618,97 @@ function wrapLeftCentered(text,cx,y,maxw,lh){
   lines.forEach((ln,i)=>ctx.fillText(ln,cx,y+i*lh));
 }
 
+// mode chooser shown after JUGAR / JUGAR ONLINE: Horda (survival) or PVP (bomb duel)
+function drawModos(){
+  drawBannerBG();
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
+  ctx.fillText(NET.hosting?'JUGAR ONLINE':'JUGAR', W/2, 96);
+  ctx.fillStyle='#3a1606'; ctx.font='bold 15px Courier New';
+  ctx.fillText('Elige el modo de juego', W/2, 130);
+  const cards=[
+    {t:'HORDA', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe', d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', locked:false},
+    {t:'PVP',   d1:'Duelo explosivo: bombas, Apuchis',  d2:'y un solo golpe', d3:NET.hosting?'2-4 jugadores':'2 jugadores', locked:false},
+  ];
+  const cw=330, chh=280, gap=60, x0=(W-2*cw-gap)/2, cy=190;
+  cards.forEach((m,i)=>{
+    let ox=(i===modeSel && m.locked && mapLockShake>0)?Math.sin(time*45)*5:0;
+    const cx=x0+i*(cw+gap)+ox;
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
+    ctx.fillStyle=m.locked?'#9a8f75':(i===0?'#8cc24a':'#ff8a5a'); ctx.font='bold 30px Courier New';
+    ctx.fillText(m.t, cw/2, 64);
+    ctx.fillStyle=m.locked?'#8a7f68':'#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText(m.d1, cw/2, 118);
+    ctx.fillText(m.d2, cw/2, 140);
+    ctx.fillStyle=m.locked?'#8a7f68':'#aef7c2'; ctx.font='bold 13px Courier New';
+    ctx.fillText(m.d3, cw/2, 186);
+    if(m.locked){ ctx.fillStyle='#e8c98a'; ctx.font='bold 16px Courier New'; ctx.fillText('PRÓXIMAMENTE', cw/2, 236); }
+    else if(i===1){ const img=APU_IMG.piedra; if(img&&img.naturalWidth){ drawIconFit(img, cw/2, 226, 44); } }
+    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 236); }
+    if(i===modeSel){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; rrect(2,2,cw-4,chh-4,10); ctx.stroke(); }
+    ctx.restore();
+  });
+  ctx.fillStyle='#3a1606'; ctx.font='14px Courier New';
+  ctx.fillText('← → elegir   ·   Enter: seleccionar   ·   Esc: volver', W/2, H-40);
+  ctx.textAlign='left';
+}
+
 function drawHelp(){
   drawBannerBG();
   ctx.save();
   ctx.shadowColor='rgba(0,0,0,0.55)'; ctx.shadowBlur=4; ctx.shadowOffsetY=1;
-  const SX=88, SR=1040, SY=126, SB=556;
-  ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.font='bold 40px Courier New';
-  ctx.fillText('CÓMO JUGAR', W/2, SY+8);
+  const SX=88, SR=1046, SY=112, SB=580;
+  ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.font='bold 36px Courier New';
+  ctx.fillText('CÓMO JUGAR', W/2, SY+4);
   ctx.textAlign='left';
-  const colY=SY+58;
-  // ---- LEFT: Apuchis ----
-  const apu=[['tierra','Tierra','Velocidad (máx 3)'],['piedra','Piedra','Fuerza (máx 3)'],['rio','Rio','Recupera toda la vida'],['cuarzo','Cuarzo','Escudo: bloquea un golpe (máx 3)'],['morganita','Morganita','Rayo láser x3'],['safiro','Safiro','Explosión eléctrica x1']];
+  const colY=SY+46;
+  // ---- LEFT: Apuchis — what each does in HORDA and in PVP ----
+  const apu=[
+    ['tierra','Tierra','Horda: velocidad (máx 3)','PVP: +velocidad'],
+    ['piedra','Piedra','Horda: fuerza (máx 3)','PVP: +1 alcance de explosión'],
+    ['rio','Rio','Horda: recupera toda la vida','PVP: patea bombas (deslizan hasta chocar)'],
+    ['cuarzo','Cuarzo','Horda: escudo, bloquea un golpe','PVP: +1 bomba a la vez'],
+    ['morganita','Morganita','Horda: rayo láser x3','PVP: la explosión atraviesa cajas'],
+    ['safiro','Safiro','Horda: explosión eléctrica x1','PVP: detonador — F (J1) / . (J2)'],
+  ];
   let lx=SX, ly=colY;
-  ctx.fillStyle='#ffffff'; ctx.font='bold 22px Courier New'; ctx.fillText('APUCHIS', lx, ly);
-  ctx.font='bold 15px Courier New'; ctx.fillText('Recoge los espíritus entre rondas (duran 1 ronda):', lx, ly+24);
-  ly+=66;
-  const tcol=lx+66;
+  ctx.fillStyle='#ffffff'; ctx.font='bold 20px Courier New'; ctx.fillText('APUCHIS', lx, ly);
+  ctx.font='bold 13px Courier New'; ctx.fillText('Horda: se recogen entre rondas · PVP: salen de las cajas', lx, ly+21);
+  ly+=56;
+  const tcol=lx+56;
   for(const a of apu){
-    drawIconFit(APU_IMG[a[0]], lx+24, ly+2, 44);
-    ctx.fillStyle='#ffffff'; ctx.font='bold 18px Courier New'; ctx.fillText(a[1], tcol, ly-7);
-    ctx.font='bold 15px Courier New'; ctx.fillText(a[2], tcol, ly+13);
-    ly+=52;
+    drawIconFit(APU_IMG[a[0]], lx+21, ly+6, 40);
+    ctx.fillStyle='#ffffff'; ctx.font='bold 16px Courier New'; ctx.fillText(a[1], tcol, ly-8);
+    ctx.font='bold 13px Courier New'; ctx.fillText(a[2], tcol, ly+9);
+    ctx.fillStyle='#ffe9a0'; ctx.fillText(a[3], tcol, ly+26);
+    ctx.fillStyle='#ffffff';
+    ly+=62;
   }
   // ---- RIGHT column ----
-  const rx=594, tx=rx+58, tw=SR-tx;
-  let ry=colY+6;
-  drawIconFit(PROP.gn1, rx+18, ry-8, 40);
-  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('ORO', tx, ry-4);
-  ctx.font='bold 15px Courier New';
-  wrapLeft('Junta pepitas de oro que sueltan los enemigos. Al llegar a 50/50 desatas el Poder de Oro: un rayo dorado.', tx, ry+18, tw, 20);
-  ry+=84;
-  drawMiniCross(rx+18, ry-8, 1.1);
-  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('CO-OP (2 jugadores)', tx, ry-4);
-  ctx.font='bold 15px Courier New';
-  wrapLeft('Si tu compañero cae, aparece su cruz. Paráte 5s sobre ella para revivirlo. Al iniciar la siguiente ronda revive solo.', tx, ry+18, tw, 20);
-  ry+=84;
-  drawArrowIcon(rx+18, ry-8, 34);
-  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('OBJETIVO', tx, ry-4);
-  ctx.font='bold 15px Courier New';
-  wrapLeft('Sobrevive 20 rondas y derrota al jefe.', tx, ry+18, tw, 20);
-  ry+=52;
-  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('CONTROLES', rx, ry);
-  ctx.font='bold 15px Courier New';
-  ctx.fillText('J1: WASD mover · Espacio golpear · F poder de jefe', rx, ry+22);
-  ctx.fillText('J2: Flechas · Coma (,) golpear · (.) poder de jefe', rx, ry+42);
-  ry+=72;
-  ctx.fillStyle='#ffffff'; ctx.font='bold 21px Courier New'; ctx.fillText('PODERES DE JEFE  (rondas 5/10/15)', rx, ry);
-  ctx.font='bold 14px Courier New';
-  ctx.fillText('El jefe suelta un poder al caer; lo usa quien lo agarra:', rx, ry+20);
-  ctx.fillText('RATA BLANCA dinamita x5 (coloca y detona, misma tecla)', rx, ry+38);
-  ctx.fillText('PAREDES INCAS muros x20 · TORRETA torre con flechas', rx, ry+56);
+  const rx=580, tx=rx+52, tw=SR-tx;
+  let ry=colY;
+  ctx.fillStyle='#ffffff'; ctx.font='bold 20px Courier New'; ctx.fillText('HORDA', rx, ry);
+  ctx.font='bold 13px Courier New';
+  wrapLeft('Sobrevive 20 rondas y vence al jefe. Junta pepitas de ORO (50/50 = rayo dorado). En co-op, párate 5s sobre la cruz de tu compañero para revivirlo.', rx, ry+20, SR-rx, 18);
+  ry+=94;
+  ctx.fillStyle='#ffb44a'; ctx.font='bold 20px Courier New'; ctx.fillText('PVP', rx, ry);
+  ctx.fillStyle='#ffffff'; ctx.font='bold 13px Courier New';
+  wrapLeft('Duelo explosivo (2 local · 2-4 online): pon bombas con tu botón de golpe, rompe cajas, recoge Apuchis y sé el último en pie. Un golpe de fuego = KO. La explosión avanza en cruz por la rejilla y la piedra tallada la bloquea. Con Safiro tus bombas solo explotan cuando pulsas F (J1) o punto (J2). Gana 3 rondas — ¡a los 90s empieza el derrumbe!', rx, ry+20, SR-rx, 18);
+  ry+=152;
+  ctx.fillStyle='#ffffff'; ctx.font='bold 20px Courier New'; ctx.fillText('CONTROLES', rx, ry);
+  ctx.font='bold 13px Courier New';
+  ctx.fillText('J1: WASD mover · Espacio golpear/bomba · F poder/detonar', rx, ry+20);
+  ctx.fillText('J2: Flechas · Coma (,) golpear/bomba · Punto (.) poder/detonar', rx, ry+38);
+  ry+=68;
+  ctx.fillStyle='#ffffff'; ctx.font='bold 20px Courier New'; ctx.fillText('PODERES DE JEFE', rx, ry);
+  ctx.fillStyle='#cdd8ff'; ctx.font='bold 12px Courier New'; ctx.fillText('(Horda, rondas 5/10/15)', rx+210, ry);
+  ctx.fillStyle='#ffffff'; ctx.font='bold 13px Courier New';
+  ctx.fillText('El jefe suelta un poder al caer; lo usa quien lo agarra:', rx, ry+19);
+  ctx.fillText('RATA BLANCA dinamita x5 · PAREDES INCAS muros x20', rx, ry+36);
+  ctx.fillText('TORRETA torre con flechas', rx, ry+53);
   ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.font='bold 15px Courier New';
-  ctx.fillText('Esc / Enter: volver', W/2, SB+8);
+  ctx.fillText('Esc / Enter: volver', W/2, SB+10);
   ctx.textAlign='left';
   ctx.restore();
 }
@@ -3815,9 +3860,9 @@ function drawLobby(){
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
-  ctx.fillText('SALA ONLINE', W/2, 96);
+  ctx.fillText(lobbyMode==='pvp'?'SALA ONLINE — PVP':'SALA ONLINE', W/2, 96);
   ctx.fillStyle='#8cc24a'; ctx.font='16px Courier New';
-  ctx.fillText('Comparte el enlace con tus amigos (hasta 3)', W/2, 134);
+  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-4 jugadores · comparte el enlace (hasta 3 amigos)':'Comparte el enlace con tus amigos (hasta 3)', W/2, 134);
   ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
   ctx.fillText(NET.link || 'Generando enlace…', W/2, 178);
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
@@ -3844,9 +3889,17 @@ function handleMenuKey(code){
     if(mainMenuT<4){ mainMenuT=99; return; }
     if(code==='ArrowUp'||code==='KeyW') mainSel=(mainSel+2)%3;
     if(code==='ArrowDown'||code==='KeyS') mainSel=(mainSel+1)%3;
-    if(code==='Enter'||code==='Space'){ if(mainSel===0){ NET.hosting=false; state=STATE.MAPAS; mapSel=0; } else if(mainSel===1){ NET.hosting=true; state=STATE.MAPAS; mapSel=0; } else { state=STATE.HELP; } }
-  } else if(state===STATE.MAPAS){
+    if(code==='Enter'||code==='Space'){ if(mainSel===0){ NET.hosting=false; state=STATE.MODOS; modeSel=0; } else if(mainSel===1){ NET.hosting=true; state=STATE.MODOS; modeSel=0; } else { state=STATE.HELP; } }
+  } else if(state===STATE.MODOS){
     if(code==='Escape'){ state=STATE.MAINMENU; mainSel=0; return; }
+    if(code==='ArrowLeft'||code==='KeyA'||code==='ArrowRight'||code==='KeyD'||code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') modeSel=(modeSel+1)%2;
+    if(code==='Enter'||code==='Space'){
+      if(modeSel===0){ lobbyMode='horda'; state=STATE.MAPAS; mapSel=0; }
+      else if(NET.hosting){ lobbyMode='pvp'; currentMap='pvp'; enterLobby(); }
+      else { enterPvpSelect(); }
+    }
+  } else if(state===STATE.MAPAS){
+    if(code==='Escape'){ state=STATE.MODOS; modeSel=0; return; }
     if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+3)%4;
     if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%4;
     if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=(mapSel===1)?'stonebridge':(mapSel===2)?'templo':(mapSel===3)?'machu':'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
@@ -3858,8 +3911,12 @@ function handleMenuKey(code){
     if(code==='ArrowDown'||code==='KeyS') menuSel=(menuSel+1)%2;
     if(code==='Enter'||code==='Space'){ modTest=false; mode=(menuSel===1)?2:1; selMode=mode; enterSelect(); }
   } else if(state===STATE.LOBBY){
-    if(code==='Enter'||code==='Space') startGame();
+    if(code==='Enter'||code==='Space'){
+      if(lobbyMode==='pvp'){ if(NET.conns.length) startPvpOnline(); else mapLockShake=0.45; }   // a duel needs at least 2 players
+      else startGame();
+    }
     else if(code==='Escape') exitLobby();
+  } else if(state===STATE.PVP){ handlePvpKey(code);
   } else if(state===STATE.SELECT){ handleSelectKey(code);
   } else if(state===STATE.PAUSE){
     if(pauseView==='settings'){
@@ -3927,11 +3984,11 @@ function drawIntroUI(){
   if(condor && condor.scale>0.3){ ctx.fillStyle='#ffe14a'; ctx.font='bold 14px Courier New'; ctx.fillText('C\u00f3ndor Ganso', condor.x-camX, condor.y-camY-44*condor.scale-8); }
   ctx.textAlign='left';
 }
-function enterSelect(){ state=STATE.SELECT; selPending=false; selStartTimer=0; selCursor1=0; selCursor2=1; selChar1=null; selChar2=null; }
+function enterSelect(){ state=STATE.SELECT; selPending=false; pvpPending=false; selStartTimer=0; selCursor1=0; selCursor2=1; selChar1=null; selChar2=null; }
 function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0; }
 function handleSelectKey(code){
   if(selPending) return;
-  if(code==='Escape'){ state=STATE.MENU; menuSel=0; return; }
+  if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
   if(selMode===1){
     if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+3)%4;
     else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%4;
@@ -3947,9 +4004,15 @@ function handleSelectKey(code){
   }
 }
 function drawSelect(){
-  drawArena(); ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
+  if(pvpPending){
+    // VERSUS: show the duel island itself behind the character cards
+    if(PROP.machubg && PROP.machubg.naturalWidth) drawImageCover(PROP.machubg);
+    else { ctx.fillStyle='#7ec3e8'; ctx.fillRect(0,0,W,H); }
+    pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
+  } else drawArena();
+  ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
-  ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText('ELIGE TU PERSONAJE', W/2, 78);
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
   const n=4, cw=200, gap=26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, ch=330;
   for(let i=0;i<n;i++){
     const k=CHAR_LIST[i], cx=x0+i*(cw+gap);
@@ -4010,10 +4073,739 @@ function startGame(){
   else startIntro();
 }
 
+// ================= VERSUS — grid bomb-duel PVP mode =================
+// Free pixel movement, but everything else is grid-exact: bombs snap to tiles, blasts are
+// per-tile flames in the 4 cardinal directions (stopped cold by unbreakable stone; the first
+// breakable crate absorbs the flame unless the bomb pierces), and Apuchis are the POWER-UPS
+// that drop from destroyed crates — the placed explosive is a plain bomb.
+const PVP_TILE=52, PVP_COLS=15, PVP_ROWS=11;
+const PVP_OX=Math.round((W-PVP_COLS*PVP_TILE)/2), PVP_OY=116;
+const PVP_FUSE=2.8;          // seconds from placement to boom (Safiro bombs never auto-blow)
+const PVP_FLAME=0.55;        // how long each flame tile is drawn (fire, then harmless smoke)
+const PVP_FLAME_KILL=0.30;   // only the first part of the flame kills — the fading smoke does NOT
+const PVP_KICK_SPD=360;      // px/s of a kicked bomb
+const PVP_SUDDEN=90;         // seconds until the landslide starts closing the arena
+const PVP_WINS=3;            // first to N rounds takes the duel
+const PVP_BASE_SPD=172, PVP_SPD_CAP=2.0, PVP_SPD_STEP=1.12, PVP_RANGE_CAP=13;
+const PVP_DROP_CHANCE=0.32;  // chance a destroyed crate reveals an Apuchi
+const PVP_ITEM_W=[['piedra',30],['tierra',24],['cuarzo',24],['rio',12],['morganita',7],['safiro',3]];
+const PVP_ITEM_FX={piedra:'+1 EXPLOSIÓN', tierra:'+VELOCIDAD', cuarzo:'+1 BOMBA', rio:'¡PATADA!', morganita:'¡ATRAVIESA!', safiro:'¡DETONADOR!'};
+const PVP_APU_LIST=['piedra','tierra','cuarzo','rio','morganita','safiro'];
+// grid values: 0 floor · 1 stone pillar (unbreakable) · 2 crate (breakable) · 3 fallen slab (sudden death)
+const pvp={ sub:'off', grid:null, bombs:[], flames:[], items:[], t:0, count:0, wins:[0,0], roundN:1,
+  banner:'', bannerC:'#fff', sudden:0, suddenOn:false, spiral:[], spiralI:0, dropT:0, paused:false, pauseSel:0, winner:-1, warnCell:null, bgc:null };
+let pvpOnline=false;     // current PVP match is host+guests over the net (players are slots, guests replicate)
+let lobbyMode='horda';   // what the online SALA launches on Enter: 'horda' | 'pvp'
+
+function pvpC2X(c){ return PVP_OX+c*PVP_TILE+PVP_TILE/2; }
+function pvpR2Y(r){ return PVP_OY+r*PVP_TILE+PVP_TILE/2; }
+function pvpTileRect(c,r){ return {x:PVP_OX+c*PVP_TILE, y:PVP_OY+r*PVP_TILE, w:PVP_TILE, h:PVP_TILE}; }
+function pvpCellOf(x,y){ return {c:Math.floor((x-PVP_OX)/PVP_TILE), r:Math.floor((y-PVP_OY)/PVP_TILE)}; }
+function pvpBombAt(c,r){ for(const b of pvp.bombs){ if(b.c===c&&b.r===r) return b; } return null; }
+function pvpItemAt(c,r){ for(const it of pvp.items){ if(it.c===c&&it.r===r) return it; } return null; }
+function pvpN(i){ const x=Math.sin(i*127.13+7.7)*43758.545; return x-Math.floor(x); }   // deterministic per-tile noise for the prerendered island
+// solid for player movement; a bomb stays walkable for whoever is still standing on it (its walkers)
+function pvpSolid(c,r,forP){
+  if(c<0||r<0||c>=PVP_COLS||r>=PVP_ROWS) return true;
+  if(pvp.grid[r][c]!==0) return true;
+  const b=pvpBombAt(c,r); if(b && !(forP && b.walkers.has(forP))) return true;
+  return false;
+}
+
+function enterPvpSelect(){ currentMap='pvp'; NET.hosting=false; selMode=2; mode=2; modTest=false; pvp.sub='off'; enterSelect(); pvpPending=true; stopMenuMusic(); resumeCumbia(); }   // PVP music starts here, alone
+function pvpResetWorld(){
+  currentMap='pvp'; obstacles=[]; cliffs=[]; WORLD_W=W; WORLD_H=H; camX=0; camY=0;
+  stopMenuMusic(); resumeCumbia();
+  particles.length=0; enemies.length=0; apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0;
+}
+function startPvpMatch(){
+  pvpPending=false; pvpOnline=false;
+  pvpResetWorld();
+  const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
+  const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
+  players=[ makePlayer(selChar1||'freddy', 0,0, P1), makePlayer(selChar2||'michi', 0,0, P2) ];
+  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvp.bgc=null;
+  state=STATE.PVP;
+  startPvpRound();
+}
+// online duel: host + 1-3 guests, same slot/keysrc wiring the Horda host uses
+function startPvpOnline(){
+  pvpOnline=true; pvpPending=false;
+  pvpResetWorld();
+  const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
+  const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
+  const total=Math.min(4, 1+NET.conns.length);
+  players=[];
+  const order=shuffledChars();
+  for(let i=0;i<total;i++) players.push(makePlayer(order[i%order.length], 0,0, i===0?P1:REMOTE));
+  for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
+  mode=2;
+  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvp.bgc=null;
+  state=STATE.PVP;
+  startPvpRound();
+}
+function startPvpRound(){
+  const g=[];
+  for(let r=0;r<PVP_ROWS;r++){ const row=[]; for(let c=0;c<PVP_COLS;c++){
+    row.push((c%2===1 && r%2===1) ? 1 : (Math.random()<0.74 ? 2 : 0));
+  } g.push(row); }
+  // random spawns: anywhere on the grid (never a pillar), kept far apart; each spawn gets a
+  // cleared cross-pocket (2 tiles per open direction) so round 1 isn't a guaranteed self-kill
+  const spots=pvpPickSpawns(Math.max(2,players.length));
+  for(const s of spots){
+    g[s[1]][s[0]]=0;
+    for(const d of [[1,0],[-1,0],[0,1],[0,-1]]){
+      for(let k=1;k<=2;k++){
+        const cc=s[0]+d[0]*k, rr=s[1]+d[1]*k;
+        if(cc<0||rr<0||cc>=PVP_COLS||rr>=PVP_ROWS) break;
+        if(g[rr][cc]===1) break;          // pillar: this direction is a dead end, leave the rest
+        if(g[rr][cc]===2) g[rr][cc]=0;
+      }
+    }
+  }
+  pvp.grid=g; pvp.bombs.length=0; pvp.flames.length=0; pvp.items.length=0;
+  pvp.sudden=0; pvp.suddenOn=false; pvp.dropT=0; pvp.spiral=pvpBuildSpiral(); pvp.spiralI=0; pvp.winner=-1; pvp.warnCell=null;
+  particles.length=0;
+  players.forEach((p,i)=>{
+    const sp=spots[i%spots.length];
+    p.x=pvpC2X(sp[0]); p.y=pvpR2Y(sp[1]);
+    p.alive=!p.departed; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.pending=false;
+    p.dir=(sp[1]<PVP_ROWS/2)?'s':'n'; p.moving=false; p.animTime=0; p.punchAnim=0; p.hitFlash=0; p.shieldFlash=0;
+    p.shields=0; p.special='none'; p.oroCharge=0; p.gear='none'; p.gearCount=0;
+    p.pvpRange=1; p.pvpMaxB=1; p.pvpSpd=1; p.pvpKick=false; p.pvpPierce=false; p.pvpRemote=false;
+    p.pvpCnt={piedra:0,tierra:0,cuarzo:0,rio:0,morganita:0,safiro:0};
+    p.wasPunch=true; p.wasGear=true;   // require a fresh key press once the round starts
+  });
+  pvp.sub='count'; pvp.count=3.0; pvp.t=0;
+}
+// pick n non-pillar tiles as far apart as possible: try a large min-distance first,
+// relax it until a placement fits (corners as the never-fails fallback)
+function pvpPickSpawns(n){
+  const cand=[];
+  for(let r=0;r<PVP_ROWS;r++)for(let c=0;c<PVP_COLS;c++){ if(!(c%2===1&&r%2===1)) cand.push([c,r]); }
+  for(let D=7;D>=3;D-=0.5){
+    for(let attempt=0;attempt<30;attempt++){
+      const pool=cand.slice();
+      for(let i=pool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=pool[i]; pool[i]=pool[j]; pool[j]=t; }
+      const picks=[];
+      for(const t of pool){
+        let ok=true;
+        for(const q of picks){ if(Math.hypot(t[0]-q[0],t[1]-q[1])<D){ ok=false; break; } }
+        if(ok){ picks.push(t); if(picks.length===n) break; }
+      }
+      if(picks.length===n) return picks;
+    }
+  }
+  return [[0,0],[PVP_COLS-1,PVP_ROWS-1],[PVP_COLS-1,0],[0,PVP_ROWS-1]].slice(0,n);
+}
+function pvpBuildSpiral(){
+  const order=[]; let t=0,b=PVP_ROWS-1,l=0,r=PVP_COLS-1;
+  while(t<=b && l<=r){
+    for(let c=l;c<=r;c++) order.push([c,t]);
+    for(let rr=t+1;rr<=b;rr++) order.push([r,rr]);
+    if(b>t) for(let c=r-1;c>=l;c--) order.push([c,b]);
+    if(r>l) for(let rr=b-1;rr>t;rr--) order.push([l,rr]);
+    t++;b--;l++;r--;
+  }
+  return order;
+}
+
+function updatePvp(dt){
+  if(pvp.paused) return;
+  pvp.t+=dt;
+  for(const p of players){
+    if(!p.alive && p.deathAnim!=null && p.deathAnim<4.5) p.deathAnim=Math.min(4.5,p.deathAnim+dt);   // hold the final death pose (no co-op cross)
+    if(p.punchAnim>0) p.punchAnim-=dt;
+    if(p.hitFlash>0) p.hitFlash-=dt;
+  }
+  if(pvp.sub==='count'){
+    pvp.count-=dt;
+    if(pvp.count<=0){ pvp.sub='play'; }   // silent start — WOW is Michi's voice, not a referee whistle
+    return;
+  }
+  if(pvp.sub==='matchend') return;
+  if(pvp.sub==='play'){ for(const p of players) pvpControl(p,dt); }
+  else if(pvp.winner>=0 && players[pvp.winner].alive){ pvpControl(players[pvp.winner],dt); }   // the winner can strut during the banner
+  pvpUpdateBombs(dt);
+  for(let i=pvp.flames.length-1;i>=0;i--){ const f=pvp.flames[i]; f.t+=dt; if(f.t>=PVP_FLAME) pvp.flames.splice(i,1); }
+  pvpUpdateItems(dt);
+  if(pvp.sub==='play'){
+    pvpSuddenDeath(dt);
+    pvpCheckDeaths();
+    const alive=players.filter(p=>p.alive);
+    if(alive.length<=1){
+      pvp.sub='roundend'; pvp.t=0;
+      pvp.winner=alive.length?players.indexOf(alive[0]):-1;
+      if(pvp.winner>=0){
+        const wp=players[pvp.winner];
+        pvp.wins[pvp.winner]++; pvp.banner='¡'+wp.name+' GANA LA RONDA!'; pvp.bannerC=wp.color;
+        playCharSelect(wp.kind); netQSnd('sel', wp.kind);   // the winner celebrates in their own voice
+      }
+      else { pvp.banner='¡EMPATE!'; pvp.bannerC='#ffe9b0'; }
+    }
+  } else if(pvp.sub==='roundend' && pvp.t>2.8){
+    if(pvp.winner>=0 && pvp.wins[pvp.winner]>=PVP_WINS) pvp.sub='matchend';
+    else { pvp.roundN++; startPvpRound(); }
+  }
+}
+
+function pvpControl(p,dt){
+  if(!p.alive || p.departed) return;
+  const c=p.controls, ks=p.keysrc||keys;
+  const rem=p.netRemote;
+  if(rem && rem.grace>0) rem.grace-=dt;
+  if(rem && rem.pose && !(rem.grace>0)){
+    // online guest: client-authoritative movement — adopt the pose it simulated, wall/bomb-resolve it
+    const ps=rem.pose;
+    p.moving=!!ps.mv;
+    if(ps.mv){ p.facing.x=ps.fx; p.facing.y=ps.fy; p.dir=ps.dir; p.animTime+=dt; }
+    p.x=ps.x; p.y=ps.y; pvpResolve(p);
+    // kick probe: pose streaming skips pvpMoveAxis, so detect "pushing against a bomb" directly
+    if(p.pvpKick && p.moving){
+      const px2=p.x+p.facing.x*(p.radius+8), py2=p.y+p.facing.y*(p.radius+8);
+      const cl=pvpCellOf(px2,py2);
+      const b=(cl.c>=0&&cl.r>=0&&cl.c<PVP_COLS&&cl.r<PVP_ROWS)?pvpBombAt(cl.c,cl.r):null;
+      if(b && !b.slide && !b.walkers.has(p)){
+        const d=Math.abs(p.facing.x)>Math.abs(p.facing.y)?[p.facing.x<0?-1:1,0]:[0,p.facing.y<0?-1:1];
+        pvpKick(b,d);
+      }
+    }
+  } else {
+    let mx=0,my=0;
+    if(ks[c.up])my-=1; if(ks[c.down])my+=1; if(ks[c.left])mx-=1; if(ks[c.right])mx+=1;
+    p.moving=!!(mx||my);
+    if(p.moving){
+      p.animTime+=dt;
+      const l=Math.hypot(mx,my), nx=mx/l, ny=my/l;
+      p.facing.x=nx; p.facing.y=ny;
+      p.dir=Math.abs(nx)>Math.abs(ny)?(nx<0?'w':'e'):(ny<0?'n':'s');
+      const sp=PVP_BASE_SPD*p.pvpSpd;
+      if(mx) pvpMoveAxis(p,'x',nx*sp*dt, my===0?sp*dt:0, mx);
+      if(my) pvpMoveAxis(p,'y',ny*sp*dt, mx===0?sp*dt:0, my);
+    }
+  }
+  const kd=!!ks[c.punch];
+  if(kd&&!p.wasPunch) pvpPlaceBomb(p);
+  p.wasPunch=kd;
+  const gk=!!(c.gear&&ks[c.gear]);
+  if(gk&&!p.wasGear) pvpDetonate(p);
+  p.wasGear=gk;
+}
+// move along one axis, collide against solid tiles, then help the player around corners:
+// when the shoulder clips the tile of an adjacent lane, slide toward the open lane's center.
+function pvpMoveAxis(p,axis,delta,assist,dirSign){
+  if(!delta) return;
+  if(axis==='x') p.x+=delta; else p.y+=delta;
+  const r=p.radius;
+  let blocked=null;
+  const c0=Math.floor((p.x-r-PVP_OX)/PVP_TILE), c1=Math.floor((p.x+r-PVP_OX)/PVP_TILE);
+  const r0=Math.floor((p.y-r-PVP_OY)/PVP_TILE), r1=Math.floor((p.y+r-PVP_OY)/PVP_TILE);
+  for(let rr=r0;rr<=r1;rr++)for(let cc=c0;cc<=c1;cc++){
+    if(!pvpSolid(cc,rr,p)) continue;
+    const rect=pvpTileRect(cc,rr);
+    if(!circleRectCollide(p.x,p.y,r,rect)) continue;
+    if(axis==='x') p.x = dirSign>0 ? rect.x-r : rect.x+rect.w+r;
+    else p.y = dirSign>0 ? rect.y-r : rect.y+rect.h+r;
+    blocked={c:cc,r:rr};
+  }
+  if(!blocked) return;
+  const b=pvpBombAt(blocked.c,blocked.r);
+  if(b && p.pvpKick && !b.walkers.has(p)){ pvpKick(b, axis==='x'?[dirSign,0]:[0,dirSign]); return; }
+  if(assist>0){
+    if(axis==='x'){
+      const lr=clamp(Math.round((p.y-PVP_OY-PVP_TILE/2)/PVP_TILE),0,PVP_ROWS-1);
+      if(lr!==blocked.r && !pvpSolid(blocked.c,lr,p)){ p.y+=clamp(pvpR2Y(lr)-p.y,-assist,assist); pvpResolve(p); }
+    } else {
+      const lc=clamp(Math.round((p.x-PVP_OX-PVP_TILE/2)/PVP_TILE),0,PVP_COLS-1);
+      if(lc!==blocked.c && !pvpSolid(lc,blocked.r,p)){ p.x+=clamp(pvpC2X(lc)-p.x,-assist,assist); pvpResolve(p); }
+    }
+  }
+}
+function pvpResolve(p){
+  const r=p.radius;
+  const c0=Math.floor((p.x-r-PVP_OX)/PVP_TILE), c1=Math.floor((p.x+r-PVP_OX)/PVP_TILE);
+  const r0=Math.floor((p.y-r-PVP_OY)/PVP_TILE), r1=Math.floor((p.y+r-PVP_OY)/PVP_TILE);
+  for(let rr=r0;rr<=r1;rr++)for(let cc=c0;cc<=c1;cc++){
+    if(!pvpSolid(cc,rr,p)) continue;
+    const o=pvpTileRect(cc,rr);
+    const nx=clamp(p.x,o.x,o.x+o.w), ny=clamp(p.y,o.y,o.y+o.h);
+    const d=dist(p.x,p.y,nx,ny);
+    if(d<r){ if(d===0){ p.x+=r; continue; } p.x=nx+(p.x-nx)/d*r; p.y=ny+(p.y-ny)/d*r; }
+  }
+  p.x=clamp(p.x,PVP_OX+r,PVP_OX+PVP_COLS*PVP_TILE-r);
+  p.y=clamp(p.y,PVP_OY+r,PVP_OY+PVP_ROWS*PVP_TILE-r);
+}
+
+function pvpPlaceBomb(p){
+  const {c,r}=pvpCellOf(p.x,p.y);
+  if(c<0||r<0||c>=PVP_COLS||r>=PVP_ROWS) return;
+  if(pvp.grid[r][c]!==0 || pvpBombAt(c,r)) return;
+  let own=0; for(const b of pvp.bombs) if(b.owner===p) own++;
+  if(own>=p.pvpMaxB) return;
+  const walkers=new Set();
+  for(const pl of players){ if(pl.alive && circleRectCollide(pl.x,pl.y,pl.radius+2,pvpTileRect(c,r))) walkers.add(pl); }
+  pvp.bombs.push({id:_entId++, c,r, x:pvpC2X(c), y:pvpR2Y(r), owner:p,
+    fuse:p.pvpRemote?-1:PVP_FUSE, range:p.pvpRange, pierce:p.pvpPierce, remote:p.pvpRemote,
+    slide:null, walkers, gone:false});
+  p.punchAnim=Math.min(CHARS[p.kind].pd,0.18);
+  playPunchSound(p);   // each character keeps their own voice (Freddy PLIN, Michi WOW, …)
+}
+function pvpDetonate(p){
+  if(!p.pvpRemote) return;
+  for(const b of pvp.bombs){ if(b.owner===p && b.remote && !b.gone){ pvpDetonateBomb(b); return; } }   // oldest first — chains do the rest
+}
+function pvpKick(b,d){
+  const nc=b.c+d[0], nr=b.r+d[1];
+  if(pvpSlideBlocked(nc,nr)) return;
+  b.slide={dx:d[0],dy:d[1],tc:nc,tr:nr};   // silent — a slide SFX here reads as audio lag
+}
+function pvpSlideBlocked(c,r){
+  if(c<0||r<0||c>=PVP_COLS||r>=PVP_ROWS) return true;
+  if(pvp.grid[r][c]!==0) return true;
+  if(pvpBombAt(c,r)) return true;                       // bombs never pass through each other
+  const rect=pvpTileRect(c,r);
+  for(const p of players){ if(p.alive && circleRectCollide(p.x,p.y,p.radius+2,rect)) return true; }
+  return false;
+}
+function pvpUpdateBombs(dt){
+  const boom=[];
+  for(const b of pvp.bombs){
+    if(b.walkers.size){ const rect=pvpTileRect(b.c,b.r); for(const w of Array.from(b.walkers)){ if(!w.alive || !circleRectCollide(w.x,w.y,w.radius+2,rect)) b.walkers.delete(w); } }
+    if(b.slide){
+      b.x+=b.slide.dx*PVP_KICK_SPD*dt; b.y+=b.slide.dy*PVP_KICK_SPD*dt;
+      // a player stepping into the path stops the bomb one tile short
+      let hitP=false;
+      for(const p of players){ if(p.alive && !b.walkers.has(p) && dist(p.x,p.y,b.x,b.y)<p.radius+18){ hitP=true; break; } }
+      if(hitP){ b.x=pvpC2X(b.c); b.y=pvpR2Y(b.r); b.slide=null; }
+      else {
+        const tx=pvpC2X(b.slide.tc), ty=pvpR2Y(b.slide.tr);
+        if((b.slide.dx && (b.x-tx)*b.slide.dx>=0) || (b.slide.dy && (b.y-ty)*b.slide.dy>=0)){
+          b.c=b.slide.tc; b.r=b.slide.tr; b.x=tx; b.y=ty;
+          const nc=b.c+b.slide.dx, nr=b.r+b.slide.dy;
+          if(pvpSlideBlocked(nc,nr)) b.slide=null;      // touched something → snap to the grid and stay
+          else { b.slide.tc=nc; b.slide.tr=nr; }
+        }
+      }
+    }
+    if(b.fuse>0){ b.fuse-=dt; if(b.fuse<=0) boom.push(b); }
+  }
+  for(const b of boom){ if(!b.gone) pvpDetonateBomb(b); }
+}
+function pvpAddFlame(c,r){
+  for(const f of pvp.flames){ if(f.c===c&&f.r===r){ f.t=0; return; } }
+  pvp.flames.push({c,r,t:0});
+}
+function pvpDetonateBomb(b0){
+  const q=[b0];
+  while(q.length){
+    const b=q.shift(); if(b.gone) continue; b.gone=true;
+    const bi=pvp.bombs.indexOf(b); if(bi>=0) pvp.bombs.splice(bi,1);
+    pvpAddFlame(b.c,b.r);
+    spark(b.x,b.y,'#ff9a2a',16,230);
+    for(const d of [[1,0],[-1,0],[0,1],[0,-1]]){
+      for(let s=1;s<=b.range;s++){
+        const cc=b.c+d[0]*s, rr=b.r+d[1]*s;
+        if(cc<0||rr<0||cc>=PVP_COLS||rr>=PVP_ROWS) break;
+        const g=pvp.grid[rr][cc];
+        if(g===1||g===3) break;                          // unbreakable stone: the blast never passes
+        if(g===2){                                       // crate: destroyed, and it absorbs the flame (unless Morganita pierces)
+          pvp.grid[rr][cc]=0; pvpAddFlame(cc,rr);
+          spark(pvpC2X(cc),pvpR2Y(rr),'#c98d4e',10,130);
+          if(Math.random()<PVP_DROP_CHANCE) pvpSpawnItem(cc,rr);
+          if(b.pierce) continue; else break;
+        }
+        pvpAddFlame(cc,rr);
+        const ob=pvpBombAt(cc,rr);
+        if(ob && !ob.gone){ q.push(ob); break; }         // chain reaction
+        const it=pvpItemAt(cc,rr);
+        if(it){ const ii=pvp.items.indexOf(it); if(ii>=0) pvp.items.splice(ii,1); spark(it.x,it.y,'#ffd24a',8,110); break; }   // items burn and stop the flame
+      }
+    }
+    cameraShake=Math.max(cameraShake,8);
+    playPvpBoom(); netQSnd('pboom');
+  }
+}
+function pvpSpawnItem(c,r){
+  let tot=0; for(const e of PVP_ITEM_W) tot+=e[1];
+  let x=Math.random()*tot, type=PVP_ITEM_W[0][0];
+  for(const e of PVP_ITEM_W){ x-=e[1]; if(x<=0){ type=e[0]; break; } }
+  pvp.items.push({id:_entId++, c,r, x:pvpC2X(c), y:pvpR2Y(r), type, bob:Math.random()*TAU});
+}
+function pvpUpdateItems(dt){
+  for(let i=pvp.items.length-1;i>=0;i--){
+    const it=pvp.items[i]; it.bob+=dt*6;
+    let taker=null;
+    for(const p of players){ if(p.alive && dist(p.x,p.y,it.x,it.y)<p.radius+14){ taker=p; break; } }
+    if(!taker) continue;
+    pvp.items.splice(i,1);
+    const p=taker; p.pvpCnt[it.type]++;
+    if(it.type==='piedra') p.pvpRange=Math.min(PVP_RANGE_CAP,p.pvpRange+1);
+    else if(it.type==='tierra') p.pvpSpd=Math.min(PVP_SPD_CAP,p.pvpSpd*PVP_SPD_STEP);
+    else if(it.type==='cuarzo') p.pvpMaxB++;
+    else if(it.type==='rio') p.pvpKick=true;
+    else if(it.type==='morganita') p.pvpPierce=true;
+    else if(it.type==='safiro') p.pvpRemote=true;
+    floatText(p.x,p.y-30,PVP_ITEM_FX[it.type],APU_DEF[it.type].color);
+    playPickup();
+  }
+}
+function pvpCheckDeaths(){
+  for(const p of players){
+    if(!p.alive) continue;
+    for(const f of pvp.flames){
+      if(f.t>=PVP_FLAME_KILL) continue;   // past the blast window it's just smoke — walk through freely
+      const rect=pvpTileRect(f.c,f.r);
+      if(circleRectCollide(p.x,p.y,Math.max(4,p.radius-6),{x:rect.x+8,y:rect.y+8,w:rect.w-16,h:rect.h-16})){ pvpKill(p); break; }
+    }
+  }
+}
+function pvpKill(p){
+  if(!p.alive) return;
+  p.alive=false; p.fell=false; p.deathAnim=0;
+  playCharDeath(p.kind);
+  spark(p.x,p.y,'#ff9a2a',26,210);
+  floatText(p.x,p.y-36,'¡KO!','#ff6a5a');
+  cameraShake=11;
+  for(const b of pvp.bombs){ if(b.owner===p && b.fuse<0) b.fuse=0.4+Math.random()*0.25; }   // a fallen detonator's bombs go off on their own
+}
+function pvpSuddenDeath(dt){
+  pvp.sudden+=dt;
+  if(pvp.sudden<PVP_SUDDEN) return;
+  if(!pvp.suddenOn){ pvp.suddenOn=true; pvp.dropT=1.2; cameraShake=9; floatText(W/2,PVP_OY+40,'¡DERRUMBE!','#ff5a3a'); }
+  pvp.dropT-=dt;
+  if(pvp.dropT>0) return;
+  pvp.dropT=0.42;
+  while(pvp.spiralI<pvp.spiral.length){
+    const [c,r]=pvp.spiral[pvp.spiralI++];
+    if(pvp.grid[r][c]===1||pvp.grid[r][c]===3) continue;
+    pvp.grid[r][c]=3;
+    const b=pvpBombAt(c,r); if(b){ const bi=pvp.bombs.indexOf(b); if(bi>=0) pvp.bombs.splice(bi,1); }
+    const it=pvpItemAt(c,r); if(it){ const ii=pvp.items.indexOf(it); if(ii>=0) pvp.items.splice(ii,1); }
+    const rect=pvpTileRect(c,r);
+    for(const p of players){ if(p.alive && circleRectCollide(p.x,p.y,Math.max(4,p.radius-4),{x:rect.x+6,y:rect.y+6,w:rect.w-12,h:rect.h-12})) pvpKill(p); }
+    for(const p of players){ if(p.alive) pvpResolve(p); }   // clipped players get squeezed out instead of stuck
+    spark(pvpC2X(c),pvpR2Y(r),'#8d8478',12,150);
+    cameraShake=Math.max(cameraShake,5);
+    break;
+  }
+}
+function pvpPeekDrop(){
+  if(NET.role==='guest') return pvp.warnCell;   // guests replicate the warn cell — they have no spiral
+  for(let i=pvp.spiralI;i<pvp.spiral.length;i++){ const [c,r]=pvp.spiral[i]; const g=pvp.grid[r][c]; if(g!==1&&g!==3) return pvp.spiral[i]; }
+  return null;
+}
+
+function handlePvpKey(code){
+  if(NET.role==='guest') return;   // online guests: the host drives menus (same as Horda)
+  if(pvp.sub==='matchend'){
+    if(code==='Enter'||code==='Space'){
+      if(pvpOnline) startPvpOnline();   // re-deal characters & slots — late joiners enter here too
+      else { pvp.wins=players.map(()=>0); pvp.roundN=1; startPvpRound(); }
+    }
+    else if(code==='KeyC' && !pvpOnline){ enterPvpSelect(); }
+    else if(code==='Escape'){ pvpExit(true); }
+    return;
+  }
+  // Escape itself is handled by togglePause() (shared with the guests' {pt:1} request)
+  if(!pvp.paused) return;
+  if(code==='ArrowLeft'||code==='KeyA'||code==='ArrowRight'||code==='KeyD') pvp.pauseSel=(pvp.pauseSel+1)%2;   // the two options sit side by side
+  if(code==='Enter'||code==='Space'){ if(pvp.pauseSel===0) pvpResume(); else pvpExit(true); }
+}
+function pvpResume(){
+  pvp.paused=false;
+  for(const p of players){ p.wasPunch=true; p.wasGear=true; }   // the key that closed the menu must not drop a bomb
+}
+function pvpExit(toMenu){
+  pvp.sub='off'; pvp.paused=false;
+  try{ if(pvpMusic) pvpMusic.pause(); }catch(e){}
+  if(toMenu) gotoMainMenu(); else playMenuMusic();
+}
+
+// ---------- VERSUS rendering ----------
+function rrectOn(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+function pvpEnsureBG(){
+  if(pvp.bgc) return;
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+  const gx=PVP_OX, gy=PVP_OY, gw=PVP_COLS*PVP_TILE, gh=PVP_ROWS*PVP_TILE, RIM=34;
+  // cliff underside: the arena floats — jagged rock hangs below the slab
+  g.fillStyle='#3c3128';
+  g.beginPath();
+  const bx0=gx-RIM+6, bx1=gx+gw+RIM-6, by=gy+gh+RIM-8;
+  g.moveTo(bx0,by); g.lineTo(bx1,by);
+  const segs=14;
+  for(let i=segs;i>=0;i--){
+    const x=bx0+(bx1-bx0)*i/segs;
+    g.lineTo(x, by+24+pvpN(i*3+1)*34+Math.sin(i*1.7)*8);
+  }
+  g.closePath(); g.fill();
+  g.strokeStyle='rgba(20,14,10,0.35)'; g.lineWidth=2;
+  for(let i=0;i<3;i++){ g.beginPath(); g.moveTo(bx0+10,by+8+i*10); g.lineTo(bx1-10,by+6+i*10); g.stroke(); }
+  for(let i=0;i<5;i++){  // little floating rock shards drifting under the island
+    const rx=bx0+40+pvpN(i+40)*(bx1-bx0-80), ry=by+58+pvpN(i+90)*24, rr=4+pvpN(i+140)*7;
+    g.fillStyle='#4a3b2e'; g.beginPath(); g.moveTo(rx-rr,ry); g.lineTo(rx,ry-rr); g.lineTo(rx+rr,ry); g.lineTo(rx,ry+rr); g.closePath(); g.fill();
+  }
+  // stone rim
+  g.fillStyle='#8f8168'; rrectOn(g,gx-RIM,gy-RIM,gw+RIM*2,gh+RIM*2,16); g.fill();
+  g.strokeStyle='#5f5442'; g.lineWidth=3; rrectOn(g,gx-RIM,gy-RIM,gw+RIM*2,gh+RIM*2,16); g.stroke();
+  g.strokeStyle='rgba(70,58,44,0.5)'; g.lineWidth=2;
+  for(let i=0;i<=PVP_COLS;i++){ const x=gx+i*PVP_TILE; g.beginPath(); g.moveTo(x,gy-RIM+4); g.lineTo(x,gy-4); g.stroke(); g.beginPath(); g.moveTo(x,gy+gh+4); g.lineTo(x,gy+gh+RIM-4); g.stroke(); }
+  for(let i=0;i<=PVP_ROWS;i++){ const y=gy+i*PVP_TILE; g.beginPath(); g.moveTo(gx-RIM+4,y); g.lineTo(gx-4,y); g.stroke(); g.beginPath(); g.moveTo(gx+gw+4,y); g.lineTo(gx+gw+RIM-4,y); g.stroke(); }
+  for(let i=0;i<40;i++){  // moss tufts on the rim
+    g.fillStyle='rgba(106,138,74,'+(0.25+pvpN(i)*0.3).toFixed(2)+')';
+    const t=pvpN(i+13); let mx,my;
+    if(t<0.25){ mx=gx-RIM+pvpN(i+3)*(gw+2*RIM); my=gy-RIM+pvpN(i+5)*RIM; }
+    else if(t<0.5){ mx=gx-RIM+pvpN(i+3)*(gw+2*RIM); my=gy+gh+pvpN(i+5)*RIM; }
+    else if(t<0.75){ mx=gx-RIM+pvpN(i+5)*RIM; my=gy-RIM+pvpN(i+3)*(gh+2*RIM); }
+    else { mx=gx+gw+pvpN(i+5)*RIM; my=gy-RIM+pvpN(i+3)*(gh+2*RIM); }
+    g.beginPath(); g.ellipse(mx,my,3+pvpN(i+17)*5,2+pvpN(i+19)*3,pvpN(i+7)*4,0,TAU); g.fill();
+  }
+  // mossy stone floor, subtle checker so the grid reads at a glance
+  for(let r=0;r<PVP_ROWS;r++)for(let cc=0;cc<PVP_COLS;cc++){
+    const x=gx+cc*PVP_TILE, y=gy+r*PVP_TILE;
+    g.fillStyle=((cc+r)%2===0)?'#66735a':'#5e6a52';
+    g.fillRect(x,y,PVP_TILE,PVP_TILE);
+    g.strokeStyle='rgba(0,0,0,0.10)'; g.lineWidth=1; g.strokeRect(x+0.5,y+0.5,PVP_TILE-1,PVP_TILE-1);
+    const n=pvpN(cc*31+r*57);
+    if(n>0.82){ g.fillStyle='rgba(0,0,0,0.08)'; g.fillRect(x+8+n*10,y+9,11,6); }
+    if(n<0.08){ g.fillStyle='rgba(120,150,84,0.25)'; g.beginPath(); g.ellipse(x+14+n*120,y+PVP_TILE-10,6,3,0,0,TAU); g.fill(); }
+  }
+  g.strokeStyle='rgba(0,0,0,0.28)'; g.lineWidth=6; g.strokeRect(gx+3,gy+3,gw-6,gh-6);
+  // unbreakable carved pillars (fixed layout: every odd,odd tile)
+  for(let r=0;r<PVP_ROWS;r++)for(let cc=0;cc<PVP_COLS;cc++){ if(cc%2===1&&r%2===1) drawPvpPillarOn(g,cc,r); }
+  pvp.bgc=c;
+}
+function drawPvpPillarOn(g,c,r){
+  const x=PVP_OX+c*PVP_TILE, y=PVP_OY+r*PVP_TILE, T=PVP_TILE;
+  g.fillStyle='#3b3833'; g.fillRect(x+2,y+2,T-4,T-4);
+  g.fillStyle='#5c574e'; g.fillRect(x+4,y+4,T-8,T-14);
+  g.fillStyle='#6d675c'; g.fillRect(x+4,y+4,T-8,8);
+  g.strokeStyle='#23211d'; g.lineWidth=2; g.strokeRect(x+3,y+3,T-6,T-6);
+  g.fillStyle='rgba(25,23,20,0.75)';
+  if((c*7+r*11)%2===0){ g.fillRect(x+14,y+20,7,7); g.fillRect(x+T-21,y+20,7,7); g.fillRect(x+16,y+34,T-32,4); }
+  else { g.fillRect(x+13,y+18,8,5); g.fillRect(x+T-21,y+18,8,5); g.fillRect(x+20,y+30,T-40,8); g.strokeStyle='rgba(25,23,20,0.5)'; g.lineWidth=2; g.strokeRect(x+9,y+12,T-18,T-24); }
+}
+function drawPvpCrate(c,r){
+  const x=PVP_OX+c*PVP_TILE, y=PVP_OY+r*PVP_TILE, T=PVP_TILE;
+  const v=pvpN(c*13+r*29)>0.5;
+  ctx.fillStyle=v?'#a4713a':'#a97b45'; ctx.fillRect(x+3,y+3,T-6,T-6);
+  ctx.strokeStyle='#6e4a22'; ctx.lineWidth=3; ctx.strokeRect(x+5,y+5,T-10,T-10);
+  ctx.strokeStyle='rgba(110,74,34,0.85)'; ctx.lineWidth=4;
+  ctx.beginPath();
+  if(v){ ctx.moveTo(x+7,y+7); ctx.lineTo(x+T-7,y+T-7); } else { ctx.moveTo(x+T-7,y+7); ctx.lineTo(x+7,y+T-7); }
+  ctx.stroke();
+  ctx.fillStyle='rgba(255,235,190,0.18)'; ctx.fillRect(x+5,y+5,T-10,5);
+}
+function drawPvpFallen(c,r){
+  const x=PVP_OX+c*PVP_TILE, y=PVP_OY+r*PVP_TILE, T=PVP_TILE;
+  ctx.fillStyle='#514c45'; ctx.fillRect(x+1,y+1,T-2,T-2);
+  ctx.fillStyle='#645e55'; ctx.fillRect(x+3,y+3,T-6,9);
+  ctx.strokeStyle='#2e2a26'; ctx.lineWidth=2; ctx.strokeRect(x+2,y+2,T-4,T-4);
+  ctx.strokeStyle='rgba(30,26,22,0.6)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(x+12,y+T-8); ctx.lineTo(x+22,y+24); ctx.lineTo(x+34,y+T-14); ctx.stroke();
+}
+function drawPvpBomb(b){
+  const x=b.x, y=b.y;
+  ctx.strokeStyle=b.owner.color; ctx.globalAlpha=0.45; ctx.lineWidth=2;
+  ctx.strokeRect(PVP_OX+b.c*PVP_TILE+3.5, PVP_OY+b.r*PVP_TILE+3.5, PVP_TILE-7, PVP_TILE-7);
+  ctx.globalAlpha=1;
+  ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(x,y+12,15,5,0,0,TAU); ctx.fill();
+  const urgent=(b.fuse>0&&b.fuse<0.9);
+  const R=16*(1+0.07*Math.sin(time*(urgent?22:7)));
+  const gr=ctx.createRadialGradient(x-5,y-9,2,x,y-2,R+4);
+  gr.addColorStop(0,'#5b6470'); gr.addColorStop(0.6,'#2b2f36'); gr.addColorStop(1,'#191c21');
+  ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(x,y-2,R,0,TAU); ctx.fill();
+  ctx.strokeStyle='#0c0e11'; ctx.lineWidth=2; ctx.stroke();
+  ctx.strokeStyle=b.owner.color; ctx.globalAlpha=0.9; ctx.lineWidth=3;   // owner-coloured ceramic band
+  ctx.beginPath(); ctx.arc(x,y-2,R-5,0.15*Math.PI,0.85*Math.PI); ctx.stroke(); ctx.globalAlpha=1;
+  if(b.remote){
+    drawIconFit(APU_IMG.safiro, x, y-R-9, 18);
+    ctx.strokeStyle='#5aa0ff'; ctx.globalAlpha=0.5+0.3*Math.sin(time*6); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(x,y-2,R+5,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
+  } else {
+    ctx.strokeStyle='#7a5a34'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(x+3,y-R-1); ctx.quadraticCurveTo(x+9,y-R-8,x+13,y-R-5); ctx.stroke();
+    const sp=Math.floor(time*20)%2===0;
+    ctx.fillStyle=sp?'#ffe14a':'#ff9a2a'; ctx.beginPath(); ctx.arc(x+13,y-R-5,sp?4.5:3.5,0,TAU); ctx.fill();
+  }
+  if(urgent){ ctx.fillStyle='rgba(255,70,40,'+(0.25+0.2*Math.sin(time*24)).toFixed(2)+')'; ctx.beginPath(); ctx.arc(x,y-2,R,0,TAU); ctx.fill(); }
+}
+function drawPvpFlame(f){
+  const rect=pvpTileRect(f.c,f.r);
+  if(f.t<PVP_FLAME_KILL){
+    // lethal window: bright grid-square fire
+    ctx.fillStyle='#ff7a2e'; rrect(rect.x+4,rect.y+4,rect.w-8,rect.h-8,8); ctx.fill();
+    ctx.fillStyle='#ffb44a'; rrect(rect.x+9,rect.y+9,rect.w-18,rect.h-18,7); ctx.fill();
+    ctx.fillStyle='#fff0a8'; rrect(rect.x+16,rect.y+16,rect.w-32,rect.h-32,6); ctx.fill();
+  } else {
+    // afterwards: harmless grey smoke fading out (clearly NOT fire → safe to walk through)
+    const k=1-(f.t-PVP_FLAME_KILL)/(PVP_FLAME-PVP_FLAME_KILL);
+    ctx.globalAlpha=0.42*k;
+    ctx.fillStyle='#9a948c'; rrect(rect.x+8,rect.y+8,rect.w-16,rect.h-16,10); ctx.fill();
+    ctx.fillStyle='#c4beb4';
+    const cx2=rect.x+rect.w/2, cy2=rect.y+rect.h/2;
+    ctx.beginPath(); ctx.arc(cx2-9,cy2-4-6*(1-k),7*k+2,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx2+8,cy2+2-9*(1-k),6*k+2,0,TAU); ctx.fill();
+    ctx.globalAlpha=1;
+  }
+}
+function drawPvpItem(it){
+  const y=it.y+Math.sin(it.bob)*3;
+  ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(it.x,it.y+15,12,4,0,0,TAU); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.16)'; ctx.beginPath(); ctx.arc(it.x,y,17+Math.sin(it.bob*1.3)*2,0,TAU); ctx.fill();
+  drawIconFit(APU_IMG[it.type], it.x, y, 34);
+}
+function pvpScoreLine(){ return players.map((p,i)=>p.name+' '+(pvp.wins[i]||0)).join('   ·   '); }
+function drawPvpHUD(){
+  const n=players.length, compact=n>2;
+  players.forEach((p,i)=>{
+    const pw=compact?264:324, ph=compact?82:88, py=8;
+    const px=compact ? 8+i*((W-16-pw)/(n-1||1)) : (i===0?10:W-334);
+    ctx.fillStyle='rgba(12,10,8,0.72)'; rrect(px,py,pw,ph,10); ctx.fill();
+    ctx.strokeStyle=p.color; ctx.lineWidth=2; rrect(px,py,pw,ph,10); ctx.stroke();
+    ctx.textAlign='left'; ctx.fillStyle=p.color; ctx.font=compact?'bold 15px Courier New':'bold 18px Courier New';
+    ctx.fillText('J'+(i+1)+' '+p.name, px+10, py+23);
+    ctx.font=compact?'13px Courier New':'16px Courier New';
+    for(let s=0;s<PVP_WINS;s++){ ctx.fillStyle=(s<pvp.wins[i])?'#ffd24a':'rgba(255,255,255,0.18)'; ctx.fillText('★', px+(compact?140:170)+s*(compact?15:20), py+23); }
+    if((!p.alive||p.departed) && (pvp.sub==='play'||pvp.sub==='roundend')){ ctx.fillStyle='#ff6a5a'; ctx.font='bold 12px Courier New'; ctx.fillText(p.departed?'SALIÓ':'K.O.', px+pw-50, py+23); }
+    const isp=compact?42:51, ico=compact?21:26;
+    PVP_APU_LIST.forEach((k,j)=>{
+      const ix=px+(compact?10:14)+j*isp, iy=py+(compact?34:38), cnt=(p.pvpCnt&&p.pvpCnt[k])||0, has=cnt>0;
+      ctx.globalAlpha=has?1:0.26;
+      drawIconFit(APU_IMG[k], ix+11, iy+11, ico);
+      ctx.globalAlpha=1;
+      ctx.fillStyle=has?'#ffe9b0':'rgba(255,255,255,0.28)'; ctx.font='bold 11px Courier New';
+      ctx.fillText('x'+cnt, ix+(compact?19:24), iy+(compact?28:31));
+    });
+  });
+  ctx.textAlign='center';
+  const infoY = compact ? H-30 : 32, subY = compact ? H-10 : 56;
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New';
+  ctx.fillText('RONDA '+pvp.roundN, W/2, infoY);
+  if(pvp.sub==='play'||pvp.sub==='roundend'){
+    const rem=PVP_SUDDEN-pvp.sudden;
+    if(rem>0){ ctx.fillStyle=rem<15?'#ff8a5a':'#cdbf9a'; ctx.font='bold 14px Courier New'; ctx.fillText('DERRUMBE EN '+pvpFmtT(rem), W/2, subY); }
+    else { ctx.fillStyle='#ff5a3a'; ctx.font='bold 16px Courier New'; ctx.fillText('¡DERRUMBE!', W/2, subY); }
+  }
+  ctx.textAlign='left';
+}
+function pvpFmtT(s){ s=Math.max(0,Math.ceil(s)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
+function drawPvp(){
+  if(PROP.machubg && PROP.machubg.naturalWidth){ drawImageCover(PROP.machubg); ctx.fillStyle='rgba(10,20,40,0.22)'; ctx.fillRect(0,0,W,H); }
+  else { const gd=ctx.createLinearGradient(0,0,0,H); gd.addColorStop(0,'#7ec3e8'); gd.addColorStop(1,'#cfe8f2'); ctx.fillStyle=gd; ctx.fillRect(0,0,W,H); }
+  pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
+  if(pvp.sub==='play' && pvp.suddenOn){
+    const nxt=pvpPeekDrop();
+    if(nxt){ const rect=pvpTileRect(nxt[0],nxt[1]); ctx.fillStyle='rgba(255,60,30,'+(0.18+0.14*Math.sin(time*10)).toFixed(2)+')'; ctx.fillRect(rect.x,rect.y,rect.w,rect.h); }
+  }
+  for(let r=0;r<PVP_ROWS;r++)for(let c=0;c<PVP_COLS;c++){
+    const g=pvp.grid[r][c];
+    if(g===2) drawPvpCrate(c,r);
+    else if(g===3) drawPvpFallen(c,r);
+  }
+  for(const it of pvp.items) drawPvpItem(it);
+  for(const b of pvp.bombs) drawPvpBomb(b);
+  const ps=players.slice().sort((a,b)=>a.y-b.y);
+  for(const p of ps){ try{ drawPlayer(p); }catch(e){} }
+  for(const f of pvp.flames) drawPvpFlame(f);
+  drawParticles();
+  drawPvpHUD();
+  if(pvp.sub==='count'){
+    ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffe14a'; ctx.font='bold 110px Courier New';
+    ctx.fillText(String(Math.max(1,Math.ceil(pvp.count))), W/2, H/2+30);
+    ctx.fillStyle='#ffe9b0'; ctx.font='bold 22px Courier New';
+    ctx.fillText('RONDA '+pvp.roundN+' — primero a '+PVP_WINS+' victorias', W/2, H/2+82);
+    ctx.fillStyle='#cdbf9a'; ctx.font='13px Courier New';
+    ctx.fillText('J1: WASD + Espacio bomba · F detonar (Safiro)     J2: Flechas + Coma bomba · Punto (.) detonar', W/2, H/2+114);
+    ctx.textAlign='left';
+  } else if(pvp.sub==='roundend'){
+    ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,H/2-62,W,124);
+    ctx.textAlign='center'; ctx.fillStyle=pvp.bannerC; ctx.font='bold 40px Courier New';
+    ctx.fillText(pvp.banner, W/2, H/2+2);
+    ctx.fillStyle='#ffe9b0'; ctx.font='bold 18px Courier New';
+    ctx.fillText(pvpScoreLine(), W/2, H/2+40);
+    ctx.textAlign='left';
+  } else if(pvp.sub==='matchend'){
+    ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    const wp=players[pvp.winner];
+    ctx.fillStyle=wp?wp.color:'#ffe9b0'; ctx.font='bold 44px Courier New';
+    ctx.fillText('¡'+(wp?wp.name:'')+' GANA EL DUELO!', W/2, 120);
+    const img=wp&&SEL_IMG[wp.kind];
+    if(img&&img.naturalWidth){ const iw=200, ih=iw*img.naturalHeight/img.naturalWidth; ctx.drawImage(img,W/2-iw/2,158,iw,Math.min(ih,300)); }
+    ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New';
+    ctx.fillText(pvpScoreLine(), W/2, 506);
+    ctx.fillStyle='#ffe14a'; ctx.font='bold 18px Courier New';
+    if(NET.role==='guest') ctx.fillText('El anfitrión decide la revancha…', W/2, 566);
+    else if(pvpOnline) ctx.fillText('ENTER: revancha  ·  ESC: menú', W/2, 566);
+    else ctx.fillText('ENTER: revancha  ·  C: cambiar personajes  ·  ESC: menú', W/2, 566);
+    ctx.textAlign='left';
+  }
+  if(pvp.paused){
+    ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
+    ctx.fillText('PAUSA', W/2, 70);
+    if(NET.role==='guest'){
+      ctx.fillStyle='#cdbf9a'; ctx.font='15px Courier New';
+      ctx.fillText('Pausada — Esc para pedir continuar', W/2, 108);
+    } else {
+      const popts=['CONTINUAR','VOLVER AL MENÚ'];
+      popts.forEach((o,i)=>{
+        const ox=W/2+(i===0?-200:200), oy=116;
+        if(i===pvp.pauseSel){ ctx.fillStyle='rgba(255,210,74,0.18)'; ctx.fillRect(ox-170,oy-26,340,38); ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(ox-170,oy-26,340,38); }
+        ctx.fillStyle=i===pvp.pauseSel?'#fff':'#bdb190'; ctx.font='bold 18px Courier New';
+        ctx.fillText((i===pvp.pauseSel?'▶ ':'')+o, ox, oy);
+      });
+      ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
+      ctx.fillText('←→ elegir · Enter: seleccionar · Esc: continuar', W/2, 156);
+    }
+    // ---- instructions ----
+    const lx=W/2-450;
+    ctx.textAlign='left';
+    ctx.fillStyle='#aef7c2'; ctx.font='bold 19px Courier New'; ctx.fillText('APUCHIS', lx, 212);
+    ctx.fillStyle='#8a9f78'; ctx.font='12px Courier New'; ctx.fillText('(salen de las cajas rotas)', lx+100, 212);
+    const info=[['piedra','Piedra','+1 alcance de explosión'],['tierra','Tierra','+velocidad'],
+                ['cuarzo','Cuarzo','+1 bomba a la vez'],['rio','Rio','patea bombas: deslizan hasta chocar'],
+                ['morganita','Morganita','la explosión atraviesa cajas'],['safiro','Safiro','detonador: F (J1) / punto (J2)']];
+    let iy=252;
+    for(const it of info){
+      drawIconFit(APU_IMG[it[0]], lx+16, iy-6, 32);
+      ctx.fillStyle=APU_DEF[it[0]].color; ctx.font='bold 15px Courier New'; ctx.fillText(it[1], lx+42, iy);
+      ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New'; ctx.fillText(it[2], lx+152, iy);
+      iy+=44;
+    }
+    const rx=W/2+60;
+    ctx.fillStyle='#ffd8a0'; ctx.font='bold 19px Courier New'; ctx.fillText('CONTROLES', rx, 212);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    if(!pvpOnline && NET.role!=='guest'){
+      ctx.fillText('J1: WASD mover · Espacio bomba · F detonar', rx, 240);
+      ctx.fillText('J2: Flechas mover · Coma bomba · Punto detonar', rx, 262);
+    } else {
+      ctx.fillText('Mover: WASD o Flechas', rx, 240);
+      ctx.fillText('Bomba: Espacio o Coma · Detonar: F o Punto', rx, 262);
+    }
+    ctx.fillStyle='#ffd8a0'; ctx.font='bold 19px Courier New'; ctx.fillText('REGLAS', rx, 310);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText('Un golpe de fuego = KO · el humo no quema', rx, 338);
+    ctx.fillText('La explosión avanza en cruz por la rejilla;', rx, 360);
+    ctx.fillText('la piedra tallada la bloquea', rx, 382);
+    ctx.fillText('Último en pie gana la ronda · gana '+PVP_WINS, rx, 404);
+    ctx.fillText('A los '+PVP_SUDDEN+'s: ¡derrumbe! La arena se cierra', rx, 426);
+    ctx.textAlign='left';
+  }
+}
+
 function togglePause(){
   // Online: the host owns the pause. Entering STATE.PAUSE freezes the authoritative simulation, and
   // netBroadcast keeps streaming snapshots (state:'pause' included) so every guest freezes + sees the
   // overlay too. Guests request a toggle by sending {pt:1} to the host (see initNet).
+  if(state===STATE.PVP){   // PVP pause (host Esc AND guest {pt:1} land here; replicated via pvp snapshots)
+    if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){
+      if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; }
+    }
+    return;
+  }
   if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO){ prevState=state; state=STATE.PAUSE; pauseView='main'; pauseSel=0; }
   else if(state===STATE.PAUSE){ state=prevState; }
 }
@@ -4071,8 +4863,9 @@ function _frameBody(now){
     else if(state===STATE.BREAK) safe('updateBreak',()=>updateBreak(dt));
     else if(state===STATE.INTRO) safe('updateIntro',()=>updateIntro(dt));
     else if(state===STATE.DYING) safe('updateDying',()=>updateDying(dt));
+    else if(state===STATE.PVP) safe('updatePvp',()=>updatePvp(dt));
     else if(state===STATE.MAINMENU) mainMenuT+=dt;
-    else if(state===STATE.SELECT && selPending){ selStartTimer-=dt; if(selStartTimer<=0){ selPending=false; safe('startGame',startGame); } }
+    else if(state===STATE.SELECT && selPending){ selStartTimer-=dt; if(selStartTimer<=0){ selPending=false; if(pvpPending) safe('startPvp',startPvpMatch); else safe('startGame',startGame); } }
   }
   if(NET.role==='host') safe('netcast',()=>netBroadcast(dt));
   for(const _p of players){ if(_p.fell && _p.fallT>0) _p.fallT-=dt; }
@@ -4091,11 +4884,13 @@ function _frameBody(now){
 
   if(state===STATE.LOADING){ updatePreload(); drawLoading(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAINMENU){ drawMainMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.MODOS){ drawModos(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAPAS){ drawMapas(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.HELP){ drawHelp(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MENU){ drawMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.SELECT){ drawSelect(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.LOBBY){ drawLobby(); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.PVP){ safe('drawPvp',drawPvp); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.DYING){ ctx.save(); ctx.translate(-camX,-camY); drawDeathScene(); ctx.restore(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.OVER){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); if(dying) drawDeathScene(); else drawArena(); ctx.restore(); drawOver(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.VICTORY){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); drawArena(); ctx.restore(); drawVictory(); ctx.restore(); requestAnimationFrame(frame); return; }
@@ -4223,7 +5018,8 @@ const NET_SND={
   hit:()=>playHitThud(), pk:()=>playPickup(), coin:()=>playCoin(), oro:()=>playOroPower(),
   zap:()=>playZapSound(), beam:()=>playBeamSound(), cam:()=>playCameraClick(), magic:()=>playMagic(),
   hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
-  die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k}))
+  die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k})),
+  sel:k=>playCharSelect(k), pboom:()=>playPvpBoom()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
@@ -4280,11 +5076,29 @@ function netSerializeSnapshot(){
     bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
     drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) };
 }
+// PVP snapshot: tiny — a grid string, a handful of bombs/flames/items, and per-player pvp stats
+function netSerializePvp(){
+  const seq=++netSeq;
+  while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();
+  return { _snap:1, pvp:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
+    state:STATE.PVP, sub:pvp.sub, count:pvp.count, roundN:pvp.roundN, wins:pvp.wins, paused:pvp.paused,
+    banner:pvp.banner, bannerC:pvp.bannerC, winner:pvp.winner, sudden:pvp.sudden, suddenOn:pvp.suddenOn,
+    warn:(pvp.suddenOn?pvpPeekDrop():null),
+    grid:pvp.grid?pvp.grid.map(r=>r.join('')):[],
+    players:players.map(p=>({ kind:p.kind, name:p.name, color:p.color, radius:p.radius,
+      x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10, dir:p.dir, moving:p.moving,
+      alive:p.alive, departed:!!p.departed, deathAnim:(p.deathAnim==null?null:p.deathAnim),
+      punchAnim:p.punchAnim, animTime:p.animTime, pvpSpd:p.pvpSpd||1, cnt:p.pvpCnt })),
+    bombs:pvp.bombs.map(b=>({ id:b.id, c:b.c, r:b.r, x:Math.round(b.x), y:Math.round(b.y),
+      ow:players.indexOf(b.owner), fuse:b.fuse, remote:!!b.remote, sl:!!b.slide })),
+    flames:pvp.flames.map(f=>({c:f.c, r:f.r, t:Math.round(f.t*100)/100})),
+    items:pvp.items.map(it=>({id:it.id, c:it.c, r:it.r, type:it.type})) };
+}
 function netBroadcast(dt){
   if(NET.role!=='host' || !NET.conns.length) return;
   netAccum+=dt; if(netAccum<SNAP_DT) return; netAccum=0;
   const inGame = (state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING||state===STATE.OVER||state===STATE.VICTORY);
-  const s = inGame ? netSerializeSnapshot() : {_wait:1, state};
+  const s = (state===STATE.PVP) ? netSerializePvp() : inGame ? netSerializeSnapshot() : {_wait:1, state};
   for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ s.you = g.slot; g.conn.send(s); } }catch(e){} }
 }
 
@@ -4372,11 +5186,99 @@ function netPredictOwned(rp, me, cur, dt){
   rp.punchAnim=Math.max(rp.punchAnim||0, gPred.punchAnim);
 }
 function netGuestMusic(st){
-  const playing=(st===STATE.PLAY||st===STATE.BREAK||st===STATE.INTRO);
+  const playing=(st===STATE.PLAY||st===STATE.BREAK||st===STATE.INTRO||st===STATE.PVP);
   if(playing){ const gt=gameTrack(); if(gt && gt.paused && (!deathMusic||deathMusic.paused)) gt.play().catch(()=>{}); if(menuMusic && !menuMusic.paused) menuMusic.pause(); }
+}
+// ---- guest: replicate a PVP duel snapshot (own player predicted, others interpolated) ----
+const gPvpItems={};
+function netApplyGuestPvp(cur,dt){
+  state=STATE.PVP;
+  if(currentMap!=='pvp'){ currentMap='pvp'; obstacles=[]; cliffs=[]; WORLD_W=W; WORLD_H=H; camX=0; camY=0; enemies.length=0; }
+  pvp.sub=cur.sub; pvp.count=cur.count; pvp.roundN=cur.roundN; pvp.wins=cur.wins||[]; pvp.paused=!!cur.paused;
+  pvp.banner=cur.banner; pvp.bannerC=cur.bannerC; pvp.winner=cur.winner;
+  pvp.sudden=cur.sudden; pvp.suddenOn=cur.suddenOn; pvp.warnCell=cur.warn||null;
+  pvp.grid=cur.grid.map(row=>row.split('').map(Number));
+  if(pvp.paused) dt=0;
+  // interpolation bracket (~100ms back) for non-owned players + sliding bombs
+  const nowP=performance.now(), renderT=nowP-NET_INTERP;
+  let a=null,b=null;
+  for(const s of gBuf){ if(!s.pvp) continue; if(s.rt<=renderT) a=s; else if(!b) b=s; }
+  let interp=false, alpha=0;
+  if(a && b && b.rt>a.rt){ interp=true; alpha=clamp((renderT-a.rt)/(b.rt-a.rt),0,1); }
+  const src=interp?b:cur;
+  // bombs first — own-player prediction collides against them
+  const aB=interp?_byId(a.bombs):null;
+  pvp.bombs.length=0;
+  for(const sb of src.bombs){
+    const nb={ id:sb.id, c:sb.c, r:sb.r, x:sb.x, y:sb.y, owner:null, ownerIdx:sb.ow, fuse:sb.fuse,
+      remote:sb.remote, range:1, pierce:false, slide:(sb.sl?{}:null), walkers:new Set(), gone:false };
+    if(interp && aB[sb.id]){ nb.x=aB[sb.id].x+(sb.x-aB[sb.id].x)*alpha; nb.y=aB[sb.id].y+(sb.y-aB[sb.id].y)*alpha; }
+    pvp.bombs.push(nb);
+  }
+  // players — own slot predicted through the replicated grid/bombs, others interpolated
+  const np=[];
+  for(let i=0;i<src.players.length;i++){
+    const sp=src.players[i];
+    const rp={ kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
+      dir:sp.dir, moving:sp.moving, alive:sp.alive, departed:sp.departed, deathAnim:sp.deathAnim,
+      punchAnim:sp.punchAnim, animTime:sp.animTime, hitFlash:0, shieldFlash:0, shields:0, special:'none',
+      oroCharge:0, pending:false, fell:false, facing:{x:0,y:1}, pvpSpd:sp.pvpSpd||1,
+      pvpCnt:sp.cnt||{piedra:0,tierra:0,cuarzo:0,rio:0,morganita:0,safiro:0} };
+    if(i===NET.slot) netPvpPredictOwned(rp, sp, cur, dt);
+    else if(interp && a.players[i]){ rp.x=a.players[i].x+(sp.x-a.players[i].x)*alpha; rp.y=a.players[i].y+(sp.y-a.players[i].y)*alpha; }
+    np.push(rp);
+  }
+  players=np;
+  for(const nb of pvp.bombs) nb.owner=players[nb.ownerIdx]||{color:'#ffffff'};
+  // flames replicate verbatim; items keep a persistent local bob clock
+  pvp.flames.length=0; for(const f of cur.flames) pvp.flames.push({c:f.c, r:f.r, t:f.t});
+  pvp.items.length=0; const seenI={};
+  for(const si of cur.items){
+    let o=gPvpItems[si.id]; if(!o){ o={bob:Math.random()*TAU}; gPvpItems[si.id]=o; }
+    o.id=si.id; o.c=si.c; o.r=si.r; o.type=si.type; o.x=pvpC2X(si.c); o.y=pvpR2Y(si.r); o.bob+=dt*6;
+    seenI[si.id]=1; pvp.items.push(o);
+  }
+  for(const id in gPvpItems){ if(!seenI[id]) delete gPvpItems[id]; }
+  try{ netGuestMusic(STATE.PVP); }catch(e){}
+}
+function netPvpPredictOwned(rp, sp, cur, dt){
+  if(!sp.alive){ gPred.init=false; gPred.punchAnim=0; return; }
+  if(!gPred.init){ gPred.x=sp.x; gPred.y=sp.y; gPred.animTime=sp.animTime||0; gPred.fx=0; gPred.fy=1; gPred.dir=sp.dir||'s'; gPred.moving=false; gPred.init=true; }
+  const canMove=!pvp.paused && (pvp.sub==='play' || (pvp.sub==='roundend' && pvp.winner===NET.slot));
+  const k=canMove ? (NET.guestKeys||{}) : {};
+  let mx=0,my=0;
+  if(k['KeyW']||k['ArrowUp'])    my-=1;
+  if(k['KeyS']||k['ArrowDown'])  my+=1;
+  if(k['KeyA']||k['ArrowLeft'])  mx-=1;
+  if(k['KeyD']||k['ArrowRight']) mx+=1;
+  gPred.animTime+=dt;
+  const moving=!!(mx||my);
+  gPred.moving=moving;
+  if(moving){
+    const l=Math.hypot(mx,my); mx/=l; my/=l;
+    rp.facing.x=mx; rp.facing.y=my; gPred.fx=mx; gPred.fy=my;
+    rp.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); gPred.dir=rp.dir;
+    const spd=PVP_BASE_SPD*(sp.pvpSpd||1);
+    const tmp={x:gPred.x, y:gPred.y, radius:sp.radius};
+    // bombs we're currently standing on stay walkable (same walker rule the host applies)
+    for(const nb of pvp.bombs){ if(circleRectCollide(tmp.x,tmp.y,tmp.radius+2,pvpTileRect(nb.c,nb.r))) nb.walkers.add(tmp); }
+    if(mx) pvpMoveAxis(tmp,'x',mx*spd*dt, my===0?spd*dt:0, mx>0?1:-1);
+    if(my) pvpMoveAxis(tmp,'y',my*spd*dt, mx===0?spd*dt:0, my>0?1:-1);
+    gPred.x=tmp.x; gPred.y=tmp.y;
+  }
+  // deadzone reconciliation — same idea as the Horda predictor
+  const auth=cur.players[NET.slot];
+  if(auth && auth.alive){
+    const ex=auth.x-gPred.x, ey=auth.y-gPred.y, dd=Math.hypot(ex,ey);
+    const SNAP=130, DEAD=48;
+    if(dd>SNAP){ gPred.x=auth.x; gPred.y=auth.y; }
+    else if(dd>DEAD){ const pull=(dd-DEAD)/dd*0.2; gPred.x+=ex*pull; gPred.y+=ey*pull; }
+  }
+  rp.x=gPred.x; rp.y=gPred.y; rp.moving=moving; rp.animTime=gPred.animTime;
 }
 function netApplyGuest(dt){
   const cur=NET.snap; if(!cur) return;
+  if(cur.pvp){ netApplyGuestPvp(cur,dt); return; }
   netApplyMeta(cur);
   if(state===STATE.PAUSE) dt=0;   // host paused the sim: freeze local anim clocks / dead reckoning / prediction too
   // round-1 intro: the condor isn't in the snapshot (its animation is fully determined by introTimer),
