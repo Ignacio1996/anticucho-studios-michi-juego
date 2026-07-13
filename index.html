@@ -5090,7 +5090,8 @@ function netSerializePvp(){
       alive:p.alive, departed:!!p.departed, deathAnim:(p.deathAnim==null?null:p.deathAnim),
       punchAnim:p.punchAnim, animTime:p.animTime, pvpSpd:p.pvpSpd||1, cnt:p.pvpCnt })),
     bombs:pvp.bombs.map(b=>({ id:b.id, c:b.c, r:b.r, x:Math.round(b.x), y:Math.round(b.y),
-      ow:players.indexOf(b.owner), fuse:b.fuse, remote:!!b.remote, sl:!!b.slide })),
+      ow:players.indexOf(b.owner), fuse:b.fuse, remote:!!b.remote, sl:!!b.slide,
+      wk:players.reduce((m,pl,i)=>b.walkers.has(pl)?(m|(1<<i)):m,0) })),
     flames:pvp.flames.map(f=>({c:f.c, r:f.r, t:Math.round(f.t*100)/100})),
     items:pvp.items.map(it=>({id:it.id, c:it.c, r:it.r, type:it.type})) };
 }
@@ -5191,6 +5192,7 @@ function netGuestMusic(st){
 }
 // ---- guest: replicate a PVP duel snapshot (own player predicted, others interpolated) ----
 const gPvpItems={};
+const gPvpWalk={};   // bomb id -> still walkable for the local player (host's walker rule, replicated)
 function netApplyGuestPvp(cur,dt){
   state=STATE.PVP;
   if(currentMap!=='pvp'){ currentMap='pvp'; obstacles=[]; cliffs=[]; WORLD_W=W; WORLD_H=H; camX=0; camY=0; enemies.length=0; }
@@ -5208,13 +5210,14 @@ function netApplyGuestPvp(cur,dt){
   const src=interp?b:cur;
   // bombs first — own-player prediction collides against them
   const aB=interp?_byId(a.bombs):null;
-  pvp.bombs.length=0;
+  pvp.bombs.length=0; const seenB={};
   for(const sb of src.bombs){
     const nb={ id:sb.id, c:sb.c, r:sb.r, x:sb.x, y:sb.y, owner:null, ownerIdx:sb.ow, fuse:sb.fuse,
-      remote:sb.remote, range:1, pierce:false, slide:(sb.sl?{}:null), walkers:new Set(), gone:false };
+      remote:sb.remote, range:1, pierce:false, slide:(sb.sl?{}:null), walkers:new Set(), wkMask:sb.wk||0, gone:false };
     if(interp && aB[sb.id]){ nb.x=aB[sb.id].x+(sb.x-aB[sb.id].x)*alpha; nb.y=aB[sb.id].y+(sb.y-aB[sb.id].y)*alpha; }
-    pvp.bombs.push(nb);
+    pvp.bombs.push(nb); seenB[sb.id]=1;
   }
+  for(const id in gPvpWalk){ if(!seenB[id]) delete gPvpWalk[id]; }
   // players — own slot predicted through the replicated grid/bombs, others interpolated
   const np=[];
   for(let i=0;i<src.players.length;i++){
@@ -5260,8 +5263,15 @@ function netPvpPredictOwned(rp, sp, cur, dt){
     rp.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); gPred.dir=rp.dir;
     const spd=PVP_BASE_SPD*(sp.pvpSpd||1);
     const tmp={x:gPred.x, y:gPred.y, radius:sp.radius};
-    // bombs we're currently standing on stay walkable (same walker rule the host applies)
-    for(const nb of pvp.bombs){ if(circleRectCollide(tmp.x,tmp.y,tmp.radius+2,pvpTileRect(nb.c,nb.r))) nb.walkers.add(tmp); }
+    // walker rule, replicated: a bomb stays walkable only while the host counts us among its
+    // walkers (wk bit) and we haven't stepped off it locally — never from mere contact, or
+    // resting against a bomb (inside the +2px probe) would turn it walkable the next frame
+    for(const nb of pvp.bombs){
+      let w=gPvpWalk[nb.id]; if(w===undefined) w=!!(nb.wkMask&(1<<NET.slot));
+      if(w && !circleRectCollide(tmp.x,tmp.y,tmp.radius+2,pvpTileRect(nb.c,nb.r))) w=false;   // stepped off — solid for good
+      gPvpWalk[nb.id]=w;
+      if(w) nb.walkers.add(tmp);
+    }
     if(mx) pvpMoveAxis(tmp,'x',mx*spd*dt, my===0?spd*dt:0, mx>0?1:-1);
     if(my) pvpMoveAxis(tmp,'y',my*spd*dt, mx===0?spd*dt:0, my>0?1:-1);
     gPred.x=tmp.x; gPred.y=tmp.y;
