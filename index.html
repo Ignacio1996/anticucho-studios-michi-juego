@@ -58,7 +58,7 @@ const W = cv.width, H = cv.height;
 // ---------- Audio ----------
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
 let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, pvpMusic=null, actx=null, sfxGain=null, audioStarted=false;
-let masterGain=null, streamDest=null;   // master bus + a tap fed to online guests
+// (the old masterGain/streamDest WebRTC audio tap is gone — guests play their own audio locally)
 let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
 let pauseView='main', pauseSel=0, setSel=0;
 function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.4*musicVol; }
@@ -101,19 +101,18 @@ AUDIO_SRC.condor_sel="assets/snd_condor_sel.mp3";           // "Condor INTRO"
 AUDIO_SRC.condor_die="assets/snd_condor_die.mp3";           // "Condor Death"
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
-// On file:// origins createMediaElementSource() succeeds but emits silence (the media
-// is treated as cross-origin). Detect that and skip Web Audio routing so the <audio>
-// elements play through their own output instead — all sound stays audible locally.
-// Trade-off: un-routed audio isn't captured into the WebRTC stream for online guests,
-// but online multiplayer already requires a served http(s) origin.
-const AUDIO_DIRECT = (location.protocol==='file:');
-function routeEl(el){ if(AUDIO_DIRECT) return el; try{ if(actx && masterGain){ actx.createMediaElementSource(el).connect(masterGain); } }catch(e){} return el; }
+// Audio elements play through their own native output — they are deliberately NOT routed
+// through createMediaElementSource(). That routing only existed to tap audio into a WebRTC
+// stream for online guests, which the prediction redesign removed (guests play their own
+// audio). Worse, a routed element whose media is cross-origin (file://, or a CDN like
+// raw.githack redirecting assets to raw.githubusercontent.com) is CORS-tainted and emits
+// pure SILENCE — that killed all music/SFX on CDN-hosted test builds.
+const AUDIO_DIRECT = (location.protocol==='file:');   // file:// can't fetch() → SFX skip the buffer path too
+function routeEl(el){ return el; }
 // ---- SFX playback via decoded Web Audio buffers (cached per file) ----
-// The old path created a fresh <audio> element per sound and routed each through
-// createMediaElementSource(); a source node pins its element in the graph forever, so every SFX
-// leaked a live media player — after minutes of play the browser hits its media-player cap and
-// audio first stutters, then new sounds go silent. BufferSource nodes are fire-and-forget and
-// still feed masterGain, so the WebRTC stream capture keeps hearing them.
+// The old path created a fresh <audio> element per sound; every SFX leaked a live media
+// player — after minutes of play the browser hits its media-player cap and audio first
+// stutters, then new sounds go silent. BufferSource nodes are fire-and-forget.
 const SFX_BUF={}, SFX_LOADING={};
 function sfxBuffer(src){
   if(!actx || AUDIO_DIRECT || !src) return null;   // file:// can't fetch() → element fallback
@@ -155,7 +154,9 @@ function playSfxElement(src, vol, rate){
     let a=null;
     for(const el of pool){ if(el.paused || el.ended){ a=el; break; } }
     if(!a){
-      if(pool.length<SFX_EL_CAP){ a=routeEl(new Audio(src)); pool.push(a); }
+      if(pool.length<SFX_EL_CAP){ a=routeEl(new Audio(src)); pool.push(a);
+        // a failed load (404 / CDN throttling) must not poison the pool — drop it so the next play retries
+        a.addEventListener('error',()=>{ const i=pool.indexOf(a); if(i>=0) pool.splice(i,1); }); }
       else { a=pool.shift(); pool.push(a); try{ a.pause(); }catch(e){} }   // all busy → steal oldest
     }
     try{ a.currentTime=0; }catch(e){}
@@ -170,7 +171,7 @@ function playSfxElement(src, vol, rate){
 function initAudio(){
   if(!audioStarted){
     audioStarted=true;
-    try{ actx=new (window.AudioContext||window.webkitAudioContext)(); masterGain=actx.createGain(); masterGain.connect(actx.destination); streamDest=actx.createMediaStreamDestination(); masterGain.connect(streamDest); sfxGain=actx.createGain(); sfxGain.gain.value=sfxVol; sfxGain.connect(masterGain); }catch(e){}
+    try{ actx=new (window.AudioContext||window.webkitAudioContext)(); sfxGain=actx.createGain(); sfxGain.gain.value=sfxVol; sfxGain.connect(actx.destination); }catch(e){}
     try{ bgMusic=routeEl(new Audio(AUDIO_SRC.bg)); bgMusic.loop=true; bgMusic.volume=0.32; }catch(e){}
     try{ menuMusic=routeEl(new Audio(AUDIO_SRC.menu)); menuMusic.loop=true; menuMusic.volume=0.45; }catch(e){}
     try{ sbMusic=routeEl(new Audio(AUDIO_SRC.sbbg)); sbMusic.loop=true; sbMusic.volume=0.4; }catch(e){}
@@ -484,11 +485,13 @@ const CHARS={
   // Teddington: the Amazonas boss sprite set as a player. noPunch: placing a bomb never shows a
   // hit/punch frame, only his walk/idle poses (his east walk has 2 frames; charFrame handles it).
   teddington:{ S:TED, cell:{w:224,h:224}, pd:0.18, dh:64, npKey:'np', sIdle:'sw2', eIdle:'ew1', name:'TEDDINGTON', color:'#b07a3a', heavy:true, noPunch:true,
+    selCrop:{sx:48,sy:2,sw:148,sh:120},   // chest-up card art (no drawn portrait yet)
     loaded:()=>!!(TED.ew1&&TED.ew1.naturalWidth), base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
   // Cóndor: always airborne — floats (hover+bob in drawPlayer) and flaps nonstop (flap branch in
   // charFrame runs off the global clock, not off movement). natAspect: frames differ in size, so
   // width comes from each image's own aspect ratio instead of a fixed cell.
   condor:{ S:CONDOR, cell:CONDOR_CELL, pd:0.18, dh:46, npKey:null, sIdle:null, eIdle:null, name:'CÓNDOR', color:'#e0a83a', heavy:false, noPunch:true, flap:true, floats:true, natAspect:true,
+    selCrop:{sx:88,sy:0,sw:130,sh:132},   // head/body zoom card art (no drawn portrait yet)
     loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
 const CHAR_LIST=['freddy','michi','sumac','shooshy'];
@@ -3611,7 +3614,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.4';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.5';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4059,15 +4062,23 @@ function handleSelectKey(code){
     if(code==='Enter'){ if(selChar1 && selChar2) beginStart(); }
   }
 }
-// card art for a character: the drawn portrait when one exists, else a big sprite frame
-// (Teddington/Cóndor have no dedicated portrait yet)
+// card art for a character: the drawn portrait when one exists, else a chest-up crop of a
+// sprite frame (Teddington/Cóndor have no dedicated portrait yet). Returns {img,sx,sy,sw,sh}.
 function selCard(k){
   const img=SEL_IMG[k];
-  if(img && img.naturalWidth) return img;
+  if(img && img.naturalWidth) return {img, sx:0, sy:0, sw:img.naturalWidth, sh:img.naturalHeight};
   const C=CHARS[k], S=C&&C.S;
   if(!S) return null;
   const im=(C.sIdle&&S[C.sIdle])||S.c1||S.sw2;
-  return (im && im.naturalWidth) ? im : null;
+  if(!(im && im.naturalWidth)) return null;
+  const c=C.selCrop||{sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight};
+  return {img:im, sx:c.sx, sy:c.sy, sw:c.sw, sh:c.sh};
+}
+// contain-fit a selCard into a box, centered horizontally, anchored to the top
+function drawCardArt(k, bx, by, bw, bh){
+  const a=selCard(k); if(!a) return;
+  const s=Math.min(bw/a.sw, bh/a.sh), dw=a.sw*s, dh=a.sh*s;
+  ctx.drawImage(a.img, a.sx, a.sy, a.sw, a.sh, bx+bw/2-dw/2, by, dw, dh);
 }
 function drawSelect(){
   if(pvpPending){
@@ -4085,9 +4096,8 @@ function drawSelect(){
     const k=list[i], cx=x0+i*(cw+gap);
     const takenBy1=selChar1===k, takenBy2=selChar2===k, taken=takenBy1||takenBy2;
     ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,ch);
-    const img=selCard(k);
     ctx.save(); ctx.globalAlpha = (taken)?1:0.95;
-    if(img && img.naturalWidth){ const s=Math.min((cw-24)/img.naturalWidth, (ch-120)/img.naturalHeight), dw=img.naturalWidth*s, dh=img.naturalHeight*s; ctx.drawImage(img, cx+cw/2-dw/2, cy+18, dw, dh); }
+    drawCardArt(k, cx+12, cy+18, cw-24, ch-120);
     ctx.restore();
     ctx.fillStyle=CHARS[k].color; ctx.font='bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+ch-58);
     ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido', cx+cw/2, cy+ch-38);
@@ -4832,8 +4842,7 @@ function drawPvpChars(overlay){
     const k=list[i], cx=x0+i*(cw+gap);
     const takenBy=players.findIndex(pl=>pl && !pl.departed && pl.selKind && pl.kind===k);
     ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,chh);
-    const img=selCard(k);
-    if(img && img.naturalWidth){ const s=Math.min((cw-20)/img.naturalWidth,(chh-120)/img.naturalHeight), dw=img.naturalWidth*s, dh=img.naturalHeight*s; ctx.drawImage(img, cx+cw/2-dw/2, cy+16, dw, dh); }
+    drawCardArt(k, cx+10, cy+16, cw-20, chh-120);
     ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+chh-64);
     ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido', cx+cw/2, cy+chh-46);
     if(takenBy>=0){   // first come, first served — grey it out for everyone else
@@ -4901,8 +4910,7 @@ function drawPvp(){
     const wp=players[pvp.winner];
     ctx.fillStyle=wp?wp.color:'#ffe9b0'; ctx.font='bold 44px Courier New';
     ctx.fillText('¡'+(wp?wp.name:'')+' GANA EL DUELO!', W/2, 120);
-    const img=wp&&selCard(wp.kind);
-    if(img&&img.naturalWidth){ const s=Math.min(200/img.naturalWidth,300/img.naturalHeight), iw=img.naturalWidth*s, ih=img.naturalHeight*s; ctx.drawImage(img,W/2-iw/2,158,iw,ih); }
+    if(wp) drawCardArt(wp.kind, W/2-100, 158, 200, 300);
     ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New';
     ctx.fillText(pvpScoreLine(), W/2, 506);
     ctx.fillStyle='#ffe14a'; ctx.font='bold 18px Courier New';
