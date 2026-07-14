@@ -58,7 +58,7 @@ const W = cv.width, H = cv.height;
 // ---------- Audio ----------
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
 let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, pvpMusic=null, actx=null, sfxGain=null, audioStarted=false;
-let masterGain=null, streamDest=null;   // master bus + a tap fed to online guests
+// (the old masterGain/streamDest WebRTC audio tap is gone — guests play their own audio locally)
 let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
 let pauseView='main', pauseSel=0, setSel=0;
 function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.4*musicVol; }
@@ -92,21 +92,26 @@ AUDIO_SRC.jar_intro2="assets/snd_044.mp3";
 AUDIO_SRC.guachi_intro="assets/snd_045.mp3";
 AUDIO_SRC.pvpbg="assets/snd_046.mp3";
 AUDIO_SRC.pvpboom="assets/snd_047.mp4";   // AAC audio — browsers decode it like any other SFX
+// PVP-only characters — dedicated voice takes
+AUDIO_SRC.teddington_sel="assets/snd_teddington_sel.mp3";   // "Teddington intro"
+AUDIO_SRC.teddington_die="assets/snd_teddington_die.mp3";   // "Teddington DEATH"
+AUDIO_SRC.condor_sel="assets/snd_condor_sel.mp3";           // "Condor INTRO"
+AUDIO_SRC.condor_die="assets/snd_condor_die.mp3";           // "Condor DEATH"
+AUDIO_SRC.condor_hit="assets/snd_condor_hit.mp3";           // "Condor HIT" — every other bomb he places
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
-// On file:// origins createMediaElementSource() succeeds but emits silence (the media
-// is treated as cross-origin). Detect that and skip Web Audio routing so the <audio>
-// elements play through their own output instead — all sound stays audible locally.
-// Trade-off: un-routed audio isn't captured into the WebRTC stream for online guests,
-// but online multiplayer already requires a served http(s) origin.
-const AUDIO_DIRECT = (location.protocol==='file:');
-function routeEl(el){ if(AUDIO_DIRECT) return el; try{ if(actx && masterGain){ actx.createMediaElementSource(el).connect(masterGain); } }catch(e){} return el; }
+// Audio elements play through their own native output — they are deliberately NOT routed
+// through createMediaElementSource(). That routing only existed to tap audio into a WebRTC
+// stream for online guests, which the prediction redesign removed (guests play their own
+// audio). Worse, a routed element whose media is cross-origin (file://, or a CDN like
+// raw.githack redirecting assets to raw.githubusercontent.com) is CORS-tainted and emits
+// pure SILENCE — that killed all music/SFX on CDN-hosted test builds.
+const AUDIO_DIRECT = (location.protocol==='file:');   // file:// can't fetch() → SFX skip the buffer path too
+function routeEl(el){ return el; }
 // ---- SFX playback via decoded Web Audio buffers (cached per file) ----
-// The old path created a fresh <audio> element per sound and routed each through
-// createMediaElementSource(); a source node pins its element in the graph forever, so every SFX
-// leaked a live media player — after minutes of play the browser hits its media-player cap and
-// audio first stutters, then new sounds go silent. BufferSource nodes are fire-and-forget and
-// still feed masterGain, so the WebRTC stream capture keeps hearing them.
+// The old path created a fresh <audio> element per sound; every SFX leaked a live media
+// player — after minutes of play the browser hits its media-player cap and audio first
+// stutters, then new sounds go silent. BufferSource nodes are fire-and-forget.
 const SFX_BUF={}, SFX_LOADING={};
 function sfxBuffer(src){
   if(!actx || AUDIO_DIRECT || !src) return null;   // file:// can't fetch() → element fallback
@@ -114,9 +119,11 @@ function sfxBuffer(src){
   if(b!==false && !SFX_LOADING[src]){
     SFX_LOADING[src]=true;
     try{
-      fetch(src).then(r=>r.arrayBuffer()).then(ab=>actx.decodeAudioData(ab))
+      fetch(src).then(r=>{ if(!r.ok) throw 0; return r.arrayBuffer(); }).then(ab=>actx.decodeAudioData(ab))
         .then(buf=>{ SFX_BUF[src]=buf; delete SFX_LOADING[src]; })
-        .catch(()=>{ SFX_BUF[src]=false; delete SFX_LOADING[src]; });   // undecodable → element fallback for good
+        // failed (404 / CDN throttling / undecodable) → element fallback now, but let a later
+        // play retry the fetch — throttled hosts recover once the initial asset burst is over
+        .catch(()=>{ SFX_BUF[src]=false; delete SFX_LOADING[src]; setTimeout(()=>{ if(SFX_BUF[src]===false) delete SFX_BUF[src]; }, 8000); });
     }catch(e){ delete SFX_LOADING[src]; }
   }
   return null;
@@ -148,7 +155,9 @@ function playSfxElement(src, vol, rate){
     let a=null;
     for(const el of pool){ if(el.paused || el.ended){ a=el; break; } }
     if(!a){
-      if(pool.length<SFX_EL_CAP){ a=routeEl(new Audio(src)); pool.push(a); }
+      if(pool.length<SFX_EL_CAP){ a=routeEl(new Audio(src)); pool.push(a);
+        // a failed load (404 / CDN throttling) must not poison the pool — drop it so the next play retries
+        a.addEventListener('error',()=>{ const i=pool.indexOf(a); if(i>=0) pool.splice(i,1); }); }
       else { a=pool.shift(); pool.push(a); try{ a.pause(); }catch(e){} }   // all busy → steal oldest
     }
     try{ a.currentTime=0; }catch(e){}
@@ -163,18 +172,32 @@ function playSfxElement(src, vol, rate){
 function initAudio(){
   if(!audioStarted){
     audioStarted=true;
-    try{ actx=new (window.AudioContext||window.webkitAudioContext)(); masterGain=actx.createGain(); masterGain.connect(actx.destination); streamDest=actx.createMediaStreamDestination(); masterGain.connect(streamDest); sfxGain=actx.createGain(); sfxGain.gain.value=sfxVol; sfxGain.connect(masterGain); }catch(e){}
-    try{ bgMusic=routeEl(new Audio(AUDIO_SRC.bg)); bgMusic.loop=true; bgMusic.volume=0.32; }catch(e){}
-    try{ menuMusic=routeEl(new Audio(AUDIO_SRC.menu)); menuMusic.loop=true; menuMusic.volume=0.45; }catch(e){}
-    try{ sbMusic=routeEl(new Audio(AUDIO_SRC.sbbg)); sbMusic.loop=true; sbMusic.volume=0.4; }catch(e){}
-    try{ tpMusic=routeEl(new Audio(AUDIO_SRC.tpbg)); tpMusic.loop=true; tpMusic.volume=0.42; }catch(e){}
-    try{ evMusic=routeEl(new Audio(AUDIO_SRC.elvalle)); evMusic.loop=true; evMusic.volume=0.34; }catch(e){}
-    try{ deathMusic=routeEl(new Audio(AUDIO_SRC.death)); deathMusic.loop=true; deathMusic.volume=0.5; }catch(e){}
-    try{ losAndesMusic=routeEl(new Audio(AUDIO_SRC.losandes)); losAndesMusic.loop=true; losAndesMusic.volume=0.5; }catch(e){}
-    try{ pvpMusic=routeEl(new Audio(AUDIO_SRC.pvpbg)); pvpMusic.loop=true; pvpMusic.volume=0.4; }catch(e){}
+    try{ actx=new (window.AudioContext||window.webkitAudioContext)(); sfxGain=actx.createGain(); sfxGain.gain.value=sfxVol; sfxGain.connect(actx.destination); }catch(e){}
+    // Music tracks load lazily (preload:none → the download starts on first play()) so page load
+    // doesn't burst-request ~12MB of mp3s on top of ~800 sprites — free CDNs throttle that burst
+    // and a failed element used to stay mute forever. On error: retry the load with backoff; the
+    // many play()-if-paused call sites (initAudio keydown hook, state transitions) resume it after.
+    const mkMusic=(src,vol)=>{ const el=new Audio(); el.preload='none'; el.loop=true; el.volume=vol; el._rt=0;
+      el.addEventListener('error',()=>{ if(el._rt++<6) setTimeout(()=>{ try{ el.load(); }catch(e){} }, 2000+el._rt*2000); });
+      el.src=src; return el; };
+    try{ bgMusic=mkMusic(AUDIO_SRC.bg, 0.32); }catch(e){}
+    try{ menuMusic=mkMusic(AUDIO_SRC.menu, 0.45); }catch(e){}
+    try{ sbMusic=mkMusic(AUDIO_SRC.sbbg, 0.4); }catch(e){}
+    try{ tpMusic=mkMusic(AUDIO_SRC.tpbg, 0.42); }catch(e){}
+    try{ evMusic=mkMusic(AUDIO_SRC.elvalle, 0.34); }catch(e){}
+    try{ deathMusic=mkMusic(AUDIO_SRC.death, 0.5); }catch(e){}
+    try{ losAndesMusic=mkMusic(AUDIO_SRC.losandes, 0.5); }catch(e){}
+    try{ pvpMusic=mkMusic(AUDIO_SRC.pvpbg, 0.4); }catch(e){}
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
+    // ...and the character voices a moment later (after the sprite burst), so the FIRST death/select
+    // of a match doesn't wait on a network fetch — that lag was audible on CDN-hosted builds
+    try{ setTimeout(()=>{ try{
+      for(const k of ['freddy','michi','sumac','shooshy','teddington','condor']){ sfxBuffer(AUDIO_SRC[k+'_sel']); sfxBuffer(AUDIO_SRC[k+'_die']); }
+      sfxBuffer(AUDIO_SRC.condor_hit); sfxBuffer(AUDIO_SRC.hee1); sfxBuffer(AUDIO_SRC.hee2); sfxBuffer(AUDIO_SRC.hee3);
+      sfxBuffer(AUDIO_SRC.sumac1); sfxBuffer(AUDIO_SRC.sumac2); sfxBuffer(AUDIO_SRC.shooshy1); sfxBuffer(AUDIO_SRC.shooshy2);
+    }catch(e){} }, 2500); }catch(e){}
   }
   try{ if(actx && actx.state==='suspended') actx.resume(); if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
@@ -327,6 +350,11 @@ function spritesLoaded(){ return spritesReady>=spritesTotal; }
 const CONDOR_CELL={w:305,h:150};
 const CONDOR_SRC={ c1:"assets/img_017.png", c2:"assets/img_018.png", c3:"assets/img_019.png" };
 const CONDOR={}; for(const k in CONDOR_SRC){ const im=new Image(); im.src=CONDOR_SRC[k]; CONDOR[k]=im; }
+// PVP-playable condor: side/back flap frames ("Condor 1_East/2_East" and "1_North/2_North"),
+// exported from the artist's 1113px canvas at the same scale as the front frames (union-cropped
+// per pair so the two frames of a direction stay aligned).
+{ const dirs={ e1:"assets/condor_e1.png", e2:"assets/condor_e2.png", n1:"assets/condor_n1.png", n2:"assets/condor_n2.png" };
+  for(const k in dirs){ const im=new Image(); im.src=dirs[k]; CONDOR[k]=im; } }
 
 const TED_STOREH=224, TED_DH=80, BOSS_PUNCH_DUR=0.95;
 const TED_META={
@@ -468,12 +496,38 @@ const CHARS={
   michi:{ S:MICHI, cell:MICHI_CELL, pd:MICHI_PUNCH_DUR, dh:62, npKey:'np', sIdle:'sw2', eIdle:'ew2', name:'MICHI', color:'#4a78c0', heavy:false, loaded:michiLoaded, base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
   sumac:{ S:SUMAC, cell:SUMAC_CELL, pd:0.18, dh:56, npKey:'np', sIdle:'sw2', eIdle:'ew2', name:'SUMAC', color:'#4a9b7a', heavy:false, loaded:sumacLoaded, base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
   shooshy:{ S:SHOOSHY, cell:SHOOSHY_CELL, pd:0.22, dh:56, npKey:'np', sIdle:'sw2', eIdle:'eidle', name:'SHOOSHY', color:'#b06fb8', heavy:true, loaded:shooshyLoaded, base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
+  // ---- PVP-only characters (never offered in Horda — CHAR_LIST below stays at 4) ----
+  // Teddington: the Amazonas boss sprite set as a player. noPunch: placing a bomb never shows a
+  // hit/punch frame, only his walk/idle poses (his east walk has 2 frames; charFrame handles it).
+  teddington:{ S:TED, cell:{w:224,h:224}, pd:0.18, dh:64, npKey:'np', sIdle:'sw2', eIdle:'ew1', name:'TEDDINGTON', color:'#b07a3a', heavy:true, noPunch:true,
+    selCrop:{sx:48,sy:2,sw:148,sh:120},   // chest-up card art (no drawn portrait yet)
+    loaded:()=>!!(TED.ew1&&TED.ew1.naturalWidth), base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
+  // Cóndor: always airborne — floats (hover+bob in drawPlayer) and flaps nonstop (flap branch in
+  // charFrame runs off the global clock, not off movement). natAspect: frames differ in size, so
+  // width comes from each image's own aspect ratio instead of a fixed cell.
+  // natScale: the east/north frames are exported at the same art scale as the front view but
+  // different canvas sizes — draw height follows each frame's natural height so the bird's BODY
+  // stays one size in every direction (dh:46 maps to the front frame's 150px reference height)
+  condor:{ S:CONDOR, cell:CONDOR_CELL, pd:0.18, dh:46, npKey:null, sIdle:null, eIdle:null, name:'CÓNDOR', color:'#e0a83a', heavy:false, noPunch:true, flap:true, floats:true, natAspect:true, natScale:true,
+    selCrop:{sx:95,sy:0,sw:120,sh:95},   // chest-up card art: head + chest + wing shoulders
+    loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
 const CHAR_LIST=['freddy','michi','sumac','shooshy'];
+const PVP_CHAR_LIST=CHAR_LIST.concat(['teddington','condor']);
 let selMode=1, selCursor1=0, selCursor2=1, selChar1=null, selChar2=null, modTest=false, selPending=false, selStartTimer=0;
 function charFrame(p){
   const C=CHARS[p.kind], S=C.S, d=p.dir;
-  if(p.punchAnim>0){
+  if(C.flap){
+    // Cóndor: wings never stop — the cycle runs off the global clock, moving or not, and there is
+    // no punch pose. Front view ping-pongs 1-2-3-2; east/west and north alternate their two frames
+    // (west = east flipped). Missing side/back files fall back to the front cycle.
+    const ok=im=>im&&im.naturalWidth>0;
+    const f2=Math.floor(time/0.16)%2;
+    if(d==='n' && ok(S.n1) && ok(S.n2)) return {img:[S.n1,S.n2][f2], flip:false};
+    if((d==='e'||d==='w') && ok(S.e1) && ok(S.e2)) return {img:[S.e1,S.e2][f2], flip:(d==='w')};
+    return {img:[S.c1,S.c2,S.c3][[0,1,2,1][Math.floor(time/0.16)%4]], flip:false};
+  }
+  if(p.punchAnim>0 && !C.noPunch){   // noPunch (Teddington): bombs place with walk/idle poses only
     const ph=clamp(1-(p.punchAnim/C.pd),0,0.999), i3=Math.floor(ph*3);
     if(d==='n') return {img:S[C.npKey], flip:false};
     if(d==='s') return {img:[S.sp1,S.sp2,S.sp1][i3], flip:false};
@@ -487,7 +541,7 @@ function charFrame(p){
   const idx=[0,1,2,1][Math.floor(p.animTime/0.12)%4];
   if(d==='n') return {img:[S.nw1,S.nw2,S.nw3][idx], flip:false};
   if(d==='s') return {img:[S.sw1,S.sw2,S.sw3][idx], flip:false};
-  return {img:[S.ew1,S.ew2,S.ew3][idx], flip:(d==='w')};
+  return {img:[S.ew1,S.ew2,S.ew3||S.ew1][idx], flip:(d==='w')};   // 2-frame east sets (Teddington) walk 1-2-1-2
 }
 
 
@@ -635,7 +689,7 @@ addEventListener('keydown', e => {
   initAudio();
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Comma'].includes(e.code)) e.preventDefault();
-  if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && pvp.paused && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
+  if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && (pvp.paused||pvpInfo) && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
   // menu/shop interactions
   handleMenuKey(e.code);
 });
@@ -650,7 +704,7 @@ const clamp = (v,a,b) => v<a?a:(v>b?b:v);
 const TAU = Math.PI*2;
 
 // ---------- Game State ----------
-const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help', PVP:'pvp', MODOS:'modos' };
+const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help', PVP:'pvp', MODOS:'modos', NETSELECT:'netselect' };
 let state = STATE.LOADING;
 let mainSel=0, mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapLockShake=0, currentMap='amazonas';
 let pvpPending=false;   // the SELECT screen was entered from PVP → start the duel instead of a Horda run
@@ -661,7 +715,7 @@ let bossFlowGrid=null, bossFlowCols=0, bossFlowRows=0, bossFlowTimer=0;
 const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' } };
 const MAP_ORDER=['amazonas','stonebridge','templo','machu'];
 let mapsDone={}; try{ mapsDone=JSON.parse(localStorage.getItem('fm_progress')||'{}')||{}; }catch(e){ mapsDone={}; }
-const UNLOCK_ALL=true; // TEST: set false to re-enable progressive map locking
+const UNLOCK_ALL=false; // dev toggle: set true to unlock every map while testing
 function isMapUnlocked(i){ return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
 function saveMapBeaten(name){ if(name){ mapsDone[name]=1; try{ localStorage.setItem('fm_progress', JSON.stringify(mapsDone)); }catch(e){} } }
 let prevState = STATE.PLAY;
@@ -1148,7 +1202,17 @@ function playPunchSound(p){
   const k=p.kind;
   if(k==='freddy'){ playPlin(); return; }     // PLIN exclusive to Freddy
   if(k==='michi'){ playWow(); return; }        // WOW exclusive to Michi
+  // Teddington laughs on every bomb. Inline (not playHee()) — the playHee wrapper queues its own
+  // net event, and this call already rides the 'punch' event, so guests would hear it twice.
+  if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); return; }
+  // Cóndor cries on every THIRD bomb — more would be too much
+  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42); return; }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
+  if(state===STATE.PVP){
+    // bombs are placed far less often than horda punches — voice every 3rd bomb
+    if(k==='sumac'||k==='shooshy'){ if(c%3===1) playOne(AUDIO_SRC[k+(randi(1,4)===4?'2':'1')], 0.55); }
+    return;
+  }
   if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55); }
   else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55); }
 }
@@ -2665,6 +2729,20 @@ function drawPlayer(p){
     if(p.deathAnim!=null){
       const m=DEATH_META[p.kind], arr=DEATH_IMG[p.kind], img=arr&&arr[deathFrameIdx(p.deathAnim)];
       if(img && img.naturalWidth){ const sc=m.dh/m.h, dw=m.w*sc, dh=m.h*sc; const dx=p.x-m.d1cx*sc, dy=(p.y+p.radius+5)-m.d1by*sc; ctx.drawImage(img,dx,dy,dw,dh); }
+      else{
+        // PVP-only kinds (Teddington / Cóndor) have no bespoke KO frames: tip the standing sprite
+        // over and fade it out, then hold the fallen pose like the drawn death frames do
+        const C=CHARS[p.kind];
+        if(C && C.loaded()){
+          const t=clamp(p.deathAnim/0.9,0,1), fr=charFrame(p);
+          const DH=(C.natScale&&fr.img&&fr.img.naturalHeight)?C.dh*(fr.img.naturalHeight/C.cell.h):C.dh;
+          const DW=(C.natAspect&&fr.img&&fr.img.naturalWidth)?DH*(fr.img.naturalWidth/fr.img.naturalHeight):C.cell.w*(DH/C.cell.h);
+          ctx.save(); ctx.translate(p.x, p.y+p.radius-4); ctx.rotate((fr.flip?-1:1)*t*Math.PI/2);
+          ctx.globalAlpha=1-0.7*t;
+          if(fr.img && fr.img.naturalWidth) ctx.drawImage(fr.img,-DW/2,-DH,DW,DH);
+          ctx.restore();
+        }
+      }
       return;
     }
     // death cross — co-op respawn point for next round
@@ -2696,8 +2774,12 @@ function drawPlayer(p){
   if(useSprite){
     const fr = charFrame(p);
     const CELL = C.cell;
-    const DH = C.dh, scale=DH/CELL.h, DW=CELL.w*scale;
-    const dx=p.x-DW/2, dy=p.y+r-DH+5;
+    const DH = (C.natScale && fr.img && fr.img.naturalHeight) ? C.dh*(fr.img.naturalHeight/CELL.h) : C.dh;
+    const scale=DH/CELL.h;
+    const DW = (C.natAspect && fr.img && fr.img.naturalWidth) ? DH*(fr.img.naturalWidth/fr.img.naturalHeight) : CELL.w*scale;
+    // floats (Cóndor): airborne — hover above the ground shadow with a gentle flight bob
+    const hov = C.floats ? 11+Math.sin(time*3.4)*3.5 : 0;
+    const dx=p.x-DW/2, dy=p.y+r-DH+5-hov;
     ctx.save();
     if(blink) ctx.globalAlpha=0.28;
     if(fr.flip){ ctx.translate(p.x,0); ctx.scale(-1,1); ctx.translate(-p.x,0); }
@@ -3493,7 +3575,7 @@ function drawBreakUI(){
 }
 
 // ---------- New menu system (main menu / mapas / como jugar) ----------
-function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY||state===STATE.MODOS; }
+function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY||state===STATE.MODOS||state===STATE.NETSELECT; }
 function playMenuMusic(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(pvpMusic){ pvpMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
 function stopMenuMusic(){ try{ if(menuMusic) menuMusic.pause(); }catch(e){} }
 function gotoMainMenu(){ stopVoices(); state=STATE.MAINMENU; mainSel=0; mainMenuT=99; playMenuMusic(); }
@@ -3559,7 +3641,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-12.5';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.4';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3584,7 +3666,7 @@ function drawMainMenu(){
 function drawMapas(){
   drawBannerBG();
   ensureMapThumb();
-  const maps=[{name:'Espíritu del Amazonas',locked:false},{name:'Stonebridge',locked:false},{name:'Templo de la Jarjacha',locked:false},{name:'Machu Picchu',locked:false}];
+  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'}];
   const n=4, cw=232, gap=24, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=160, chh=320;
   for(let i=0;i<n;i++){
     const m=maps[i], locked=!isMapUnlocked(i);
@@ -3602,8 +3684,9 @@ function drawMapas(){
     ctx.textAlign='center';
     ctx.fillStyle=locked?'#9a8f75':'#ffe9b0'; ctx.font='bold 17px Courier New';
     wrapLeftCentered(m.name, cw/2, 228, cw-26, 21);
-    if(!locked && (i<=3)){ ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 292); }
-    else if(!locked){ ctx.fillStyle='#e8c98a'; ctx.font='13px Courier New'; ctx.fillText('Próximamente', cw/2, 292); }
+    if(locked){ ctx.fillStyle='#c9b489'; ctx.font='13px Courier New'; ctx.fillText('Supera '+maps[i-1].short, cw/2, 292); }
+    else if(mapsDone[MAP_ORDER[i]]){ ctx.fillStyle='#ffd24a'; ctx.font='13px Courier New'; ctx.fillText('★ Completado', cw/2, 292); }
+    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 292); }
     if(i===mapSel){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; rrect(2,2,cw-4,chh-4,10); ctx.stroke(); }
     ctx.restore();
   }
@@ -3843,8 +3926,10 @@ function drawPause(){
   }
   ctx.textAlign='center';
   if(NET.role==='guest'){
-    // guests only get the shared pause toggle \u2014 the menu itself lives on the host
-    ctx.fillStyle='#9a8f75'; ctx.font='11px Courier New'; ctx.fillText('Esc: continuar (para todos)', W/2, H-10);
+    // the shared CONTINUAR unpauses everyone (host-owned), but AJUSTES tunes THIS machine's volumes
+    const popts=['CONTINUAR (para todos)','AJUSTES'];
+    popts.forEach((o,i)=>{ const oy=H-92+i*30; ctx.fillStyle=i===pauseSel?'#ffe14a':'#bdb190'; ctx.font='bold 18px Courier New'; ctx.fillText((i===pauseSel?'\u25b6 ':'')+o, W/2, oy); });
+    ctx.fillStyle='#9a8f75'; ctx.font='11px Courier New'; ctx.fillText('\u2191\u2193 elegir  \u00b7  Enter: seleccionar  \u00b7  Esc: continuar (para todos)', W/2, H-10);
     ctx.textAlign='left'; return;
   }
   const popts=['CONTINUAR','AJUSTES','VOLVER AL MEN\u00da'];
@@ -3900,6 +3985,8 @@ function handleMenuKey(code){
       else if(NET.hosting){ lobbyMode='pvp'; currentMap='pvp'; enterLobby(); }
       else { enterPvpSelect(); }
     }
+  } else if(state===STATE.NETSELECT){
+    if(code==='Escape') enterLobby();   // back to the SALA — picks reset on the next Enter
   } else if(state===STATE.MAPAS){
     if(code==='Escape'){ state=STATE.MODOS; modeSel=0; return; }
     if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+3)%4;
@@ -3915,7 +4002,7 @@ function handleMenuKey(code){
   } else if(state===STATE.LOBBY){
     if(code==='Enter'||code==='Space'){
       if(lobbyMode==='pvp'){ if(NET.conns.length) startPvpOnline(); else mapLockShake=0.45; }   // a duel needs at least 2 players
-      else startGame();
+      else enterNetSelect();   // horda: everyone picks a character first (first come, first served)
     }
     else if(code==='Escape') exitLobby();
   } else if(state===STATE.PVP){ handlePvpKey(code);
@@ -3991,19 +4078,38 @@ function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0
 function handleSelectKey(code){
   if(selPending) return;
   if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
+  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;   // Teddington/Cóndor are PVP-only
   if(selMode===1){
-    if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+3)%4;
-    else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%4;
-    else if(code==='Enter'||code==='Space'){ selChar1=CHAR_LIST[selCursor1]; playCharSelect(selChar1); beginStart(); }
+    if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+n-1)%n;
+    else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%n;
+    else if(code==='Enter'||code==='Space'){ selChar1=list[selCursor1]; playCharSelect(selChar1); beginStart(); }
   } else {
-    if(code==='KeyA') selCursor1=(selCursor1+3)%4;
-    else if(code==='KeyD') selCursor1=(selCursor1+1)%4;
-    else if(code==='Space'){ if(CHAR_LIST[selCursor1]!==selChar2){ selChar1=CHAR_LIST[selCursor1]; playCharSelect(selChar1); } }
-    if(code==='ArrowLeft') selCursor2=(selCursor2+3)%4;
-    else if(code==='ArrowRight') selCursor2=(selCursor2+1)%4;
-    else if(code==='Comma'){ if(CHAR_LIST[selCursor2]!==selChar1){ selChar2=CHAR_LIST[selCursor2]; playCharSelect(selChar2); } }
+    if(code==='KeyA') selCursor1=(selCursor1+n-1)%n;
+    else if(code==='KeyD') selCursor1=(selCursor1+1)%n;
+    else if(code==='Space'){ if(list[selCursor1]!==selChar2){ selChar1=list[selCursor1]; playCharSelect(selChar1); } }
+    if(code==='ArrowLeft') selCursor2=(selCursor2+n-1)%n;
+    else if(code==='ArrowRight') selCursor2=(selCursor2+1)%n;
+    else if(code==='Comma'){ if(list[selCursor2]!==selChar1){ selChar2=list[selCursor2]; playCharSelect(selChar2); } }
     if(code==='Enter'){ if(selChar1 && selChar2) beginStart(); }
   }
+}
+// card art for a character: the drawn portrait when one exists, else a chest-up crop of a
+// sprite frame (Teddington/Cóndor have no dedicated portrait yet). Returns {img,sx,sy,sw,sh}.
+function selCard(k){
+  const img=SEL_IMG[k];
+  if(img && img.naturalWidth) return {img, sx:0, sy:0, sw:img.naturalWidth, sh:img.naturalHeight};
+  const C=CHARS[k], S=C&&C.S;
+  if(!S) return null;
+  const im=(C.sIdle&&S[C.sIdle])||S.c1||S.sw2;
+  if(!(im && im.naturalWidth)) return null;
+  const c=C.selCrop||{sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight};
+  return {img:im, sx:c.sx, sy:c.sy, sw:c.sw, sh:c.sh};
+}
+// contain-fit a selCard into a box, centered horizontally, anchored to the top
+function drawCardArt(k, bx, by, bw, bh){
+  const a=selCard(k); if(!a) return;
+  const s=Math.min(bw/a.sw, bh/a.sh), dw=a.sw*s, dh=a.sh*s;
+  ctx.drawImage(a.img, a.sx, a.sy, a.sw, a.sh, bx+bw/2-dw/2, by, dw, dh);
 }
 function drawSelect(){
   if(pvpPending){
@@ -4015,14 +4121,14 @@ function drawSelect(){
   ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
-  const n=4, cw=200, gap=26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, ch=330;
+  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;
+  const cw=(n>4)?160:200, gap=(n>4)?16:26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, ch=330;
   for(let i=0;i<n;i++){
-    const k=CHAR_LIST[i], cx=x0+i*(cw+gap);
+    const k=list[i], cx=x0+i*(cw+gap);
     const takenBy1=selChar1===k, takenBy2=selChar2===k, taken=takenBy1||takenBy2;
     ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,ch);
-    const img=SEL_IMG[k];
     ctx.save(); ctx.globalAlpha = (taken)?1:0.95;
-    if(img && img.naturalWidth){ const iw=cw-24, ih=iw*img.naturalHeight/img.naturalWidth; ctx.drawImage(img, cx+12, cy+18, iw, ih); }
+    drawCardArt(k, cx+12, cy+18, cw-24, ch-120);
     ctx.restore();
     ctx.fillStyle=CHARS[k].color; ctx.font='bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+ch-58);
     ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido', cx+cw/2, cy+ch-38);
@@ -4041,6 +4147,28 @@ function drawSelect(){
   ctx.fillStyle='#6a6050'; ctx.font='11px Courier New'; ctx.fillText('Esc: volver', W/2, cy+ch+96);
   if(selPending){ ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,H/2-34,W,68); ctx.fillStyle='#ffe14a'; ctx.font='bold 32px Courier New'; ctx.fillText('\u00a1COMENZANDO!', W/2, H/2+10); }
   ctx.textAlign='left';
+}
+// ---------- Horda ONLINE: character pick before the run starts ----------
+// Host-authoritative like the PVP 'chars' phase: placeholder players are wired to the live
+// connections purely so updateChoosers() can read everyone's input; when everyone has picked,
+// startGame() rebuilds the real players and applies the picks via netSelPicks.
+let netSelT=0, netSelPicks=null;
+function enterNetSelect(){
+  const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
+  const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
+  const total=Math.min(4, 1+NET.conns.length);
+  players=[];
+  for(let i=0;i<total;i++){ const pl=makePlayer('freddy', 0,0, i===0?P1:REMOTE); pvpInitChooser(pl,i); players.push(pl); }
+  for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; }
+  netSelT=0; state=STATE.NETSELECT;
+}
+function updateNetSelect(dt){
+  updateChoosers(dt, CHAR_LIST);   // horda roster: the original four only
+  const act=players.filter(pl=>!pl.departed);
+  if(act.length && act.every(pl=>pl.selKind)){
+    netSelT+=dt;
+    if(netSelT>1.1){ netSelPicks=players.map(pl=>pl.selKind); startGame(); }
+  } else netSelT=0;
 }
 function startGame(){
   resumeCumbia();
@@ -4063,7 +4191,8 @@ function startGame(){
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
     for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
-    randomizeOnlineChars();   // everyone (host included) starts on a random character
+    if(netSelPicks){ for(let i=0;i<players.length && i<netSelPicks.length;i++){ if(netSelPicks[i]) reassignKind(players[i], netSelPicks[i]); } netSelPicks=null; }
+    else randomizeOnlineChars();   // fallback only — the lobby now goes through the NETSELECT pick screen
   } else if(mode===1){
     players.push(makePlayer(selChar1||'freddy', WORLD_W/2, (currentMap==='stonebridge')?344:WORLD_H/2, P1));
   } else {
@@ -4097,6 +4226,9 @@ const PVP_APU_LIST=['piedra','tierra','cuarzo','rio','morganita','safiro'];
 const pvp={ sub:'off', grid:null, bombs:[], flames:[], items:[], t:0, count:0, wins:[0,0], roundN:1,
   banner:'', bannerC:'#fff', sudden:0, suddenOn:false, spiral:[], spiralI:0, dropT:0, paused:false, pauseSel:0, pauseView:'main', winner:-1, warnCell:null, bgc:null };
 let pvpOnline=false;     // current PVP match is host+guests over the net (players are slots, guests replicate)
+let pvpInfo=false;       // ONLINE PVP "pause": local-only overlay (instructions/menu) — the duel never stops.
+                         // Each player toggles their own with Esc; while open, their character stands still
+                         // (menu keys must not double as movement/bomb keys) but everyone else keeps playing.
 let lobbyMode='horda';   // what the online SALA launches on Enter: 'horda' | 'pvp'
 
 function pvpC2X(c){ return PVP_OX+c*PVP_TILE+PVP_TILE/2; }
@@ -4126,11 +4258,19 @@ function startPvpMatch(){
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   players=[ makePlayer(selChar1||'freddy', 0,0, P1), makePlayer(selChar2||'michi', 0,0, P2) ];
-  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvp.bgc=null;
+  players.forEach(pl=>pl.selKind=pl.kind);   // offline: picked on the SELECT screen — already "chosen"
+  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvpInfo=false; pvp.bgc=null;
   state=STATE.PVP;
   startPvpRound();
 }
-// online duel: host + 1-3 guests, same slot/keysrc wiring the Horda host uses
+// online duel: host + 1-3 guests, same slot/keysrc wiring the Horda host uses.
+// Characters are no longer dealt at random — everyone picks on the 'chars' phase
+// (first come, first served; a taken character can't be picked twice).
+function pvpInitChooser(pl,i){
+  pl.selKind=null; pl.selCur=i%PVP_CHAR_LIST.length;
+  pl.selWas={l:true,r:true,p:true};   // require a fresh key press (no held-key instant pick)
+  pl.pending=true; pl.alive=false; pl.hp=0;
+}
 function startPvpOnline(){
   pvpOnline=true; pvpPending=false;
   pvpResetWorld();
@@ -4138,13 +4278,13 @@ function startPvpOnline(){
   const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   const total=Math.min(4, 1+NET.conns.length);
   players=[];
-  const order=shuffledChars();
-  for(let i=0;i<total;i++) players.push(makePlayer(order[i%order.length], 0,0, i===0?P1:REMOTE));
+  for(let i=0;i<total;i++){ const pl=makePlayer('freddy', 0,0, i===0?P1:REMOTE); pvpInitChooser(pl,i); players.push(pl); }
   for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
   mode=2;
-  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvp.bgc=null;
+  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvpInfo=false; pvp.bgc=null;
+  pvp.grid=null; pvp.bombs.length=0; pvp.flames.length=0; pvp.items.length=0;
   state=STATE.PVP;
-  startPvpRound();
+  pvp.sub='chars'; pvp.selT=0; pvp.t=0;
 }
 function startPvpRound(){
   const g=[];
@@ -4171,7 +4311,8 @@ function startPvpRound(){
   players.forEach((p,i)=>{
     const sp=spots[i%spots.length];
     p.x=pvpC2X(sp[0]); p.y=pvpR2Y(sp[1]);
-    p.alive=!p.departed; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.pending=false;
+    // a player still picking their character (mid-duel joiner) stays out until they've chosen
+    p.alive=!p.departed && !!p.selKind; p.fell=false; p.deathAnim=null; p.hp=p.alive?p.maxhp:0; p.pending=!p.departed && !p.selKind;
     p.dir=(sp[1]<PVP_ROWS/2)?'s':'n'; p.moving=false; p.animTime=0; p.punchAnim=0; p.hitFlash=0; p.shieldFlash=0;
     p.shields=0; p.special='none'; p.oroCharge=0; p.gear='none'; p.gearCount=0;
     p.pvpRange=1; p.pvpMaxB=1; p.pvpSpd=1; p.pvpKick=false; p.pvpPierce=false; p.pvpRemote=false;
@@ -4220,6 +4361,13 @@ function updatePvp(dt){
     if(p.punchAnim>0) p.punchAnim-=dt;
     if(p.hitFlash>0) p.hitFlash-=dt;
   }
+  if(pvpOnline) updateChoosers(dt, PVP_CHAR_LIST);   // anyone without a character yet (pre-duel phase or mid-duel joiner) is picking
+  if(pvp.sub==='chars'){
+    const active=players.filter(pl=>!pl.departed);
+    if(active.length && active.every(pl=>pl.selKind)){ pvp.selT+=dt; if(pvp.selT>1.1) startPvpRound(); }
+    else pvp.selT=0;
+    return;
+  }
   if(pvp.sub==='count'){
     pvp.count-=dt;
     if(pvp.count<=0){ pvp.sub='play'; }   // silent start — WOW is Michi's voice, not a referee whistle
@@ -4241,19 +4389,49 @@ function updatePvp(dt){
       if(pvp.winner>=0){
         const wp=players[pvp.winner];
         pvp.wins[pvp.winner]++; pvp.banner='¡'+wp.name+' GANA LA RONDA!'; pvp.bannerC=wp.color;
-        playCharSelect(wp.kind); netQSnd('sel', wp.kind);   // the winner celebrates in their own voice
+        // no celebration here — a round KO plays only the loser's death cry; the winner's
+        // intro voice is saved for taking the whole match (see the matchend transition)
       }
       else { pvp.banner='¡EMPATE!'; pvp.bannerC='#ffe9b0'; }
     }
   } else if(pvp.sub==='roundend' && pvp.t>2.8){
-    if(pvp.winner>=0 && pvp.wins[pvp.winner]>=PVP_WINS) pvp.sub='matchend';
+    if(pvp.winner>=0 && pvp.wins[pvp.winner]>=PVP_WINS){
+      pvp.sub='matchend';
+      const wp=players[pvp.winner];
+      if(wp){ playCharSelect(wp.kind); netQSnd('sel', wp.kind); }   // match champion celebrates in their own voice
+    }
     else { pvp.roundN++; startPvpRound(); }
   }
 }
 
+// ---- online character pick (host-authoritative; guests see it replicated and send normal input) ----
+function pvpConfirmPick(pl,k){
+  pl.selKind=k; reassignKind(pl,k);
+  pl.wasPunch=true; pl.wasGear=true;   // the confirming key must not drop a bomb once they spawn
+  playCharSelect(k); netQSnd('sel',k);
+}
+function updateChoosers(dt, roster){   // shared by the PVP 'chars' phase and the Horda NETSELECT screen
+  const N=roster.length;
+  for(const pl of players){
+    if(pl.departed || pl.selKind) continue;
+    const taken=new Set(players.filter(q=>q!==pl && !q.departed && q.selKind).map(q=>q.kind));
+    const free=roster.filter(k=>!taken.has(k));
+    if(free.length===1){ pvpConfirmPick(pl,free[0]); continue; }   // one character left → it's theirs (real in Horda: 4 players, 4 characters)
+    // host player reads the real keyboard (either key set); guests' packets arrive as Arrow*/Comma
+    const ks=pl.keysrc||keys;
+    const L=!!(ks['ArrowLeft']||ks['KeyA']), R=!!(ks['ArrowRight']||ks['KeyD']), P=!!(ks['Space']||ks['Comma']||ks['Enter']);
+    const w=pl.selWas||(pl.selWas={l:true,r:true,p:true});
+    if(L&&!w.l) pl.selCur=(pl.selCur+N-1)%N;
+    if(R&&!w.r) pl.selCur=(pl.selCur+1)%N;
+    if(P&&!w.p){ const k=roster[pl.selCur%N]; if(!taken.has(k)) pvpConfirmPick(pl,k); }
+    w.l=L; w.r=R; w.p=P;
+  }
+}
 function pvpControl(p,dt){
   if(!p.alive || p.departed) return;
-  const c=p.controls, ks=p.keysrc||keys;
+  // local info-overlay open (online): the keyboard is driving the menu, not the duel — the host's own
+  // character stands still, but remote guests (keysrc/pose from the net) keep playing untouched.
+  const c=p.controls, ks=(pvpInfo && !p.netRemote) ? {} : (p.keysrc||keys);
   const rem=p.netRemote;
   if(rem && rem.grace>0) rem.grace-=dt;
   if(rem && rem.pose && !(rem.grace>0)){
@@ -4378,7 +4556,19 @@ function pvpUpdateBombs(dt){
       // a player stepping into the path stops the bomb one tile short
       let hitP=false;
       for(const p of players){ if(p.alive && !b.walkers.has(p) && dist(p.x,p.y,b.x,b.y)<p.radius+18){ hitP=true; break; } }
+      // two bombs meeting mid-slide (e.g. kicked head-on at each other) CLASH and stop — the
+      // tile-based lookahead can't see this because both cross between tile centers at once
+      let hitB=null;
+      if(!hitP){ for(const ob of pvp.bombs){ if(ob!==b && !ob.gone && dist(ob.x,ob.y,b.x,b.y)<PVP_TILE-6){ hitB=ob; break; } } }
       if(hitP){ b.x=pvpC2X(b.c); b.y=pvpR2Y(b.r); b.slide=null; }
+      else if(hitB){
+        if(hitB.slide){   // the other bomb was sliding too: stop it on its own tile
+          if(hitB.c===b.c && hitB.r===b.r){ hitB.c-=hitB.slide.dx; hitB.r-=hitB.slide.dy; }   // both claimed the same tile this frame → give it back its previous one
+          hitB.x=pvpC2X(hitB.c); hitB.y=pvpR2Y(hitB.r); hitB.slide=null;
+        }
+        if(hitB.c===b.c && hitB.r===b.r){ b.c-=b.slide.dx; b.r-=b.slide.dy; }
+        b.x=pvpC2X(b.c); b.y=pvpR2Y(b.r); b.slide=null;
+      }
       else {
         const tx=pvpC2X(b.slide.tc), ty=pvpR2Y(b.slide.tr);
         if((b.slide.dx && (b.x-tx)*b.slide.dx>=0) || (b.slide.dy && (b.y-ty)*b.slide.dy>=0)){
@@ -4509,7 +4699,7 @@ function handlePvpKey(code){
     return;
   }
   // Escape itself is handled by togglePause() (shared with the guests' {pt:1} request)
-  if(!pvp.paused) return;
+  if(!pvp.paused && !pvpInfo) return;   // pvpInfo: online local overlay — same menu, but the duel keeps running
   if(NET.role==='guest') return;   // the pause menu lives on the host; guests only get the Esc toggle
   if(pvp.pauseView==='settings'){
     if(code==='ArrowUp'||code==='ArrowDown'||code==='KeyW'||code==='KeyS') setSel=(setSel+1)%2;
@@ -4523,11 +4713,11 @@ function handlePvpKey(code){
   if(code==='Enter'||code==='Space'){ if(pvp.pauseSel===0) pvpResume(); else if(pvp.pauseSel===1){ pvp.pauseView='settings'; setSel=0; } else pvpExit(true); }
 }
 function pvpResume(){
-  pvp.paused=false;
-  for(const p of players){ p.wasPunch=true; p.wasGear=true; }   // the key that closed the menu must not drop a bomb
+  pvp.paused=false; pvpInfo=false;
+  for(const p of players){ if(!p.netRemote){ p.wasPunch=true; p.wasGear=true; } }   // the key that closed the menu must not drop a bomb (locals only — never eat a guest's press)
 }
 function pvpExit(toMenu){
-  pvp.sub='off'; pvp.paused=false;
+  pvp.sub='off'; pvp.paused=false; pvpInfo=false;
   try{ if(pvpMusic) pvpMusic.pause(); }catch(e){}
   if(toMenu) gotoMainMenu(); else playMenuMusic();
 }
@@ -4674,10 +4864,11 @@ function drawPvpHUD(){
     ctx.fillStyle='rgba(12,10,8,0.72)'; rrect(px,py,pw,ph,10); ctx.fill();
     ctx.strokeStyle=p.color; ctx.lineWidth=2; rrect(px,py,pw,ph,10); ctx.stroke();
     ctx.textAlign='left'; ctx.fillStyle=p.color; ctx.font=compact?'bold 15px Courier New':'bold 18px Courier New';
-    ctx.fillText('J'+(i+1)+' '+p.name, px+10, py+23);
+    ctx.fillText('J'+(i+1)+' '+(p.selKind?p.name:'…'), px+10, py+23);
     ctx.font=compact?'13px Courier New':'16px Courier New';
     for(let s=0;s<PVP_WINS;s++){ ctx.fillStyle=(s<pvp.wins[i])?'#ffd24a':'rgba(255,255,255,0.18)'; ctx.fillText('★', px+(compact?140:170)+s*(compact?15:20), py+23); }
-    if((!p.alive||p.departed) && (pvp.sub==='play'||pvp.sub==='roundend')){ ctx.fillStyle='#ff6a5a'; ctx.font='bold 12px Courier New'; ctx.fillText(p.departed?'SALIÓ':'K.O.', px+pw-50, py+23); }
+    if(!p.selKind && !p.departed){ ctx.fillStyle='#aef7c2'; ctx.font='bold 11px Courier New'; ctx.fillText('ELIGIENDO…', px+pw-88, py+23); }
+    else if((!p.alive||p.departed) && (pvp.sub==='play'||pvp.sub==='roundend')){ ctx.fillStyle='#ff6a5a'; ctx.font='bold 12px Courier New'; ctx.fillText(p.departed?'SALIÓ':'K.O.', px+pw-50, py+23); }
     const isp=compact?42:51, ico=compact?21:26;
     PVP_APU_LIST.forEach((k,j)=>{
       const ix=px+(compact?10:14)+j*isp, iy=py+(compact?34:38), cnt=(p.pvpCnt&&p.pvpCnt[k])||0, has=cnt>0;
@@ -4700,7 +4891,57 @@ function drawPvpHUD(){
   ctx.textAlign='left';
 }
 function pvpFmtT(s){ s=Math.max(0,Math.ceil(s)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
+// online character pick — drawn on host and guests from the same (replicated) player fields:
+// selKind (has picked), selCur (cursor), kind (the picked character). Shared by the PVP 'chars'
+// phase (island backdrop), the mid-duel joiner overlay, and the Horda NETSELECT screen (banner
+// backdrop). `entries` is `players` on the host and the replicated list on guests.
+const PVP_SEL_COLS=['#ffd24a','#5ad0ff','#7dff9a','#ff8ad0'];   // J1-J4
+function drawCharsPick(roster, entries, mySlot, overlay, opts){
+  opts=opts||{};
+  if(overlay){ ctx.fillStyle='rgba(0,0,0,0.74)'; ctx.fillRect(0,0,W,H); }
+  else if(opts.bg==='banner'){ drawBannerBG(); }
+  else {
+    if(PROP.machubg && PROP.machubg.naturalWidth){ drawImageCover(PROP.machubg); ctx.fillStyle='rgba(10,20,40,0.22)'; ctx.fillRect(0,0,W,H); }
+    else { ctx.fillStyle='#7ec3e8'; ctx.fillRect(0,0,W,H); }
+    pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
+    ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
+  }
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 28px Courier New';
+  ctx.fillText(overlay?'ELIGE TU PERSONAJE':(opts.title||'VERSUS — ELIGE TU PERSONAJE'), W/2, 78);
+  if(overlay){ ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New'; ctx.fillText('Entras al empezar la próxima ronda', W/2, 104); }
+  const n=roster.length, cw=(n>4)?160:200, gap=(n>4)?16:26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, chh=330;
+  for(let i=0;i<n;i++){
+    const k=roster[i], cx=x0+i*(cw+gap);
+    const takenBy=entries.findIndex(pl=>pl && !pl.departed && pl.selKind && pl.kind===k);
+    ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,chh);
+    drawCardArt(k, cx+10, cy+16, cw-20, chh-120);
+    ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+chh-64);
+    ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido', cx+cw/2, cy+chh-46);
+    if(takenBy>=0){   // first come, first served — grey it out for everyone else
+      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(cx,cy,cw,chh);
+      ctx.fillStyle=PVP_SEL_COLS[takenBy%4]; ctx.font='bold 15px Courier New';
+      ctx.fillText('J'+(takenBy+1)+(takenBy===mySlot?' (TÚ)':''), cx+cw/2, cy+chh-16);
+    }
+    let ring=0;   // one cursor ring per player still choosing
+    entries.forEach((pl,pi)=>{
+      if(!pl || pl.departed || pl.selKind || (pl.selCur||0)!==i) return;
+      const off=2+ring*7; ctx.strokeStyle=PVP_SEL_COLS[pi%4]; ctx.lineWidth=(pi===mySlot)?4:2;
+      ctx.strokeRect(cx+off,cy+off,cw-2*off,chh-2*off); ring++;
+    });
+  }
+  const meP=entries[mySlot], active=entries.filter(pl=>pl && !pl.departed);
+  ctx.font='bold 17px Courier New';
+  if(active.length && active.every(pl=>pl.selKind)){ ctx.fillStyle='#ffe14a'; ctx.fillText('¡COMENZANDO!', W/2, cy+chh+52); }
+  else if(meP && meP.selKind){ ctx.fillStyle='#aef7c2'; ctx.fillText('Listo — esperando a los demás…', W/2, cy+chh+52); }
+  else { ctx.fillStyle='#ffe14a'; ctx.fillText('←/→ o A/D: elegir   ·   Espacio: confirmar', W/2, cy+chh+52); }
+  ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
+  ctx.fillText('Primer llegado, primer servido — cada personaje solo puede elegirse una vez', W/2, cy+chh+76);
+  ctx.textAlign='left';
+}
+function drawPvpChars(overlay){ drawCharsPick(PVP_CHAR_LIST, players, (NET.role==='guest')?NET.slot:0, overlay, {}); }
 function drawPvp(){
+  if(pvp.sub==='chars'){ drawPvpChars(false); return; }   // pre-duel pick phase (no grid exists yet)
   if(PROP.machubg && PROP.machubg.naturalWidth){ drawImageCover(PROP.machubg); ctx.fillStyle='rgba(10,20,40,0.22)'; ctx.fillRect(0,0,W,H); }
   else { const gd=ctx.createLinearGradient(0,0,0,H); gd.addColorStop(0,'#7ec3e8'); gd.addColorStop(1,'#cfe8f2'); ctx.fillStyle=gd; ctx.fillRect(0,0,W,H); }
   pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
@@ -4743,8 +4984,7 @@ function drawPvp(){
     const wp=players[pvp.winner];
     ctx.fillStyle=wp?wp.color:'#ffe9b0'; ctx.font='bold 44px Courier New';
     ctx.fillText('¡'+(wp?wp.name:'')+' GANA EL DUELO!', W/2, 120);
-    const img=wp&&SEL_IMG[wp.kind];
-    if(img&&img.naturalWidth){ const iw=200, ih=iw*img.naturalHeight/img.naturalWidth; ctx.drawImage(img,W/2-iw/2,158,iw,Math.min(ih,300)); }
+    if(wp) drawCardArt(wp.kind, W/2-100, 158, 200, 300);
     ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New';
     ctx.fillText(pvpScoreLine(), W/2, 506);
     ctx.fillStyle='#ffe14a'; ctx.font='bold 18px Courier New';
@@ -4753,20 +4993,28 @@ function drawPvp(){
     else ctx.fillText('ENTER: revancha  ·  C: cambiar personajes  ·  ESC: menú', W/2, 566);
     ctx.textAlign='left';
   }
-  if(pvp.paused){
-    ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
+  // a guest that joined mid-duel and hasn't picked yet chooses on top of the running duel
+  { const me=(NET.role==='guest')?players[NET.slot]:null;
+    if(me && !me.departed && !me.selKind && pvp.sub!=='matchend') drawPvpChars(true); }
+  if(pvp.sub==='matchend') pvpInfo=false;   // never blanket the podium — a fresh round reopens with Esc
+  if(pvp.paused||pvpInfo){
+    // online (pvpInfo): the duel keeps running behind the menu, so keep the backdrop translucent enough
+    // to see bombs coming; offline (pvp.paused): the sim is frozen, dim it hard like before
+    ctx.fillStyle=pvpInfo?'rgba(0,0,0,0.60)':'rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
     ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
     ctx.fillText('PAUSA', W/2, 70);
-    if(NET.role==='guest'){
+    if(pvpInfo){ ctx.fillStyle='#ff9f6a'; ctx.font='bold 13px Courier New'; ctx.fillText('ONLINE: ¡el duelo NO se detiene — cuidado!', W/2, 92); }
+    if(NET.role==='guest' && !pvpInfo){
       ctx.fillStyle='#cdbf9a'; ctx.font='15px Courier New';
-      ctx.fillText('Pausada — Esc para pedir continuar', W/2, 108);
+      ctx.fillText('Pausada — Esc para pedir continuar', W/2, 118);
     } else if(pvp.pauseView==='settings'){
-      drawVolumeSettings();
+      drawVolumeSettings();   // volume is per-machine — guests adjust their OWN sliders here too
       return;
     } else {
-      const popts=['CONTINUAR','AJUSTES','VOLVER AL MENÚ'];
+      // guests can't kick everyone back to the menu, but CONTINUAR/AJUSTES are theirs
+      const popts=(NET.role==='guest')?['CONTINUAR','AJUSTES']:['CONTINUAR','AJUSTES','VOLVER AL MENÚ'];
       popts.forEach((o,i)=>{
-        const ox=W/2+(i-1)*300, oy=116;
+        const ox=W/2+(i-(popts.length-1)/2)*300, oy=116;
         if(i===pvp.pauseSel){ ctx.fillStyle='rgba(255,210,74,0.18)'; ctx.fillRect(ox-130,oy-26,260,38); ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(ox-130,oy-26,260,38); }
         ctx.fillStyle=i===pvp.pauseSel?'#fff':'#bdb190'; ctx.font='bold 18px Courier New';
         ctx.fillText((i===pvp.pauseSel?'▶ ':'')+o, ox, oy);
@@ -4814,9 +5062,11 @@ function togglePause(){
   // Online: the host owns the pause. Entering STATE.PAUSE freezes the authoritative simulation, and
   // netBroadcast keeps streaming snapshots (state:'pause' included) so every guest freezes + sees the
   // overlay too. Guests request a toggle by sending {pt:1} to the host (see initNet).
-  if(state===STATE.PVP){   // PVP pause (host Esc AND guest {pt:1} land here; replicated via pvp snapshots)
+  if(state===STATE.PVP){   // PVP pause. Offline: real freeze. Online: local overlay only — the duel keeps running.
+    if(pvp.sub==='chars' && NET.role!=='guest'){ pvpExit(true); return; }   // host Esc on the pick screen: back to menu (nobody gets stranded waiting)
     if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){
-      if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
+      if(pvpOnline || NET.role==='guest'){ pvpInfo=!pvpInfo; if(pvpInfo){ pvp.pauseSel=0; pvp.pauseView='main'; } else pvpResume(); }
+      else if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
     }
     return;
   }
@@ -4870,6 +5120,12 @@ function _frameBody(now){
 
   // online guest: replicate the host's world from snapshots instead of simulating locally
   if(NET.role==='guest'){
+    // horda pre-game pick phase: replicated as its own packet type ({_nsel}) — render and return
+    if(NET.nsel){
+      const L=(NET.nsel.list||[]).map(e=>({kind:e.kind, selKind:e.skd?e.kind:null, selCur:e.sc||0, departed:!!e.dp}));
+      safe('nselDraw',()=>drawCharsPick(CHAR_LIST, L, NET.slot, false, {bg:'banner', title:'HORDA — ELIGE TU PERSONAJE'}));
+      requestAnimationFrame(frame); return;
+    }
     if(!NET.guestReady){ safe('guestwait',drawGuestWaiting); requestAnimationFrame(frame); return; }
     safe('netguest',()=>netApplyGuest(dt));
   } else {
@@ -4878,6 +5134,7 @@ function _frameBody(now){
     else if(state===STATE.INTRO) safe('updateIntro',()=>updateIntro(dt));
     else if(state===STATE.DYING) safe('updateDying',()=>updateDying(dt));
     else if(state===STATE.PVP) safe('updatePvp',()=>updatePvp(dt));
+    else if(state===STATE.NETSELECT) safe('netsel',()=>updateNetSelect(dt));
     else if(state===STATE.MAINMENU) mainMenuT+=dt;
     else if(state===STATE.SELECT && selPending){ selStartTimer-=dt; if(selStartTimer<=0){ selPending=false; if(pvpPending) safe('startPvp',startPvpMatch); else safe('startGame',startGame); } }
   }
@@ -4900,6 +5157,7 @@ function _frameBody(now){
   if(state===STATE.MAINMENU){ drawMainMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MODOS){ drawModos(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAPAS){ drawMapas(); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.NETSELECT){ drawCharsPick(CHAR_LIST, players, 0, false, {bg:'banner', title:'HORDA — ELIGE TU PERSONAJE'}); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.HELP){ drawHelp(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MENU){ drawMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.SELECT){ drawSelect(); ctx.restore(); requestAnimationFrame(frame); return; }
@@ -5102,18 +5360,26 @@ function netSerializePvp(){
     players:players.map(p=>({ kind:p.kind, name:p.name, color:p.color, radius:p.radius,
       x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10, dir:p.dir, moving:p.moving,
       alive:p.alive, departed:!!p.departed, deathAnim:(p.deathAnim==null?null:p.deathAnim),
-      punchAnim:p.punchAnim, animTime:p.animTime, pvpSpd:p.pvpSpd||1, cnt:p.pvpCnt })),
+      punchAnim:p.punchAnim, animTime:p.animTime, pvpSpd:p.pvpSpd||1, cnt:p.pvpCnt,
+      pn:p.pending?1:0, skd:p.selKind?1:0, sc:p.selCur||0 })),
     bombs:pvp.bombs.map(b=>({ id:b.id, c:b.c, r:b.r, x:Math.round(b.x), y:Math.round(b.y),
       ow:players.indexOf(b.owner), fuse:b.fuse, remote:!!b.remote, sl:!!b.slide,
       wk:players.reduce((m,pl,i)=>b.walkers.has(pl)?(m|(1<<i)):m,0) })),
     flames:pvp.flames.map(f=>({c:f.c, r:f.r, t:Math.round(f.t*100)/100})),
     items:pvp.items.map(it=>({id:it.id, c:it.c, r:it.r, type:it.type})) };
 }
+// horda pre-game pick phase: tiny dedicated packet (no world exists yet)
+function netSerializeNsel(){
+  const seq=++netSeq;
+  while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();
+  return { _nsel:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
+    list:players.map(p=>({kind:p.kind, skd:p.selKind?1:0, sc:p.selCur||0, dp:p.departed?1:0})) };
+}
 function netBroadcast(dt){
   if(NET.role!=='host' || !NET.conns.length) return;
   netAccum+=dt; if(netAccum<SNAP_DT) return; netAccum=0;
   const inGame = (state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING||state===STATE.OVER||state===STATE.VICTORY);
-  const s = (state===STATE.PVP) ? netSerializePvp() : inGame ? netSerializeSnapshot() : {_wait:1, state};
+  const s = (state===STATE.PVP) ? netSerializePvp() : (state===STATE.NETSELECT) ? netSerializeNsel() : inGame ? netSerializeSnapshot() : {_wait:1, state};
   for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ s.you = g.slot; g.conn.send(s); } }catch(e){} }
 }
 
@@ -5125,8 +5391,10 @@ let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
 function netOnSnapshot(d){
-  if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; return; }
+  if(d._wait){ NET.snap=null; NET.nsel=null; NET.guestReady=false; NET.waitState=d.state; pvpInfo=false; return; }
+  if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; if(typeof d.you==='number') NET.slot=d.you; netPlayEvts(d); return; }
   if(!d._snap) return;
+  NET.nsel=null;
   d.rt = performance.now();
   gBuf.push(d); if(gBuf.length>16) gBuf.shift();
   NET.snap=d; NET.guestReady=true;
@@ -5135,6 +5403,16 @@ function netOnSnapshot(d){
 }
 function _byId(arr){ const m={}; for(const e of arr) m[e.id]=e; return m; }
 function netApplyMeta(s){
+  // Host-side victory code never runs on a guest, so detect the replicated PLAY→VICTORY
+  // transition here and persist the unlock on this guest's own machine too. Guarded on
+  // (a) having been in the run — joining a room already on the victory screen gives nothing —
+  // and (b) the map being unlocked on THIS machine: getting carried by a friend through a map
+  // you haven't reached yourself doesn't skip your own progression.
+  if(s.state===STATE.VICTORY && (state===STATE.PLAY||state===STATE.BREAK||state===STATE.PAUSE||state===STATE.DYING||state===STATE.INTRO)){
+    const mi=MAP_ORDER.indexOf(s.currentMap);
+    if(mi>=0 && isMapUnlocked(mi)) saveMapBeaten(s.currentMap);
+  }
+  if(s.state===STATE.PAUSE && state!==STATE.PAUSE){ pauseView='main'; pauseSel=0; }   // fresh local menu each time the host pauses
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
   if(currentMap!==s.currentMap){
     currentMap=s.currentMap;
@@ -5239,7 +5517,8 @@ function netApplyGuestPvp(cur,dt){
     const rp={ kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
       dir:sp.dir, moving:sp.moving, alive:sp.alive, departed:sp.departed, deathAnim:sp.deathAnim,
       punchAnim:sp.punchAnim, animTime:sp.animTime, hitFlash:0, shieldFlash:0, shields:0, special:'none',
-      oroCharge:0, pending:false, fell:false, facing:{x:0,y:1}, pvpSpd:sp.pvpSpd||1,
+      oroCharge:0, pending:!!sp.pn, fell:false, facing:{x:0,y:1}, pvpSpd:sp.pvpSpd||1,
+      selKind:sp.skd?sp.kind:null, selCur:sp.sc||0,
       pvpCnt:sp.cnt||{piedra:0,tierra:0,cuarzo:0,rio:0,morganita:0,safiro:0} };
     if(i===NET.slot) netPvpPredictOwned(rp, sp, cur, dt);
     else if(interp && a.players[i]){ rp.x=a.players[i].x+(sp.x-a.players[i].x)*alpha; rp.y=a.players[i].y+(sp.y-a.players[i].y)*alpha; }
@@ -5261,7 +5540,7 @@ function netApplyGuestPvp(cur,dt){
 function netPvpPredictOwned(rp, sp, cur, dt){
   if(!sp.alive){ gPred.init=false; gPred.punchAnim=0; return; }
   if(!gPred.init){ gPred.x=sp.x; gPred.y=sp.y; gPred.animTime=sp.animTime||0; gPred.fx=0; gPred.fy=1; gPred.dir=sp.dir||'s'; gPred.moving=false; gPred.init=true; }
-  const canMove=!pvp.paused && (pvp.sub==='play' || (pvp.sub==='roundend' && pvp.winner===NET.slot));
+  const canMove=!pvp.paused && !pvpInfo && (pvp.sub==='play' || (pvp.sub==='roundend' && pvp.winner===NET.slot));
   const k=canMove ? (NET.guestKeys||{}) : {};
   let mx=0,my=0;
   if(k['KeyW']||k['ArrowUp'])    my-=1;
@@ -5479,10 +5758,12 @@ requestAnimationFrame(frame);
     NET.guestKeys = gk;
     let lastSig = '';
     function inputPacket(){
+      // PVP info overlay open: we're reading the menu — send no actions (our pose freezes via prediction too)
+      const blk = (state===STATE.PVP && pvpInfo);
       const pk = {
-        u:  !!(gk['KeyW']||gk['ArrowUp']),    dn: !!(gk['KeyS']||gk['ArrowDown']),
-        l:  !!(gk['KeyA']||gk['ArrowLeft']),  r:  !!(gk['KeyD']||gk['ArrowRight']),
-        p:  !!(gk['Space']||gk['Comma']),     g:  !!(gk['KeyF']||gk['Period'])
+        u:  !blk&&!!(gk['KeyW']||gk['ArrowUp']),    dn: !blk&&!!(gk['KeyS']||gk['ArrowDown']),
+        l:  !blk&&!!(gk['KeyA']||gk['ArrowLeft']),  r:  !blk&&!!(gk['KeyD']||gk['ArrowRight']),
+        p:  !blk&&!!(gk['Space']||gk['Comma']),     g:  !blk&&!!(gk['KeyF']||gk['Period'])
       };
       // stream our locally-simulated pose so the host adopts it verbatim (client-authoritative movement,
       // zero input round-trip). Only once prediction has a real position to report.
@@ -5501,8 +5782,42 @@ requestAnimationFrame(frame);
     const swallow = e => {
       const down = e.type==='keydown';
       try{ initAudio(); }catch(_e){}                                // first key is the user gesture that unlocks local audio
-      // Escape isn't part of the input packet: it asks the host to toggle the shared pause (edge-triggered)
-      if(e.code==='Escape' && down && !gk[e.code] && NET.conn && NET.conn.open){ try{ NET.conn.send({pt:1}); }catch(_e){} }
+      // Escape isn't part of the input packet. Horda: it asks the host to toggle the shared pause
+      // (edge-triggered). PVP: pause is local-only — toggle our own info overlay, the duel keeps running.
+      if(e.code==='Escape' && down && !gk[e.code]){
+        if(state===STATE.PVP){
+          if(pvpInfo && pvp.pauseView==='settings') pvp.pauseView='main';
+          else if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){ pvpInfo=!pvpInfo; if(pvpInfo){ pvp.pauseSel=0; pvp.pauseView='main'; } }
+        }
+        else if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; }   // back out of MY settings, don't unpause the room
+        else if(NET.conn && NET.conn.open){ try{ NET.conn.send({pt:1}); }catch(_e){} }
+      }
+      // local pause-menu navigation (PVP overlay AND the horda shared pause): CONTINUAR / AJUSTES —
+      // the volume sliders change THIS machine's localStorage volumes, nothing is sent to the host
+      if(state===STATE.PVP && pvpInfo && down && !gk[e.code]){
+        const c=e.code;
+        if(pvp.pauseView==='settings'){
+          if(c==='ArrowUp'||c==='ArrowDown'||c==='KeyW'||c==='KeyS') setSel=(setSel+1)%2;
+          else if(c==='ArrowLeft'||c==='KeyA') adjustVol(setSel,-0.1);
+          else if(c==='ArrowRight'||c==='KeyD') adjustVol(setSel,0.1);
+          else if(c==='Enter') pvp.pauseView='main';
+        } else {
+          if(c==='ArrowLeft'||c==='KeyA'||c==='ArrowRight'||c==='KeyD') pvp.pauseSel=(pvp.pauseSel+1)%2;
+          else if(c==='Enter'||c==='Space'){ if(pvp.pauseSel===1){ pvp.pauseView='settings'; setSel=0; } else pvpInfo=false; }
+        }
+      }
+      if(state===STATE.PAUSE && down && !gk[e.code]){
+        const c=e.code;
+        if(pauseView==='settings'){
+          if(c==='ArrowUp'||c==='ArrowDown'||c==='KeyW'||c==='KeyS') setSel=(setSel+1)%2;
+          else if(c==='ArrowLeft'||c==='KeyA') adjustVol(setSel,-0.1);
+          else if(c==='ArrowRight'||c==='KeyD') adjustVol(setSel,0.1);
+          else if(c==='Enter') pauseView='main';
+        } else {
+          if(c==='ArrowUp'||c==='ArrowDown'||c==='KeyW'||c==='KeyS') pauseSel=(pauseSel+1)%2;
+          else if(c==='Enter'){ if(pauseSel===1){ pauseView='settings'; setSel=0; } else if(NET.conn && NET.conn.open){ try{ NET.conn.send({pt:1}); }catch(_e){} } }
+        }
+      }
       if(gk[e.code]!==down){ gk[e.code]=down; sendInput(false); }   // fire the moment a key toggles
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -5542,7 +5857,7 @@ requestAnimationFrame(frame);
       const guest = { conn, keys:{}, slot };
       NET.conns.push(guest);
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(slot+1)+' listo)');
-      conn.on('data', d => { if(d && d.pt){ togglePause(); return; } applyRemote(guest, d); });   // guest→host input / pose / pause-toggle packets
+      conn.on('data', d => { if(d && d.pt){ if(state!==STATE.PVP) togglePause(); return; } applyRemote(guest, d); });   // guest→host input / pose / pause-toggle packets (PVP pause is local per player — ignore)
       conn.on('close', () => {
         const ci=NET.conns.indexOf(guest); if(ci>=0) NET.conns.splice(ci,1);
         // mark their player departed: no more input, down until they reconnect, and
@@ -5571,6 +5886,29 @@ requestAnimationFrame(frame);
           if(state===STATE.PLAY){ p.pending=true; p.alive=false; p.hp=0; }
           players.push(p);
           mode=2;   // a solo online host is no longer solo (mode is otherwise only set at startGame)
+        }
+      }
+      // joining a PVP duel already in progress (or during the pick phase): they choose their
+      // character first (first-come-first-serve vs the ones already taken) and spawn next round
+      else if(state===STATE.PVP && pvpOnline && pvp.sub!=='off' && pvp.sub!=='matchend'){
+        guest.grace=0.6;
+        if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }   // returning player keeps their character, revives next round
+        else if(players.length<4){
+          const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
+          pl.keysrc=guest.keys; pl.netRemote=guest;
+          pvpInitChooser(pl, players.length);
+          players.push(pl); pvp.wins.push(0);
+          floatText(W/2, PVP_OY+70, '¡J'+(guest.slot+1)+' se une! Eligiendo personaje…', '#aef7c2');
+        }
+      }
+      // joining while everyone is on the horda pick screen: grab a cursor and pick too
+      else if(state===STATE.NETSELECT){
+        if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }
+        else if(players.length<4){
+          const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
+          pl.keysrc=guest.keys; pl.netRemote=guest;
+          pvpInitChooser(pl, players.length);
+          players.push(pl);
         }
       }
     });
