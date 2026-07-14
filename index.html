@@ -120,9 +120,11 @@ function sfxBuffer(src){
   if(b!==false && !SFX_LOADING[src]){
     SFX_LOADING[src]=true;
     try{
-      fetch(src).then(r=>r.arrayBuffer()).then(ab=>actx.decodeAudioData(ab))
+      fetch(src).then(r=>{ if(!r.ok) throw 0; return r.arrayBuffer(); }).then(ab=>actx.decodeAudioData(ab))
         .then(buf=>{ SFX_BUF[src]=buf; delete SFX_LOADING[src]; })
-        .catch(()=>{ SFX_BUF[src]=false; delete SFX_LOADING[src]; });   // undecodable → element fallback for good
+        // failed (404 / CDN throttling / undecodable) → element fallback now, but let a later
+        // play retry the fetch — throttled hosts recover once the initial asset burst is over
+        .catch(()=>{ SFX_BUF[src]=false; delete SFX_LOADING[src]; setTimeout(()=>{ if(SFX_BUF[src]===false) delete SFX_BUF[src]; }, 8000); });
     }catch(e){ delete SFX_LOADING[src]; }
   }
   return null;
@@ -172,14 +174,21 @@ function initAudio(){
   if(!audioStarted){
     audioStarted=true;
     try{ actx=new (window.AudioContext||window.webkitAudioContext)(); sfxGain=actx.createGain(); sfxGain.gain.value=sfxVol; sfxGain.connect(actx.destination); }catch(e){}
-    try{ bgMusic=routeEl(new Audio(AUDIO_SRC.bg)); bgMusic.loop=true; bgMusic.volume=0.32; }catch(e){}
-    try{ menuMusic=routeEl(new Audio(AUDIO_SRC.menu)); menuMusic.loop=true; menuMusic.volume=0.45; }catch(e){}
-    try{ sbMusic=routeEl(new Audio(AUDIO_SRC.sbbg)); sbMusic.loop=true; sbMusic.volume=0.4; }catch(e){}
-    try{ tpMusic=routeEl(new Audio(AUDIO_SRC.tpbg)); tpMusic.loop=true; tpMusic.volume=0.42; }catch(e){}
-    try{ evMusic=routeEl(new Audio(AUDIO_SRC.elvalle)); evMusic.loop=true; evMusic.volume=0.34; }catch(e){}
-    try{ deathMusic=routeEl(new Audio(AUDIO_SRC.death)); deathMusic.loop=true; deathMusic.volume=0.5; }catch(e){}
-    try{ losAndesMusic=routeEl(new Audio(AUDIO_SRC.losandes)); losAndesMusic.loop=true; losAndesMusic.volume=0.5; }catch(e){}
-    try{ pvpMusic=routeEl(new Audio(AUDIO_SRC.pvpbg)); pvpMusic.loop=true; pvpMusic.volume=0.4; }catch(e){}
+    // Music tracks load lazily (preload:none → the download starts on first play()) so page load
+    // doesn't burst-request ~12MB of mp3s on top of ~800 sprites — free CDNs throttle that burst
+    // and a failed element used to stay mute forever. On error: retry the load with backoff; the
+    // many play()-if-paused call sites (initAudio keydown hook, state transitions) resume it after.
+    const mkMusic=(src,vol)=>{ const el=new Audio(); el.preload='none'; el.loop=true; el.volume=vol; el._rt=0;
+      el.addEventListener('error',()=>{ if(el._rt++<6) setTimeout(()=>{ try{ el.load(); }catch(e){} }, 2000+el._rt*2000); });
+      el.src=src; return el; };
+    try{ bgMusic=mkMusic(AUDIO_SRC.bg, 0.32); }catch(e){}
+    try{ menuMusic=mkMusic(AUDIO_SRC.menu, 0.45); }catch(e){}
+    try{ sbMusic=mkMusic(AUDIO_SRC.sbbg, 0.4); }catch(e){}
+    try{ tpMusic=mkMusic(AUDIO_SRC.tpbg, 0.42); }catch(e){}
+    try{ evMusic=mkMusic(AUDIO_SRC.elvalle, 0.34); }catch(e){}
+    try{ deathMusic=mkMusic(AUDIO_SRC.death, 0.5); }catch(e){}
+    try{ losAndesMusic=mkMusic(AUDIO_SRC.losandes, 0.5); }catch(e){}
+    try{ pvpMusic=mkMusic(AUDIO_SRC.pvpbg, 0.4); }catch(e){}
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
@@ -3614,7 +3623,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.5';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.6';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
