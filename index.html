@@ -97,7 +97,7 @@ AUDIO_SRC.pvpboom="assets/snd_047.mp4";   // AAC audio — browsers decode it li
 // A missing file simply stays silent (sfxBuffer caches the failed fetch), nothing breaks.
 AUDIO_SRC.teddington_sel="assets/snd_009.mp3";              // "Teddington Intro"
 AUDIO_SRC.teddington_die="assets/snd_teddington_die.mp3";   // "Teddington Death"
-AUDIO_SRC.condor_sel="assets/snd_condor_sel.mp3";           // "Condor INTRO"
+AUDIO_SRC.condor_sel="assets/snd_011.mp3";                  // "Condor INTRO" — the existing Cóndor Ganso voice line; swap for a dedicated file anytime
 AUDIO_SRC.condor_die="assets/snd_condor_die.mp3";           // "Condor Death"
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
@@ -500,7 +500,7 @@ const CHARS={
   // charFrame runs off the global clock, not off movement). natAspect: frames differ in size, so
   // width comes from each image's own aspect ratio instead of a fixed cell.
   condor:{ S:CONDOR, cell:CONDOR_CELL, pd:0.18, dh:46, npKey:null, sIdle:null, eIdle:null, name:'CÓNDOR', color:'#e0a83a', heavy:false, noPunch:true, flap:true, floats:true, natAspect:true,
-    selCrop:{sx:88,sy:0,sw:130,sh:132},   // head/body zoom card art (no drawn portrait yet)
+    selCrop:{sx:95,sy:0,sw:120,sh:95},   // chest-up card art: head + chest + wing shoulders
     loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
 const CHAR_LIST=['freddy','michi','sumac','shooshy'];
@@ -3623,7 +3623,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.6';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.7';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
