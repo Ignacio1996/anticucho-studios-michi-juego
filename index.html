@@ -97,7 +97,7 @@ AUDIO_SRC.pvpboom="assets/snd_047.mp4";   // AAC audio — browsers decode it li
 // A missing file simply stays silent (sfxBuffer caches the failed fetch), nothing breaks.
 AUDIO_SRC.teddington_sel="assets/snd_009.mp3";              // "Teddington Intro"
 AUDIO_SRC.teddington_die="assets/snd_teddington_die.mp3";   // "Teddington Death"
-AUDIO_SRC.condor_sel="assets/snd_011.mp3";                  // "Condor INTRO" — the existing Cóndor Ganso voice line; swap for a dedicated file anytime
+AUDIO_SRC.condor_sel="assets/snd_condor_sel.mp3";           // "Condor INTRO" — silent until the file is uploaded (the horda speech was wrong here)
 AUDIO_SRC.condor_die="assets/snd_condor_die.mp3";           // "Condor Death"
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
@@ -3623,7 +3623,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.7';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.8';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
