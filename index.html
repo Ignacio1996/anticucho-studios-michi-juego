@@ -635,7 +635,7 @@ addEventListener('keydown', e => {
   initAudio();
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Comma'].includes(e.code)) e.preventDefault();
-  if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && pvp.paused && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
+  if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && (pvp.paused||pvpInfo) && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
   // menu/shop interactions
   handleMenuKey(e.code);
 });
@@ -3559,7 +3559,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.2';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.3';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4098,6 +4098,9 @@ const PVP_APU_LIST=['piedra','tierra','cuarzo','rio','morganita','safiro'];
 const pvp={ sub:'off', grid:null, bombs:[], flames:[], items:[], t:0, count:0, wins:[0,0], roundN:1,
   banner:'', bannerC:'#fff', sudden:0, suddenOn:false, spiral:[], spiralI:0, dropT:0, paused:false, pauseSel:0, pauseView:'main', winner:-1, warnCell:null, bgc:null };
 let pvpOnline=false;     // current PVP match is host+guests over the net (players are slots, guests replicate)
+let pvpInfo=false;       // ONLINE PVP "pause": local-only overlay (instructions/menu) — the duel never stops.
+                         // Each player toggles their own with Esc; while open, their character stands still
+                         // (menu keys must not double as movement/bomb keys) but everyone else keeps playing.
 let lobbyMode='horda';   // what the online SALA launches on Enter: 'horda' | 'pvp'
 
 function pvpC2X(c){ return PVP_OX+c*PVP_TILE+PVP_TILE/2; }
@@ -4127,7 +4130,7 @@ function startPvpMatch(){
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   players=[ makePlayer(selChar1||'freddy', 0,0, P1), makePlayer(selChar2||'michi', 0,0, P2) ];
-  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvp.bgc=null;
+  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvpInfo=false; pvp.bgc=null;
   state=STATE.PVP;
   startPvpRound();
 }
@@ -4143,7 +4146,7 @@ function startPvpOnline(){
   for(let i=0;i<total;i++) players.push(makePlayer(order[i%order.length], 0,0, i===0?P1:REMOTE));
   for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
   mode=2;
-  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvp.bgc=null;
+  pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvpInfo=false; pvp.bgc=null;
   state=STATE.PVP;
   startPvpRound();
 }
@@ -4254,7 +4257,9 @@ function updatePvp(dt){
 
 function pvpControl(p,dt){
   if(!p.alive || p.departed) return;
-  const c=p.controls, ks=p.keysrc||keys;
+  // local info-overlay open (online): the keyboard is driving the menu, not the duel — the host's own
+  // character stands still, but remote guests (keysrc/pose from the net) keep playing untouched.
+  const c=p.controls, ks=(pvpInfo && !p.netRemote) ? {} : (p.keysrc||keys);
   const rem=p.netRemote;
   if(rem && rem.grace>0) rem.grace-=dt;
   if(rem && rem.pose && !(rem.grace>0)){
@@ -4510,7 +4515,7 @@ function handlePvpKey(code){
     return;
   }
   // Escape itself is handled by togglePause() (shared with the guests' {pt:1} request)
-  if(!pvp.paused) return;
+  if(!pvp.paused && !pvpInfo) return;   // pvpInfo: online local overlay — same menu, but the duel keeps running
   if(NET.role==='guest') return;   // the pause menu lives on the host; guests only get the Esc toggle
   if(pvp.pauseView==='settings'){
     if(code==='ArrowUp'||code==='ArrowDown'||code==='KeyW'||code==='KeyS') setSel=(setSel+1)%2;
@@ -4524,11 +4529,11 @@ function handlePvpKey(code){
   if(code==='Enter'||code==='Space'){ if(pvp.pauseSel===0) pvpResume(); else if(pvp.pauseSel===1){ pvp.pauseView='settings'; setSel=0; } else pvpExit(true); }
 }
 function pvpResume(){
-  pvp.paused=false;
-  for(const p of players){ p.wasPunch=true; p.wasGear=true; }   // the key that closed the menu must not drop a bomb
+  pvp.paused=false; pvpInfo=false;
+  for(const p of players){ if(!p.netRemote){ p.wasPunch=true; p.wasGear=true; } }   // the key that closed the menu must not drop a bomb (locals only — never eat a guest's press)
 }
 function pvpExit(toMenu){
-  pvp.sub='off'; pvp.paused=false;
+  pvp.sub='off'; pvp.paused=false; pvpInfo=false;
   try{ if(pvpMusic) pvpMusic.pause(); }catch(e){}
   if(toMenu) gotoMainMenu(); else playMenuMusic();
 }
@@ -4754,13 +4759,17 @@ function drawPvp(){
     else ctx.fillText('ENTER: revancha  ·  C: cambiar personajes  ·  ESC: menú', W/2, 566);
     ctx.textAlign='left';
   }
-  if(pvp.paused){
-    ctx.fillStyle='rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
+  if(pvp.sub==='matchend') pvpInfo=false;   // never blanket the podium — a fresh round reopens with Esc
+  if(pvp.paused||pvpInfo){
+    // online (pvpInfo): the duel keeps running behind the menu, so keep the backdrop translucent enough
+    // to see bombs coming; offline (pvp.paused): the sim is frozen, dim it hard like before
+    ctx.fillStyle=pvpInfo?'rgba(0,0,0,0.60)':'rgba(0,0,0,0.78)'; ctx.fillRect(0,0,W,H);
     ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
     ctx.fillText('PAUSA', W/2, 70);
+    if(pvpInfo){ ctx.fillStyle='#ff9f6a'; ctx.font='bold 13px Courier New'; ctx.fillText('ONLINE: ¡el duelo NO se detiene — cuidado!', W/2, 92); }
     if(NET.role==='guest'){
       ctx.fillStyle='#cdbf9a'; ctx.font='15px Courier New';
-      ctx.fillText('Pausada — Esc para pedir continuar', W/2, 108);
+      ctx.fillText(pvpInfo?'Esc para volver al duelo':'Pausada — Esc para pedir continuar', W/2, 118);
     } else if(pvp.pauseView==='settings'){
       drawVolumeSettings();
       return;
@@ -4815,9 +4824,10 @@ function togglePause(){
   // Online: the host owns the pause. Entering STATE.PAUSE freezes the authoritative simulation, and
   // netBroadcast keeps streaming snapshots (state:'pause' included) so every guest freezes + sees the
   // overlay too. Guests request a toggle by sending {pt:1} to the host (see initNet).
-  if(state===STATE.PVP){   // PVP pause (host Esc AND guest {pt:1} land here; replicated via pvp snapshots)
+  if(state===STATE.PVP){   // PVP pause. Offline: real freeze. Online: local overlay only — the duel keeps running.
     if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){
-      if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
+      if(pvpOnline || NET.role==='guest'){ pvpInfo=!pvpInfo; if(pvpInfo){ pvp.pauseSel=0; pvp.pauseView='main'; } else pvpResume(); }
+      else if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
     }
     return;
   }
@@ -5126,7 +5136,7 @@ let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
 function netOnSnapshot(d){
-  if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; return; }
+  if(d._wait){ NET.snap=null; NET.guestReady=false; NET.waitState=d.state; pvpInfo=false; return; }
   if(!d._snap) return;
   d.rt = performance.now();
   gBuf.push(d); if(gBuf.length>16) gBuf.shift();
@@ -5271,7 +5281,7 @@ function netApplyGuestPvp(cur,dt){
 function netPvpPredictOwned(rp, sp, cur, dt){
   if(!sp.alive){ gPred.init=false; gPred.punchAnim=0; return; }
   if(!gPred.init){ gPred.x=sp.x; gPred.y=sp.y; gPred.animTime=sp.animTime||0; gPred.fx=0; gPred.fy=1; gPred.dir=sp.dir||'s'; gPred.moving=false; gPred.init=true; }
-  const canMove=!pvp.paused && (pvp.sub==='play' || (pvp.sub==='roundend' && pvp.winner===NET.slot));
+  const canMove=!pvp.paused && !pvpInfo && (pvp.sub==='play' || (pvp.sub==='roundend' && pvp.winner===NET.slot));
   const k=canMove ? (NET.guestKeys||{}) : {};
   let mx=0,my=0;
   if(k['KeyW']||k['ArrowUp'])    my-=1;
@@ -5489,10 +5499,12 @@ requestAnimationFrame(frame);
     NET.guestKeys = gk;
     let lastSig = '';
     function inputPacket(){
+      // PVP info overlay open: we're reading the menu — send no actions (our pose freezes via prediction too)
+      const blk = (state===STATE.PVP && pvpInfo);
       const pk = {
-        u:  !!(gk['KeyW']||gk['ArrowUp']),    dn: !!(gk['KeyS']||gk['ArrowDown']),
-        l:  !!(gk['KeyA']||gk['ArrowLeft']),  r:  !!(gk['KeyD']||gk['ArrowRight']),
-        p:  !!(gk['Space']||gk['Comma']),     g:  !!(gk['KeyF']||gk['Period'])
+        u:  !blk&&!!(gk['KeyW']||gk['ArrowUp']),    dn: !blk&&!!(gk['KeyS']||gk['ArrowDown']),
+        l:  !blk&&!!(gk['KeyA']||gk['ArrowLeft']),  r:  !blk&&!!(gk['KeyD']||gk['ArrowRight']),
+        p:  !blk&&!!(gk['Space']||gk['Comma']),     g:  !blk&&!!(gk['KeyF']||gk['Period'])
       };
       // stream our locally-simulated pose so the host adopts it verbatim (client-authoritative movement,
       // zero input round-trip). Only once prediction has a real position to report.
@@ -5511,8 +5523,12 @@ requestAnimationFrame(frame);
     const swallow = e => {
       const down = e.type==='keydown';
       try{ initAudio(); }catch(_e){}                                // first key is the user gesture that unlocks local audio
-      // Escape isn't part of the input packet: it asks the host to toggle the shared pause (edge-triggered)
-      if(e.code==='Escape' && down && !gk[e.code] && NET.conn && NET.conn.open){ try{ NET.conn.send({pt:1}); }catch(_e){} }
+      // Escape isn't part of the input packet. Horda: it asks the host to toggle the shared pause
+      // (edge-triggered). PVP: pause is local-only — toggle our own info overlay, the duel keeps running.
+      if(e.code==='Escape' && down && !gk[e.code]){
+        if(state===STATE.PVP){ if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend') pvpInfo=!pvpInfo; }
+        else if(NET.conn && NET.conn.open){ try{ NET.conn.send({pt:1}); }catch(_e){} }
+      }
       if(gk[e.code]!==down){ gk[e.code]=down; sendInput(false); }   // fire the moment a key toggles
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -5552,7 +5568,7 @@ requestAnimationFrame(frame);
       const guest = { conn, keys:{}, slot };
       NET.conns.push(guest);
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(slot+1)+' listo)');
-      conn.on('data', d => { if(d && d.pt){ togglePause(); return; } applyRemote(guest, d); });   // guest→host input / pose / pause-toggle packets
+      conn.on('data', d => { if(d && d.pt){ if(state!==STATE.PVP) togglePause(); return; } applyRemote(guest, d); });   // guest→host input / pose / pause-toggle packets (PVP pause is local per player — ignore)
       conn.on('close', () => {
         const ci=NET.conns.indexOf(guest); if(ci>=0) NET.conns.splice(ci,1);
         // mark their player departed: no more input, down until they reconnect, and
