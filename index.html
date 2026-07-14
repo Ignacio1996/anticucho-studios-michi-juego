@@ -350,9 +350,9 @@ function spritesLoaded(){ return spritesReady>=spritesTotal; }
 const CONDOR_CELL={w:305,h:150};
 const CONDOR_SRC={ c1:"assets/img_017.png", c2:"assets/img_018.png", c3:"assets/img_019.png" };
 const CONDOR={}; for(const k in CONDOR_SRC){ const im=new Image(); im.src=CONDOR_SRC[k]; CONDOR[k]=im; }
-// PVP-playable condor: side/back flap frames ("Condor 1_East/2_East" and "1_North/2_North").
-// NEW assets — drop the four files into assets/ under these names; until they exist charFrame
-// falls back to the front-view flap for every direction, so the character stays playable.
+// PVP-playable condor: side/back flap frames ("Condor 1_East/2_East" and "1_North/2_North"),
+// exported from the artist's 1113px canvas at the same scale as the front frames (union-cropped
+// per pair so the two frames of a direction stay aligned).
 { const dirs={ e1:"assets/condor_e1.png", e2:"assets/condor_e2.png", n1:"assets/condor_n1.png", n2:"assets/condor_n2.png" };
   for(const k in dirs){ const im=new Image(); im.src=dirs[k]; CONDOR[k]=im; } }
 
@@ -505,7 +505,10 @@ const CHARS={
   // Cóndor: always airborne — floats (hover+bob in drawPlayer) and flaps nonstop (flap branch in
   // charFrame runs off the global clock, not off movement). natAspect: frames differ in size, so
   // width comes from each image's own aspect ratio instead of a fixed cell.
-  condor:{ S:CONDOR, cell:CONDOR_CELL, pd:0.18, dh:46, npKey:null, sIdle:null, eIdle:null, name:'CÓNDOR', color:'#e0a83a', heavy:false, noPunch:true, flap:true, floats:true, natAspect:true,
+  // natScale: the east/north frames are exported at the same art scale as the front view but
+  // different canvas sizes — draw height follows each frame's natural height so the bird's BODY
+  // stays one size in every direction (dh:46 maps to the front frame's 150px reference height)
+  condor:{ S:CONDOR, cell:CONDOR_CELL, pd:0.18, dh:46, npKey:null, sIdle:null, eIdle:null, name:'CÓNDOR', color:'#e0a83a', heavy:false, noPunch:true, flap:true, floats:true, natAspect:true, natScale:true,
     selCrop:{sx:95,sy:0,sw:120,sh:95},   // chest-up card art: head + chest + wing shoulders
     loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
@@ -1202,8 +1205,8 @@ function playPunchSound(p){
   // Teddington laughs on every bomb. Inline (not playHee()) — the playHee wrapper queues its own
   // net event, and this call already rides the 'punch' event, so guests would hear it twice.
   if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); return; }
-  // Cóndor cries on every OTHER bomb — every single one would be too much
-  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%2===1) playOne(AUDIO_SRC.condor_hit, 0.42); return; }
+  // Cóndor cries on every THIRD bomb — more would be too much
+  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42); return; }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
   if(state===STATE.PVP){
     // bombs are placed far less often than horda punches — voice every 3rd bomb
@@ -2732,7 +2735,8 @@ function drawPlayer(p){
         const C=CHARS[p.kind];
         if(C && C.loaded()){
           const t=clamp(p.deathAnim/0.9,0,1), fr=charFrame(p);
-          const DH=C.dh, DW=(C.natAspect&&fr.img&&fr.img.naturalWidth)?DH*(fr.img.naturalWidth/fr.img.naturalHeight):C.cell.w*(DH/C.cell.h);
+          const DH=(C.natScale&&fr.img&&fr.img.naturalHeight)?C.dh*(fr.img.naturalHeight/C.cell.h):C.dh;
+          const DW=(C.natAspect&&fr.img&&fr.img.naturalWidth)?DH*(fr.img.naturalWidth/fr.img.naturalHeight):C.cell.w*(DH/C.cell.h);
           ctx.save(); ctx.translate(p.x, p.y+p.radius-4); ctx.rotate((fr.flip?-1:1)*t*Math.PI/2);
           ctx.globalAlpha=1-0.7*t;
           if(fr.img && fr.img.naturalWidth) ctx.drawImage(fr.img,-DW/2,-DH,DW,DH);
@@ -2770,7 +2774,8 @@ function drawPlayer(p){
   if(useSprite){
     const fr = charFrame(p);
     const CELL = C.cell;
-    const DH = C.dh, scale=DH/CELL.h;
+    const DH = (C.natScale && fr.img && fr.img.naturalHeight) ? C.dh*(fr.img.naturalHeight/CELL.h) : C.dh;
+    const scale=DH/CELL.h;
     const DW = (C.natAspect && fr.img && fr.img.naturalWidth) ? DH*(fr.img.naturalWidth/fr.img.naturalHeight) : CELL.w*scale;
     // floats (Cóndor): airborne — hover above the ground shadow with a gentle flight bob
     const hov = C.floats ? 11+Math.sin(time*3.4)*3.5 : 0;
@@ -3636,7 +3641,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.3';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.4';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
