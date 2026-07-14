@@ -92,6 +92,13 @@ AUDIO_SRC.jar_intro2="assets/snd_044.mp3";
 AUDIO_SRC.guachi_intro="assets/snd_045.mp3";
 AUDIO_SRC.pvpbg="assets/snd_046.mp3";
 AUDIO_SRC.pvpboom="assets/snd_047.mp4";   // AAC audio — browsers decode it like any other SFX
+// PVP-only characters. Teddington's select jingle reuses the boss-intro take (snd_009 = "Teddington
+// Intro"); the other three are NEW files — drop them into assets/ under exactly these names.
+// A missing file simply stays silent (sfxBuffer caches the failed fetch), nothing breaks.
+AUDIO_SRC.teddington_sel="assets/snd_009.mp3";              // "Teddington Intro"
+AUDIO_SRC.teddington_die="assets/snd_teddington_die.mp3";   // "Teddington Death"
+AUDIO_SRC.condor_sel="assets/snd_condor_sel.mp3";           // "Condor INTRO"
+AUDIO_SRC.condor_die="assets/snd_condor_die.mp3";           // "Condor Death"
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
 // On file:// origins createMediaElementSource() succeeds but emits silence (the media
@@ -327,6 +334,11 @@ function spritesLoaded(){ return spritesReady>=spritesTotal; }
 const CONDOR_CELL={w:305,h:150};
 const CONDOR_SRC={ c1:"assets/img_017.png", c2:"assets/img_018.png", c3:"assets/img_019.png" };
 const CONDOR={}; for(const k in CONDOR_SRC){ const im=new Image(); im.src=CONDOR_SRC[k]; CONDOR[k]=im; }
+// PVP-playable condor: side/back flap frames ("Condor 1_East/2_East" and "1_North/2_North").
+// NEW assets — drop the four files into assets/ under these names; until they exist charFrame
+// falls back to the front-view flap for every direction, so the character stays playable.
+{ const dirs={ e1:"assets/condor_e1.png", e2:"assets/condor_e2.png", n1:"assets/condor_n1.png", n2:"assets/condor_n2.png" };
+  for(const k in dirs){ const im=new Image(); im.src=dirs[k]; CONDOR[k]=im; } }
 
 const TED_STOREH=224, TED_DH=80, BOSS_PUNCH_DUR=0.95;
 const TED_META={
@@ -468,12 +480,33 @@ const CHARS={
   michi:{ S:MICHI, cell:MICHI_CELL, pd:MICHI_PUNCH_DUR, dh:62, npKey:'np', sIdle:'sw2', eIdle:'ew2', name:'MICHI', color:'#4a78c0', heavy:false, loaded:michiLoaded, base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
   sumac:{ S:SUMAC, cell:SUMAC_CELL, pd:0.18, dh:56, npKey:'np', sIdle:'sw2', eIdle:'ew2', name:'SUMAC', color:'#4a9b7a', heavy:false, loaded:sumacLoaded, base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
   shooshy:{ S:SHOOSHY, cell:SHOOSHY_CELL, pd:0.22, dh:56, npKey:'np', sIdle:'sw2', eIdle:'eidle', name:'SHOOSHY', color:'#b06fb8', heavy:true, loaded:shooshyLoaded, base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
+  // ---- PVP-only characters (never offered in Horda — CHAR_LIST below stays at 4) ----
+  // Teddington: the Amazonas boss sprite set as a player. noPunch: placing a bomb never shows a
+  // hit/punch frame, only his walk/idle poses (his east walk has 2 frames; charFrame handles it).
+  teddington:{ S:TED, cell:{w:224,h:224}, pd:0.18, dh:64, npKey:'np', sIdle:'sw2', eIdle:'ew1', name:'TEDDINGTON', color:'#b07a3a', heavy:true, noPunch:true,
+    loaded:()=>!!(TED.ew1&&TED.ew1.naturalWidth), base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
+  // Cóndor: always airborne — floats (hover+bob in drawPlayer) and flaps nonstop (flap branch in
+  // charFrame runs off the global clock, not off movement). natAspect: frames differ in size, so
+  // width comes from each image's own aspect ratio instead of a fixed cell.
+  condor:{ S:CONDOR, cell:CONDOR_CELL, pd:0.18, dh:46, npKey:null, sIdle:null, eIdle:null, name:'CÓNDOR', color:'#e0a83a', heavy:false, noPunch:true, flap:true, floats:true, natAspect:true,
+    loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
 const CHAR_LIST=['freddy','michi','sumac','shooshy'];
+const PVP_CHAR_LIST=CHAR_LIST.concat(['teddington','condor']);
 let selMode=1, selCursor1=0, selCursor2=1, selChar1=null, selChar2=null, modTest=false, selPending=false, selStartTimer=0;
 function charFrame(p){
   const C=CHARS[p.kind], S=C.S, d=p.dir;
-  if(p.punchAnim>0){
+  if(C.flap){
+    // Cóndor: wings never stop — the cycle runs off the global clock, moving or not, and there is
+    // no punch pose. Front view ping-pongs 1-2-3-2; east/west and north alternate their two frames
+    // (west = east flipped). Missing side/back files fall back to the front cycle.
+    const ok=im=>im&&im.naturalWidth>0;
+    const f2=Math.floor(time/0.16)%2;
+    if(d==='n' && ok(S.n1) && ok(S.n2)) return {img:[S.n1,S.n2][f2], flip:false};
+    if((d==='e'||d==='w') && ok(S.e1) && ok(S.e2)) return {img:[S.e1,S.e2][f2], flip:(d==='w')};
+    return {img:[S.c1,S.c2,S.c3][[0,1,2,1][Math.floor(time/0.16)%4]], flip:false};
+  }
+  if(p.punchAnim>0 && !C.noPunch){   // noPunch (Teddington): bombs place with walk/idle poses only
     const ph=clamp(1-(p.punchAnim/C.pd),0,0.999), i3=Math.floor(ph*3);
     if(d==='n') return {img:S[C.npKey], flip:false};
     if(d==='s') return {img:[S.sp1,S.sp2,S.sp1][i3], flip:false};
@@ -487,7 +520,7 @@ function charFrame(p){
   const idx=[0,1,2,1][Math.floor(p.animTime/0.12)%4];
   if(d==='n') return {img:[S.nw1,S.nw2,S.nw3][idx], flip:false};
   if(d==='s') return {img:[S.sw1,S.sw2,S.sw3][idx], flip:false};
-  return {img:[S.ew1,S.ew2,S.ew3][idx], flip:(d==='w')};
+  return {img:[S.ew1,S.ew2,S.ew3||S.ew1][idx], flip:(d==='w')};   // 2-frame east sets (Teddington) walk 1-2-1-2
 }
 
 
@@ -1148,6 +1181,9 @@ function playPunchSound(p){
   const k=p.kind;
   if(k==='freddy'){ playPlin(); return; }     // PLIN exclusive to Freddy
   if(k==='michi'){ playWow(); return; }        // WOW exclusive to Michi
+  // Teddington laughs on every bomb. Inline (not playHee()) — the playHee wrapper queues its own
+  // net event, and this call already rides the 'punch' event, so guests would hear it twice.
+  if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); return; }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
   if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55); }
   else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55); }
@@ -2665,6 +2701,19 @@ function drawPlayer(p){
     if(p.deathAnim!=null){
       const m=DEATH_META[p.kind], arr=DEATH_IMG[p.kind], img=arr&&arr[deathFrameIdx(p.deathAnim)];
       if(img && img.naturalWidth){ const sc=m.dh/m.h, dw=m.w*sc, dh=m.h*sc; const dx=p.x-m.d1cx*sc, dy=(p.y+p.radius+5)-m.d1by*sc; ctx.drawImage(img,dx,dy,dw,dh); }
+      else{
+        // PVP-only kinds (Teddington / Cóndor) have no bespoke KO frames: tip the standing sprite
+        // over and fade it out, then hold the fallen pose like the drawn death frames do
+        const C=CHARS[p.kind];
+        if(C && C.loaded()){
+          const t=clamp(p.deathAnim/0.9,0,1), fr=charFrame(p);
+          const DH=C.dh, DW=(C.natAspect&&fr.img&&fr.img.naturalWidth)?DH*(fr.img.naturalWidth/fr.img.naturalHeight):C.cell.w*(DH/C.cell.h);
+          ctx.save(); ctx.translate(p.x, p.y+p.radius-4); ctx.rotate((fr.flip?-1:1)*t*Math.PI/2);
+          ctx.globalAlpha=1-0.7*t;
+          if(fr.img && fr.img.naturalWidth) ctx.drawImage(fr.img,-DW/2,-DH,DW,DH);
+          ctx.restore();
+        }
+      }
       return;
     }
     // death cross — co-op respawn point for next round
@@ -2696,8 +2745,11 @@ function drawPlayer(p){
   if(useSprite){
     const fr = charFrame(p);
     const CELL = C.cell;
-    const DH = C.dh, scale=DH/CELL.h, DW=CELL.w*scale;
-    const dx=p.x-DW/2, dy=p.y+r-DH+5;
+    const DH = C.dh, scale=DH/CELL.h;
+    const DW = (C.natAspect && fr.img && fr.img.naturalWidth) ? DH*(fr.img.naturalWidth/fr.img.naturalHeight) : CELL.w*scale;
+    // floats (Cóndor): airborne — hover above the ground shadow with a gentle flight bob
+    const hov = C.floats ? 11+Math.sin(time*3.4)*3.5 : 0;
+    const dx=p.x-DW/2, dy=p.y+r-DH+5-hov;
     ctx.save();
     if(blink) ctx.globalAlpha=0.28;
     if(fr.flip){ ctx.translate(p.x,0); ctx.scale(-1,1); ctx.translate(-p.x,0); }
@@ -3559,7 +3611,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.3';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.4';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3992,19 +4044,30 @@ function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0
 function handleSelectKey(code){
   if(selPending) return;
   if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
+  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;   // Teddington/Cóndor are PVP-only
   if(selMode===1){
-    if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+3)%4;
-    else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%4;
-    else if(code==='Enter'||code==='Space'){ selChar1=CHAR_LIST[selCursor1]; playCharSelect(selChar1); beginStart(); }
+    if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+n-1)%n;
+    else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%n;
+    else if(code==='Enter'||code==='Space'){ selChar1=list[selCursor1]; playCharSelect(selChar1); beginStart(); }
   } else {
-    if(code==='KeyA') selCursor1=(selCursor1+3)%4;
-    else if(code==='KeyD') selCursor1=(selCursor1+1)%4;
-    else if(code==='Space'){ if(CHAR_LIST[selCursor1]!==selChar2){ selChar1=CHAR_LIST[selCursor1]; playCharSelect(selChar1); } }
-    if(code==='ArrowLeft') selCursor2=(selCursor2+3)%4;
-    else if(code==='ArrowRight') selCursor2=(selCursor2+1)%4;
-    else if(code==='Comma'){ if(CHAR_LIST[selCursor2]!==selChar1){ selChar2=CHAR_LIST[selCursor2]; playCharSelect(selChar2); } }
+    if(code==='KeyA') selCursor1=(selCursor1+n-1)%n;
+    else if(code==='KeyD') selCursor1=(selCursor1+1)%n;
+    else if(code==='Space'){ if(list[selCursor1]!==selChar2){ selChar1=list[selCursor1]; playCharSelect(selChar1); } }
+    if(code==='ArrowLeft') selCursor2=(selCursor2+n-1)%n;
+    else if(code==='ArrowRight') selCursor2=(selCursor2+1)%n;
+    else if(code==='Comma'){ if(list[selCursor2]!==selChar1){ selChar2=list[selCursor2]; playCharSelect(selChar2); } }
     if(code==='Enter'){ if(selChar1 && selChar2) beginStart(); }
   }
+}
+// card art for a character: the drawn portrait when one exists, else a big sprite frame
+// (Teddington/Cóndor have no dedicated portrait yet)
+function selCard(k){
+  const img=SEL_IMG[k];
+  if(img && img.naturalWidth) return img;
+  const C=CHARS[k], S=C&&C.S;
+  if(!S) return null;
+  const im=(C.sIdle&&S[C.sIdle])||S.c1||S.sw2;
+  return (im && im.naturalWidth) ? im : null;
 }
 function drawSelect(){
   if(pvpPending){
@@ -4016,14 +4079,15 @@ function drawSelect(){
   ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
-  const n=4, cw=200, gap=26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, ch=330;
+  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;
+  const cw=(n>4)?160:200, gap=(n>4)?16:26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, ch=330;
   for(let i=0;i<n;i++){
-    const k=CHAR_LIST[i], cx=x0+i*(cw+gap);
+    const k=list[i], cx=x0+i*(cw+gap);
     const takenBy1=selChar1===k, takenBy2=selChar2===k, taken=takenBy1||takenBy2;
     ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,ch);
-    const img=SEL_IMG[k];
+    const img=selCard(k);
     ctx.save(); ctx.globalAlpha = (taken)?1:0.95;
-    if(img && img.naturalWidth){ const iw=cw-24, ih=iw*img.naturalHeight/img.naturalWidth; ctx.drawImage(img, cx+12, cy+18, iw, ih); }
+    if(img && img.naturalWidth){ const s=Math.min((cw-24)/img.naturalWidth, (ch-120)/img.naturalHeight), dw=img.naturalWidth*s, dh=img.naturalHeight*s; ctx.drawImage(img, cx+cw/2-dw/2, cy+18, dw, dh); }
     ctx.restore();
     ctx.fillStyle=CHARS[k].color; ctx.font='bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+ch-58);
     ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido', cx+cw/2, cy+ch-38);
@@ -4130,11 +4194,19 @@ function startPvpMatch(){
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   players=[ makePlayer(selChar1||'freddy', 0,0, P1), makePlayer(selChar2||'michi', 0,0, P2) ];
+  players.forEach(pl=>pl.selKind=pl.kind);   // offline: picked on the SELECT screen — already "chosen"
   pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvpInfo=false; pvp.bgc=null;
   state=STATE.PVP;
   startPvpRound();
 }
-// online duel: host + 1-3 guests, same slot/keysrc wiring the Horda host uses
+// online duel: host + 1-3 guests, same slot/keysrc wiring the Horda host uses.
+// Characters are no longer dealt at random — everyone picks on the 'chars' phase
+// (first come, first served; a taken character can't be picked twice).
+function pvpInitChooser(pl,i){
+  pl.selKind=null; pl.selCur=i%PVP_CHAR_LIST.length;
+  pl.selWas={l:true,r:true,p:true};   // require a fresh key press (no held-key instant pick)
+  pl.pending=true; pl.alive=false; pl.hp=0;
+}
 function startPvpOnline(){
   pvpOnline=true; pvpPending=false;
   pvpResetWorld();
@@ -4142,13 +4214,13 @@ function startPvpOnline(){
   const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   const total=Math.min(4, 1+NET.conns.length);
   players=[];
-  const order=shuffledChars();
-  for(let i=0;i<total;i++) players.push(makePlayer(order[i%order.length], 0,0, i===0?P1:REMOTE));
+  for(let i=0;i<total;i++){ const pl=makePlayer('freddy', 0,0, i===0?P1:REMOTE); pvpInitChooser(pl,i); players.push(pl); }
   for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
   mode=2;
   pvp.wins=players.map(()=>0); pvp.roundN=1; pvp.paused=false; pvpInfo=false; pvp.bgc=null;
+  pvp.grid=null; pvp.bombs.length=0; pvp.flames.length=0; pvp.items.length=0;
   state=STATE.PVP;
-  startPvpRound();
+  pvp.sub='chars'; pvp.selT=0; pvp.t=0;
 }
 function startPvpRound(){
   const g=[];
@@ -4175,7 +4247,8 @@ function startPvpRound(){
   players.forEach((p,i)=>{
     const sp=spots[i%spots.length];
     p.x=pvpC2X(sp[0]); p.y=pvpR2Y(sp[1]);
-    p.alive=!p.departed; p.fell=false; p.deathAnim=null; p.hp=p.maxhp; p.pending=false;
+    // a player still picking their character (mid-duel joiner) stays out until they've chosen
+    p.alive=!p.departed && !!p.selKind; p.fell=false; p.deathAnim=null; p.hp=p.alive?p.maxhp:0; p.pending=!p.departed && !p.selKind;
     p.dir=(sp[1]<PVP_ROWS/2)?'s':'n'; p.moving=false; p.animTime=0; p.punchAnim=0; p.hitFlash=0; p.shieldFlash=0;
     p.shields=0; p.special='none'; p.oroCharge=0; p.gear='none'; p.gearCount=0;
     p.pvpRange=1; p.pvpMaxB=1; p.pvpSpd=1; p.pvpKick=false; p.pvpPierce=false; p.pvpRemote=false;
@@ -4224,6 +4297,13 @@ function updatePvp(dt){
     if(p.punchAnim>0) p.punchAnim-=dt;
     if(p.hitFlash>0) p.hitFlash-=dt;
   }
+  pvpUpdateChoosers(dt);   // anyone without a character yet (pre-duel phase or mid-duel joiner) is picking
+  if(pvp.sub==='chars'){
+    const active=players.filter(pl=>!pl.departed);
+    if(active.length && active.every(pl=>pl.selKind)){ pvp.selT+=dt; if(pvp.selT>1.1) startPvpRound(); }
+    else pvp.selT=0;
+    return;
+  }
   if(pvp.sub==='count'){
     pvp.count-=dt;
     if(pvp.count<=0){ pvp.sub='play'; }   // silent start — WOW is Michi's voice, not a referee whistle
@@ -4255,6 +4335,30 @@ function updatePvp(dt){
   }
 }
 
+// ---- online character pick (host-authoritative; guests see it replicated and send normal input) ----
+function pvpConfirmPick(pl,k){
+  pl.selKind=k; reassignKind(pl,k);
+  pl.wasPunch=true; pl.wasGear=true;   // the confirming key must not drop a bomb once they spawn
+  playCharSelect(k); netQSnd('sel',k);
+}
+function pvpUpdateChoosers(dt){
+  if(!pvpOnline) return;   // offline picks happen on the SELECT screen
+  const N=PVP_CHAR_LIST.length;
+  for(const pl of players){
+    if(pl.departed || pl.selKind) continue;
+    const taken=new Set(players.filter(q=>q!==pl && !q.departed && q.selKind).map(q=>q.kind));
+    const free=PVP_CHAR_LIST.filter(k=>!taken.has(k));
+    if(free.length===1){ pvpConfirmPick(pl,free[0]); continue; }   // one character left → it's theirs
+    // host player reads the real keyboard (either key set); guests' packets arrive as Arrow*/Comma
+    const ks=pl.keysrc||keys;
+    const L=!!(ks['ArrowLeft']||ks['KeyA']), R=!!(ks['ArrowRight']||ks['KeyD']), P=!!(ks['Space']||ks['Comma']||ks['Enter']);
+    const w=pl.selWas||(pl.selWas={l:true,r:true,p:true});
+    if(L&&!w.l) pl.selCur=(pl.selCur+N-1)%N;
+    if(R&&!w.r) pl.selCur=(pl.selCur+1)%N;
+    if(P&&!w.p){ const k=PVP_CHAR_LIST[pl.selCur]; if(!taken.has(k)) pvpConfirmPick(pl,k); }
+    w.l=L; w.r=R; w.p=P;
+  }
+}
 function pvpControl(p,dt){
   if(!p.alive || p.departed) return;
   // local info-overlay open (online): the keyboard is driving the menu, not the duel — the host's own
@@ -4680,10 +4784,11 @@ function drawPvpHUD(){
     ctx.fillStyle='rgba(12,10,8,0.72)'; rrect(px,py,pw,ph,10); ctx.fill();
     ctx.strokeStyle=p.color; ctx.lineWidth=2; rrect(px,py,pw,ph,10); ctx.stroke();
     ctx.textAlign='left'; ctx.fillStyle=p.color; ctx.font=compact?'bold 15px Courier New':'bold 18px Courier New';
-    ctx.fillText('J'+(i+1)+' '+p.name, px+10, py+23);
+    ctx.fillText('J'+(i+1)+' '+(p.selKind?p.name:'…'), px+10, py+23);
     ctx.font=compact?'13px Courier New':'16px Courier New';
     for(let s=0;s<PVP_WINS;s++){ ctx.fillStyle=(s<pvp.wins[i])?'#ffd24a':'rgba(255,255,255,0.18)'; ctx.fillText('★', px+(compact?140:170)+s*(compact?15:20), py+23); }
-    if((!p.alive||p.departed) && (pvp.sub==='play'||pvp.sub==='roundend')){ ctx.fillStyle='#ff6a5a'; ctx.font='bold 12px Courier New'; ctx.fillText(p.departed?'SALIÓ':'K.O.', px+pw-50, py+23); }
+    if(!p.selKind && !p.departed){ ctx.fillStyle='#aef7c2'; ctx.font='bold 11px Courier New'; ctx.fillText('ELIGIENDO…', px+pw-88, py+23); }
+    else if((!p.alive||p.departed) && (pvp.sub==='play'||pvp.sub==='roundend')){ ctx.fillStyle='#ff6a5a'; ctx.font='bold 12px Courier New'; ctx.fillText(p.departed?'SALIÓ':'K.O.', px+pw-50, py+23); }
     const isp=compact?42:51, ico=compact?21:26;
     PVP_APU_LIST.forEach((k,j)=>{
       const ix=px+(compact?10:14)+j*isp, iy=py+(compact?34:38), cnt=(p.pvpCnt&&p.pvpCnt[k])||0, has=cnt>0;
@@ -4706,7 +4811,54 @@ function drawPvpHUD(){
   ctx.textAlign='left';
 }
 function pvpFmtT(s){ s=Math.max(0,Math.ceil(s)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
+// online character pick — drawn on host and guests from the same (replicated) player fields:
+// selKind (has picked), selCur (cursor), kind (the picked character). overlay=true is the
+// mid-duel variant a late joiner sees on top of the running duel.
+const PVP_SEL_COLS=['#ffd24a','#5ad0ff','#7dff9a','#ff8ad0'];   // J1-J4
+function drawPvpChars(overlay){
+  if(!overlay){
+    if(PROP.machubg && PROP.machubg.naturalWidth){ drawImageCover(PROP.machubg); ctx.fillStyle='rgba(10,20,40,0.22)'; ctx.fillRect(0,0,W,H); }
+    else { ctx.fillStyle='#7ec3e8'; ctx.fillRect(0,0,W,H); }
+    pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
+  }
+  ctx.fillStyle='rgba(0,0,0,'+(overlay?0.74:0.62)+')'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 28px Courier New';
+  ctx.fillText(overlay?'ELIGE TU PERSONAJE':'VERSUS — ELIGE TU PERSONAJE', W/2, 78);
+  if(overlay){ ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New'; ctx.fillText('Entras al empezar la próxima ronda', W/2, 104); }
+  const list=PVP_CHAR_LIST, n=list.length, cw=160, gap=16, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, chh=330;
+  const mySlot=(NET.role==='guest')?NET.slot:0;
+  for(let i=0;i<n;i++){
+    const k=list[i], cx=x0+i*(cw+gap);
+    const takenBy=players.findIndex(pl=>pl && !pl.departed && pl.selKind && pl.kind===k);
+    ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,chh);
+    const img=selCard(k);
+    if(img && img.naturalWidth){ const s=Math.min((cw-20)/img.naturalWidth,(chh-120)/img.naturalHeight), dw=img.naturalWidth*s, dh=img.naturalHeight*s; ctx.drawImage(img, cx+cw/2-dw/2, cy+16, dw, dh); }
+    ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+chh-64);
+    ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido', cx+cw/2, cy+chh-46);
+    if(takenBy>=0){   // first come, first served — grey it out for everyone else
+      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(cx,cy,cw,chh);
+      ctx.fillStyle=PVP_SEL_COLS[takenBy%4]; ctx.font='bold 15px Courier New';
+      ctx.fillText('J'+(takenBy+1)+(takenBy===mySlot?' (TÚ)':''), cx+cw/2, cy+chh-16);
+    }
+    let ring=0;   // one cursor ring per player still choosing
+    players.forEach((pl,pi)=>{
+      if(!pl || pl.departed || pl.selKind || (pl.selCur||0)!==i) return;
+      const off=2+ring*7; ctx.strokeStyle=PVP_SEL_COLS[pi%4]; ctx.lineWidth=(pi===mySlot)?4:2;
+      ctx.strokeRect(cx+off,cy+off,cw-2*off,chh-2*off); ring++;
+    });
+  }
+  const meP=players[mySlot], active=players.filter(pl=>pl && !pl.departed);
+  ctx.font='bold 17px Courier New';
+  if(active.length && active.every(pl=>pl.selKind)){ ctx.fillStyle='#ffe14a'; ctx.fillText('¡COMENZANDO!', W/2, cy+chh+52); }
+  else if(meP && meP.selKind){ ctx.fillStyle='#aef7c2'; ctx.fillText('Listo — esperando a los demás…', W/2, cy+chh+52); }
+  else { ctx.fillStyle='#ffe14a'; ctx.fillText('←/→ o A/D: elegir   ·   Espacio: confirmar', W/2, cy+chh+52); }
+  ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
+  ctx.fillText('Primer llegado, primer servido — cada personaje solo puede elegirse una vez', W/2, cy+chh+76);
+  ctx.textAlign='left';
+}
 function drawPvp(){
+  if(pvp.sub==='chars'){ drawPvpChars(false); return; }   // pre-duel pick phase (no grid exists yet)
   if(PROP.machubg && PROP.machubg.naturalWidth){ drawImageCover(PROP.machubg); ctx.fillStyle='rgba(10,20,40,0.22)'; ctx.fillRect(0,0,W,H); }
   else { const gd=ctx.createLinearGradient(0,0,0,H); gd.addColorStop(0,'#7ec3e8'); gd.addColorStop(1,'#cfe8f2'); ctx.fillStyle=gd; ctx.fillRect(0,0,W,H); }
   pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
@@ -4749,8 +4901,8 @@ function drawPvp(){
     const wp=players[pvp.winner];
     ctx.fillStyle=wp?wp.color:'#ffe9b0'; ctx.font='bold 44px Courier New';
     ctx.fillText('¡'+(wp?wp.name:'')+' GANA EL DUELO!', W/2, 120);
-    const img=wp&&SEL_IMG[wp.kind];
-    if(img&&img.naturalWidth){ const iw=200, ih=iw*img.naturalHeight/img.naturalWidth; ctx.drawImage(img,W/2-iw/2,158,iw,Math.min(ih,300)); }
+    const img=wp&&selCard(wp.kind);
+    if(img&&img.naturalWidth){ const s=Math.min(200/img.naturalWidth,300/img.naturalHeight), iw=img.naturalWidth*s, ih=img.naturalHeight*s; ctx.drawImage(img,W/2-iw/2,158,iw,ih); }
     ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New';
     ctx.fillText(pvpScoreLine(), W/2, 506);
     ctx.fillStyle='#ffe14a'; ctx.font='bold 18px Courier New';
@@ -4759,6 +4911,9 @@ function drawPvp(){
     else ctx.fillText('ENTER: revancha  ·  C: cambiar personajes  ·  ESC: menú', W/2, 566);
     ctx.textAlign='left';
   }
+  // a guest that joined mid-duel and hasn't picked yet chooses on top of the running duel
+  { const me=(NET.role==='guest')?players[NET.slot]:null;
+    if(me && !me.departed && !me.selKind && pvp.sub!=='matchend') drawPvpChars(true); }
   if(pvp.sub==='matchend') pvpInfo=false;   // never blanket the podium — a fresh round reopens with Esc
   if(pvp.paused||pvpInfo){
     // online (pvpInfo): the duel keeps running behind the menu, so keep the backdrop translucent enough
@@ -4825,6 +4980,7 @@ function togglePause(){
   // netBroadcast keeps streaming snapshots (state:'pause' included) so every guest freezes + sees the
   // overlay too. Guests request a toggle by sending {pt:1} to the host (see initNet).
   if(state===STATE.PVP){   // PVP pause. Offline: real freeze. Online: local overlay only — the duel keeps running.
+    if(pvp.sub==='chars' && NET.role!=='guest'){ pvpExit(true); return; }   // host Esc on the pick screen: back to menu (nobody gets stranded waiting)
     if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){
       if(pvpOnline || NET.role==='guest'){ pvpInfo=!pvpInfo; if(pvpInfo){ pvp.pauseSel=0; pvp.pauseView='main'; } else pvpResume(); }
       else if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
@@ -5113,7 +5269,8 @@ function netSerializePvp(){
     players:players.map(p=>({ kind:p.kind, name:p.name, color:p.color, radius:p.radius,
       x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10, dir:p.dir, moving:p.moving,
       alive:p.alive, departed:!!p.departed, deathAnim:(p.deathAnim==null?null:p.deathAnim),
-      punchAnim:p.punchAnim, animTime:p.animTime, pvpSpd:p.pvpSpd||1, cnt:p.pvpCnt })),
+      punchAnim:p.punchAnim, animTime:p.animTime, pvpSpd:p.pvpSpd||1, cnt:p.pvpCnt,
+      pn:p.pending?1:0, skd:p.selKind?1:0, sc:p.selCur||0 })),
     bombs:pvp.bombs.map(b=>({ id:b.id, c:b.c, r:b.r, x:Math.round(b.x), y:Math.round(b.y),
       ow:players.indexOf(b.owner), fuse:b.fuse, remote:!!b.remote, sl:!!b.slide,
       wk:players.reduce((m,pl,i)=>b.walkers.has(pl)?(m|(1<<i)):m,0) })),
@@ -5259,7 +5416,8 @@ function netApplyGuestPvp(cur,dt){
     const rp={ kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
       dir:sp.dir, moving:sp.moving, alive:sp.alive, departed:sp.departed, deathAnim:sp.deathAnim,
       punchAnim:sp.punchAnim, animTime:sp.animTime, hitFlash:0, shieldFlash:0, shields:0, special:'none',
-      oroCharge:0, pending:false, fell:false, facing:{x:0,y:1}, pvpSpd:sp.pvpSpd||1,
+      oroCharge:0, pending:!!sp.pn, fell:false, facing:{x:0,y:1}, pvpSpd:sp.pvpSpd||1,
+      selKind:sp.skd?sp.kind:null, selCur:sp.sc||0,
       pvpCnt:sp.cnt||{piedra:0,tierra:0,cuarzo:0,rio:0,morganita:0,safiro:0} };
     if(i===NET.slot) netPvpPredictOwned(rp, sp, cur, dt);
     else if(interp && a.players[i]){ rp.x=a.players[i].x+(sp.x-a.players[i].x)*alpha; rp.y=a.players[i].y+(sp.y-a.players[i].y)*alpha; }
@@ -5597,6 +5755,19 @@ requestAnimationFrame(frame);
           if(state===STATE.PLAY){ p.pending=true; p.alive=false; p.hp=0; }
           players.push(p);
           mode=2;   // a solo online host is no longer solo (mode is otherwise only set at startGame)
+        }
+      }
+      // joining a PVP duel already in progress (or during the pick phase): they choose their
+      // character first (first-come-first-serve vs the ones already taken) and spawn next round
+      else if(state===STATE.PVP && pvpOnline && pvp.sub!=='off' && pvp.sub!=='matchend'){
+        guest.grace=0.6;
+        if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }   // returning player keeps their character, revives next round
+        else if(players.length<4){
+          const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
+          pl.keysrc=guest.keys; pl.netRemote=guest;
+          pvpInitChooser(pl, players.length);
+          players.push(pl); pvp.wins.push(0);
+          floatText(W/2, PVP_OY+70, '¡J'+(guest.slot+1)+' se une! Eligiendo personaje…', '#aef7c2');
         }
       }
     });
