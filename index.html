@@ -3559,7 +3559,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-14.1';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-14.2';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -5138,9 +5138,13 @@ function _byId(arr){ const m={}; for(const e of arr) m[e.id]=e; return m; }
 function netApplyMeta(s){
   // Host-side victory code never runs on a guest, so detect the replicated PLAY→VICTORY
   // transition here and persist the unlock on this guest's own machine too. Guarded on
-  // having been in the run, so joining a room that already shows the victory screen
-  // doesn't hand out the unlock for free.
-  if(s.state===STATE.VICTORY && (state===STATE.PLAY||state===STATE.BREAK||state===STATE.PAUSE||state===STATE.DYING||state===STATE.INTRO)) saveMapBeaten(s.currentMap);
+  // (a) having been in the run — joining a room already on the victory screen gives nothing —
+  // and (b) the map being unlocked on THIS machine: getting carried by a friend through a map
+  // you haven't reached yourself doesn't skip your own progression.
+  if(s.state===STATE.VICTORY && (state===STATE.PLAY||state===STATE.BREAK||state===STATE.PAUSE||state===STATE.DYING||state===STATE.INTRO)){
+    const mi=MAP_ORDER.indexOf(s.currentMap);
+    if(mi>=0 && isMapUnlocked(mi)) saveMapBeaten(s.currentMap);
+  }
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
   if(currentMap!==s.currentMap){
     currentMap=s.currentMap;
