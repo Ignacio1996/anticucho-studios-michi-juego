@@ -97,7 +97,16 @@ AUDIO_SRC.teddington_sel="assets/snd_teddington_sel.mp3";   // "Teddington intro
 AUDIO_SRC.teddington_die="assets/snd_teddington_die.mp3";   // "Teddington DEATH"
 AUDIO_SRC.condor_sel="assets/snd_condor_sel.mp3";           // "Condor INTRO"
 AUDIO_SRC.condor_die="assets/snd_condor_die.mp3";           // "Condor DEATH"
-AUDIO_SRC.condor_hit="assets/snd_condor_hit.mp3";           // "Condor HIT" — every other bomb he places
+AUDIO_SRC.condor_hit="assets/snd_condor_hit.mp3";           // "Condor HIT" — every 3rd bomb he places
+// The four "equilibrado" characters: INTRO on select (and on winning a PVP match), DEATH on death,
+// HIT1/HIT2 rotate randomly — every 2nd connecting punch in horda, every 3rd bomb in PVP.
+for(const nm of ['alfredo','mati','sebas','vannucci']){
+  AUDIO_SRC[nm+'_sel']="assets/snd_"+nm+"_sel.mp3";
+  AUDIO_SRC[nm+'_die']="assets/snd_"+nm+"_die.mp3";
+  AUDIO_SRC[nm+'_hit1']="assets/snd_"+nm+"_hit1.mp3";
+  AUDIO_SRC[nm+'_hit2']="assets/snd_"+nm+"_hit2.mp3";
+}
+AUDIO_SRC.sebas_hit2=AUDIO_SRC.sebas_hit1;   // Sebas shipped with a single HIT take
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
 // Audio elements play through their own native output — they are deliberately NOT routed
@@ -194,7 +203,7 @@ function initAudio(){
     // ...and the character voices a moment later (after the sprite burst), so the FIRST death/select
     // of a match doesn't wait on a network fetch — that lag was audible on CDN-hosted builds
     try{ setTimeout(()=>{ try{
-      for(const k of ['freddy','michi','sumac','shooshy','teddington','condor']){ sfxBuffer(AUDIO_SRC[k+'_sel']); sfxBuffer(AUDIO_SRC[k+'_die']); }
+      for(const k of PVP_CHAR_LIST){ sfxBuffer(AUDIO_SRC[k+'_sel']); sfxBuffer(AUDIO_SRC[k+'_die']); sfxBuffer(AUDIO_SRC[k+'_hit1']); sfxBuffer(AUDIO_SRC[k+'_hit2']); }
       sfxBuffer(AUDIO_SRC.condor_hit); sfxBuffer(AUDIO_SRC.hee1); sfxBuffer(AUDIO_SRC.hee2); sfxBuffer(AUDIO_SRC.hee3);
       sfxBuffer(AUDIO_SRC.sumac1); sfxBuffer(AUDIO_SRC.sumac2); sfxBuffer(AUDIO_SRC.shooshy1); sfxBuffer(AUDIO_SRC.shooshy2);
     }catch(e){} }, 2500); }catch(e){}
@@ -489,6 +498,17 @@ const SHOOSHY_SRC={
 };
 const SHOOSHY={}; for(const k in SHOOSHY_SRC){ const im=new Image(); im.src=SHOOSHY_SRC[k]; SHOOSHY[k]=im; }
 function shooshyLoaded(){ return SHOOSHY.ew1 && SHOOSHY.ew1.naturalWidth>0; }
+// The four new characters share a 320×290 canvas per frame (pre-aligned by the artist):
+// 3-frame walks in every direction, 2-frame east/south punches, 1-frame north punch.
+const NCHAR_CELL={w:320,h:290};
+const NCHAR={};
+for(const nm of ['alfredo','mati','sebas','vannucci']){
+  const m={};
+  for(const k of ['ew1','ew2','ew3','ep1','ep2','nw1','nw2','nw3','np','sw1','sw2','sw3','sp1','sp2']){
+    const im=new Image(); im.src='assets/char_'+nm+'_'+k+'.png'; m[k]=im;
+  }
+  NCHAR[nm]=m;
+}
 const SEL_SRC={ freddy:"assets/img_124.png", michi:"assets/img_125.png", sumac:"assets/img_126.png", shooshy:"assets/img_127.png" };
 const SEL_IMG={}; for(const k in SEL_SRC){ const im=new Image(); im.src=SEL_SRC[k]; SEL_IMG[k]=im; }
 const CHARS={
@@ -512,8 +532,21 @@ const CHARS={
     selCrop:{sx:95,sy:0,sw:120,sh:95},   // chest-up card art: head + chest + wing shoulders
     loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
-const CHAR_LIST=['freddy','michi','sumac','shooshy'];
-const PVP_CHAR_LIST=CHAR_LIST.concat(['teddington','condor']);
+// The four "equilibrado" characters — stats midway between Fuerte/Lento and Ágil/Rápido.
+// Playable in BOTH modes (unlike Teddington/Cóndor). Chest-up selCrop for the selector cards.
+{
+  const NBASE={maxhp:170,dmg:26,knock:185,speed:145,cd:0.35,radius:15};
+  const NCOL={alfredo:'#e07b3a', mati:'#3aa8c0', sebas:'#7aa03a', vannucci:'#c04a8a'};
+  for(const nm of ['alfredo','mati','sebas','vannucci']){
+    CHARS[nm]={ S:NCHAR[nm], cell:NCHAR_CELL, pd:0.22, dh:58, npKey:'np', sIdle:'sw2', eIdle:'ew2',
+      name:nm.toUpperCase(), color:NCOL[nm], heavy:false, tag:'Equilibrado',
+      selCrop:{sx:64,sy:0,sw:192,sh:136},
+      loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...NBASE} };
+  }
+}
+const CHAR_LIST=['freddy','michi','sumac','shooshy','alfredo','mati','sebas','vannucci'];
+// PVP roster ordered so the two-row pick screen groups the original six on top, the new four below
+const PVP_CHAR_LIST=['freddy','michi','sumac','shooshy','teddington','condor','alfredo','mati','sebas','vannucci'];
 let selMode=1, selCursor1=0, selCursor2=1, selChar1=null, selChar2=null, modTest=false, selPending=false, selStartTimer=0;
 function charFrame(p){
   const C=CHARS[p.kind], S=C.S, d=p.dir;
@@ -1207,6 +1240,16 @@ function playPunchSound(p){
   if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); return; }
   // Cóndor cries on every THIRD bomb — more would be too much
   if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42); return; }
+  // Alfredo/Mati/Sebas/Vannucci: HIT1/HIT2 rotate at random. Horda calls this only on CONNECTING
+  // punches (see tryPunch's hitAny) → voice every 2nd landed hit; PVP: voice every 3rd bomb placed.
+  if(AUDIO_SRC[k+'_hit1']){
+    p.punchSfx=(p.punchSfx||0)+1; const ch=p.punchSfx;
+    if((state===STATE.PVP) ? (ch%3===1) : (ch%2===0)){
+      let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
+      playOne(AUDIO_SRC[k+'_hit'+n2], 0.6);
+    }
+    return;
+  }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
   if(state===STATE.PVP){
     // bombs are placed far less often than horda punches — voice every 3rd bomb
@@ -2195,6 +2238,18 @@ function drawDeathScene(){
     const s=m.dh/m.h, dw=m.w*s, dh=m.h*s;
     const dx=dp.x - m.d1cx*s, dy=(dp.y+dp.radius+5) - m.d1by*s;
     ctx.drawImage(img,dx,dy,dw,dh);
+  } else {
+    // characters without bespoke KO frames: same tipped-sprite fade the in-round deaths use
+    const C=CHARS[dp.kind];
+    if(C && C.loaded()){
+      const t=clamp(dying.t/0.9,0,1), fr=charFrame(dp);
+      const DH2=(C.natScale&&fr.img&&fr.img.naturalHeight)?C.dh*(fr.img.naturalHeight/C.cell.h):C.dh;
+      const DW2=(C.natAspect&&fr.img&&fr.img.naturalWidth)?DH2*(fr.img.naturalWidth/fr.img.naturalHeight):C.cell.w*(DH2/C.cell.h);
+      ctx.save(); ctx.translate(dp.x, dp.y+dp.radius-4); ctx.rotate((fr.flip?-1:1)*t*Math.PI/2);
+      ctx.globalAlpha=1-0.55*t;
+      if(fr.img && fr.img.naturalWidth) ctx.drawImage(fr.img,-DW2/2,-DH2,DW2,DH2);
+      ctx.restore(); ctx.globalAlpha=1;
+    }
   }
   ctx.restore();
 }
@@ -3641,7 +3696,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.4';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.5';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4075,20 +4130,28 @@ function drawIntroUI(){
 }
 function enterSelect(){ state=STATE.SELECT; selPending=false; pvpPending=false; selStartTimer=0; selCursor1=0; selCursor2=1; selChar1=null; selChar2=null; }
 function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0; }
+// cards per row on the pick screens: single row up to 6, then originals-on-top rows
+function charsPerRow(n){ return (n<=6)? n : ((n<=8)?4:6); }
 function handleSelectKey(code){
   if(selPending) return;
   if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
-  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;   // Teddington/Cóndor are PVP-only
+  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length, pr=charsPerRow(n);   // Teddington/Cóndor are PVP-only
   if(selMode===1){
     if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+n-1)%n;
     else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%n;
+    else if(code==='KeyW'||code==='ArrowUp') selCursor1=(selCursor1+n-pr)%n;
+    else if(code==='KeyS'||code==='ArrowDown') selCursor1=(selCursor1+pr)%n;
     else if(code==='Enter'||code==='Space'){ selChar1=list[selCursor1]; playCharSelect(selChar1); beginStart(); }
   } else {
     if(code==='KeyA') selCursor1=(selCursor1+n-1)%n;
     else if(code==='KeyD') selCursor1=(selCursor1+1)%n;
+    else if(code==='KeyW') selCursor1=(selCursor1+n-pr)%n;
+    else if(code==='KeyS') selCursor1=(selCursor1+pr)%n;
     else if(code==='Space'){ if(list[selCursor1]!==selChar2){ selChar1=list[selCursor1]; playCharSelect(selChar1); } }
     if(code==='ArrowLeft') selCursor2=(selCursor2+n-1)%n;
     else if(code==='ArrowRight') selCursor2=(selCursor2+1)%n;
+    else if(code==='ArrowUp') selCursor2=(selCursor2+n-pr)%n;
+    else if(code==='ArrowDown') selCursor2=(selCursor2+pr)%n;
     else if(code==='Comma'){ if(list[selCursor2]!==selChar1){ selChar2=list[selCursor2]; playCharSelect(selChar2); } }
     if(code==='Enter'){ if(selChar1 && selChar2) beginStart(); }
   }
@@ -4122,29 +4185,35 @@ function drawSelect(){
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
   const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;
-  const cw=(n>4)?160:200, gap=(n>4)?16:26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, ch=330;
+  // two rows once the roster outgrows one: originals on top, the new characters underneath
+  const perRow=charsPerRow(n), rows=Math.ceil(n/perRow);
+  const cw=(rows>1)?160:((n>4)?160:200), gap=(rows>1)?16:((n>4)?16:26), rowGap=12;
+  const cy=(rows>1)?102:128, ch=(rows>1)?242:330;
   for(let i=0;i<n;i++){
-    const k=list[i], cx=x0+i*(cw+gap);
+    const k=list[i], row=Math.floor(i/perRow), col=i%perRow;
+    const rowN=Math.min(perRow, n-row*perRow), rowW=rowN*cw+(rowN-1)*gap;
+    const cx=(W-rowW)/2+col*(cw+gap), cyR=cy+row*(ch+rowGap);
     const takenBy1=selChar1===k, takenBy2=selChar2===k, taken=takenBy1||takenBy2;
-    ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,ch);
+    ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cyR,cw,ch);
     ctx.save(); ctx.globalAlpha = (taken)?1:0.95;
-    drawCardArt(k, cx+12, cy+18, cw-24, ch-120);
+    drawCardArt(k, cx+12, cyR+14, cw-24, ch-112);
     ctx.restore();
-    ctx.fillStyle=CHARS[k].color; ctx.font='bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+ch-58);
-    ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido', cx+cw/2, cy+ch-38);
-    if(takenBy1){ ctx.fillStyle='#ffd24a'; ctx.font='bold 15px Courier New'; ctx.fillText(selMode===2?'JUGADOR 1':'ELEGIDO', cx+cw/2, cy+ch-14); }
-    if(takenBy2){ ctx.fillStyle='#5ad0ff'; ctx.font='bold 15px Courier New'; ctx.fillText('JUGADOR 2', cx+cw/2, cy+ch-14); }
-    if(taken){ ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(cx,cy,cw,ch); }
-    if(selCursor1===i){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; ctx.strokeRect(cx+2,cy+2,cw-4,ch-4); }
-    if(selMode===2 && selCursor2===i){ ctx.strokeStyle='#5ad0ff'; ctx.lineWidth=3; ctx.strokeRect(cx+8,cy+8,cw-16,ch-16); }
+    ctx.fillStyle=CHARS[k].color; ctx.font=(rows>1)?'bold 16px Courier New':'bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cyR+ch-58);
+    ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido'), cx+cw/2, cyR+ch-38);
+    if(takenBy1){ ctx.fillStyle='#ffd24a'; ctx.font='bold 15px Courier New'; ctx.fillText(selMode===2?'JUGADOR 1':'ELEGIDO', cx+cw/2, cyR+ch-14); }
+    if(takenBy2){ ctx.fillStyle='#5ad0ff'; ctx.font='bold 15px Courier New'; ctx.fillText('JUGADOR 2', cx+cw/2, cyR+ch-14); }
+    if(taken){ ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(cx,cyR,cw,ch); }
+    if(selCursor1===i){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; ctx.strokeRect(cx+2,cyR+2,cw-4,ch-4); }
+    if(selMode===2 && selCursor2===i){ ctx.strokeStyle='#5ad0ff'; ctx.lineWidth=3; ctx.strokeRect(cx+8,cyR+8,cw-16,ch-16); }
   }
+  const botY=cy+rows*(ch+rowGap)-rowGap;
   const ready = selMode===1 ? true : (selChar1 && selChar2);
   ctx.fillStyle = ready ? '#ffe14a' : '#7a6f55'; ctx.font='bold 22px Courier New';
-  ctx.fillText('COMENZAR JUEGO', W/2, cy+ch+50);
+  ctx.fillText('COMENZAR JUEGO', W/2, botY+40);
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
-  if(selMode===1) ctx.fillText('Flechas/AD mover  \u00b7  Enter o Espacio: Comenzar', W/2, cy+ch+76);
-  else ctx.fillText('J1: A/D + Espacio   \u00b7   J2: \u2190/\u2192 + Coma   \u00b7   Enter: Comenzar (ambos listos)', W/2, cy+ch+76);
-  ctx.fillStyle='#6a6050'; ctx.font='11px Courier New'; ctx.fillText('Esc: volver', W/2, cy+ch+96);
+  if(selMode===1) ctx.fillText('Flechas/WASD mover  \u00b7  Enter o Espacio: Comenzar', W/2, botY+62);
+  else ctx.fillText('J1: A/D (W/S: fila) + Espacio   \u00b7   J2: \u2190/\u2192 (\u2191/\u2193: fila) + Coma   \u00b7   Enter: Comenzar', W/2, botY+62);
+  ctx.fillStyle='#6a6050'; ctx.font='11px Courier New'; ctx.fillText('Esc: volver', W/2, botY+80);
   if(selPending){ ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,H/2-34,W,68); ctx.fillStyle='#ffe14a'; ctx.font='bold 32px Courier New'; ctx.fillText('\u00a1COMENZANDO!', W/2, H/2+10); }
   ctx.textAlign='left';
 }
@@ -4268,7 +4337,7 @@ function startPvpMatch(){
 // (first come, first served; a taken character can't be picked twice).
 function pvpInitChooser(pl,i){
   pl.selKind=null; pl.selCur=i%PVP_CHAR_LIST.length;
-  pl.selWas={l:true,r:true,p:true};   // require a fresh key press (no held-key instant pick)
+  pl.selWas={l:true,r:true,p:true,u:true,d:true};   // require a fresh key press (no held-key instant pick)
   pl.pending=true; pl.alive=false; pl.hp=0;
 }
 function startPvpOnline(){
@@ -4418,13 +4487,16 @@ function updateChoosers(dt, roster){   // shared by the PVP 'chars' phase and th
     const free=roster.filter(k=>!taken.has(k));
     if(free.length===1){ pvpConfirmPick(pl,free[0]); continue; }   // one character left → it's theirs (real in Horda: 4 players, 4 characters)
     // host player reads the real keyboard (either key set); guests' packets arrive as Arrow*/Comma
-    const ks=pl.keysrc||keys;
+    const ks=pl.keysrc||keys, PR=charsPerRow(N);
     const L=!!(ks['ArrowLeft']||ks['KeyA']), R=!!(ks['ArrowRight']||ks['KeyD']), P=!!(ks['Space']||ks['Comma']||ks['Enter']);
-    const w=pl.selWas||(pl.selWas={l:true,r:true,p:true});
+    const U=!!(ks['ArrowUp']||ks['KeyW']), D=!!(ks['ArrowDown']||ks['KeyS']);
+    const w=pl.selWas||(pl.selWas={l:true,r:true,p:true,u:true,d:true});
     if(L&&!w.l) pl.selCur=(pl.selCur+N-1)%N;
     if(R&&!w.r) pl.selCur=(pl.selCur+1)%N;
+    if(U&&!w.u) pl.selCur=(pl.selCur+N-PR)%N;
+    if(D&&!w.d) pl.selCur=(pl.selCur+PR)%N;
     if(P&&!w.p){ const k=roster[pl.selCur%N]; if(!taken.has(k)) pvpConfirmPick(pl,k); }
-    w.l=L; w.r=R; w.p=P;
+    w.l=L; w.r=R; w.p=P; w.u=U; w.d=D;
   }
 }
 function pvpControl(p,dt){
@@ -4910,33 +4982,38 @@ function drawCharsPick(roster, entries, mySlot, overlay, opts){
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 28px Courier New';
   ctx.fillText(overlay?'ELIGE TU PERSONAJE':(opts.title||'VERSUS — ELIGE TU PERSONAJE'), W/2, 78);
   if(overlay){ ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New'; ctx.fillText('Entras al empezar la próxima ronda', W/2, 104); }
-  const n=roster.length, cw=(n>4)?160:200, gap=(n>4)?16:26, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=128, chh=330;
+  const n=roster.length, perRow=charsPerRow(n), rows=Math.ceil(n/perRow);
+  const cw=(rows>1)?160:((n>4)?160:200), gap=16, rowGap=12;
+  const cy=(rows>1)?100:128, chh=(rows>1)?242:330;
   for(let i=0;i<n;i++){
-    const k=roster[i], cx=x0+i*(cw+gap);
+    const k=roster[i], row=Math.floor(i/perRow), col=i%perRow;
+    const rowN=Math.min(perRow, n-row*perRow), rowW=rowN*cw+(rowN-1)*gap;
+    const cx=(W-rowW)/2+col*(cw+gap), cyR=cy+row*(chh+rowGap);
     const takenBy=entries.findIndex(pl=>pl && !pl.departed && pl.selKind && pl.kind===k);
-    ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cy,cw,chh);
-    drawCardArt(k, cx+10, cy+16, cw-20, chh-120);
-    ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cy+chh-64);
-    ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido', cx+cw/2, cy+chh-46);
+    ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cyR,cw,chh);
+    drawCardArt(k, cx+10, cyR+12, cw-20, chh-112);
+    ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cyR+chh-64);
+    ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido'), cx+cw/2, cyR+chh-46);
     if(takenBy>=0){   // first come, first served — grey it out for everyone else
-      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(cx,cy,cw,chh);
+      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(cx,cyR,cw,chh);
       ctx.fillStyle=PVP_SEL_COLS[takenBy%4]; ctx.font='bold 15px Courier New';
-      ctx.fillText('J'+(takenBy+1)+(takenBy===mySlot?' (TÚ)':''), cx+cw/2, cy+chh-16);
+      ctx.fillText('J'+(takenBy+1)+(takenBy===mySlot?' (TÚ)':''), cx+cw/2, cyR+chh-16);
     }
     let ring=0;   // one cursor ring per player still choosing
     entries.forEach((pl,pi)=>{
       if(!pl || pl.departed || pl.selKind || (pl.selCur||0)!==i) return;
       const off=2+ring*7; ctx.strokeStyle=PVP_SEL_COLS[pi%4]; ctx.lineWidth=(pi===mySlot)?4:2;
-      ctx.strokeRect(cx+off,cy+off,cw-2*off,chh-2*off); ring++;
+      ctx.strokeRect(cx+off,cyR+off,cw-2*off,chh-2*off); ring++;
     });
   }
+  const botY=cy+rows*(chh+rowGap)-rowGap;
   const meP=entries[mySlot], active=entries.filter(pl=>pl && !pl.departed);
   ctx.font='bold 17px Courier New';
-  if(active.length && active.every(pl=>pl.selKind)){ ctx.fillStyle='#ffe14a'; ctx.fillText('¡COMENZANDO!', W/2, cy+chh+52); }
-  else if(meP && meP.selKind){ ctx.fillStyle='#aef7c2'; ctx.fillText('Listo — esperando a los demás…', W/2, cy+chh+52); }
-  else { ctx.fillStyle='#ffe14a'; ctx.fillText('←/→ o A/D: elegir   ·   Espacio: confirmar', W/2, cy+chh+52); }
+  if(active.length && active.every(pl=>pl.selKind)){ ctx.fillStyle='#ffe14a'; ctx.fillText('¡COMENZANDO!', W/2, botY+40); }
+  else if(meP && meP.selKind){ ctx.fillStyle='#aef7c2'; ctx.fillText('Listo — esperando a los demás…', W/2, botY+40); }
+  else { ctx.fillStyle='#ffe14a'; ctx.fillText('←/→: elegir · ↑/↓: fila · Espacio: confirmar', W/2, botY+40); }
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
-  ctx.fillText('Primer llegado, primer servido — cada personaje solo puede elegirse una vez', W/2, cy+chh+76);
+  ctx.fillText('Primer llegado, primer servido — cada personaje solo puede elegirse una vez', W/2, botY+62);
   ctx.textAlign='left';
 }
 function drawPvpChars(overlay){ drawCharsPick(PVP_CHAR_LIST, players, (NET.role==='guest')?NET.slot:0, overlay, {}); }
