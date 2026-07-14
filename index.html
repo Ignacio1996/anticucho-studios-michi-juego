@@ -3636,7 +3636,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.2';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.3';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4551,7 +4551,19 @@ function pvpUpdateBombs(dt){
       // a player stepping into the path stops the bomb one tile short
       let hitP=false;
       for(const p of players){ if(p.alive && !b.walkers.has(p) && dist(p.x,p.y,b.x,b.y)<p.radius+18){ hitP=true; break; } }
+      // two bombs meeting mid-slide (e.g. kicked head-on at each other) CLASH and stop — the
+      // tile-based lookahead can't see this because both cross between tile centers at once
+      let hitB=null;
+      if(!hitP){ for(const ob of pvp.bombs){ if(ob!==b && !ob.gone && dist(ob.x,ob.y,b.x,b.y)<PVP_TILE-6){ hitB=ob; break; } } }
       if(hitP){ b.x=pvpC2X(b.c); b.y=pvpR2Y(b.r); b.slide=null; }
+      else if(hitB){
+        if(hitB.slide){   // the other bomb was sliding too: stop it on its own tile
+          if(hitB.c===b.c && hitB.r===b.r){ hitB.c-=hitB.slide.dx; hitB.r-=hitB.slide.dy; }   // both claimed the same tile this frame → give it back its previous one
+          hitB.x=pvpC2X(hitB.c); hitB.y=pvpR2Y(hitB.r); hitB.slide=null;
+        }
+        if(hitB.c===b.c && hitB.r===b.r){ b.c-=b.slide.dx; b.r-=b.slide.dy; }
+        b.x=pvpC2X(b.c); b.y=pvpR2Y(b.r); b.slide=null;
+      }
       else {
         const tx=pvpC2X(b.slide.tc), ty=pvpR2Y(b.slide.tr);
         if((b.slide.dx && (b.x-tx)*b.slide.dx>=0) || (b.slide.dy && (b.y-ty)*b.slide.dy>=0)){
