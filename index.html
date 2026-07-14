@@ -191,6 +191,13 @@ function initAudio(){
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
+    // ...and the character voices a moment later (after the sprite burst), so the FIRST death/select
+    // of a match doesn't wait on a network fetch — that lag was audible on CDN-hosted builds
+    try{ setTimeout(()=>{ try{
+      for(const k of ['freddy','michi','sumac','shooshy','teddington','condor']){ sfxBuffer(AUDIO_SRC[k+'_sel']); sfxBuffer(AUDIO_SRC[k+'_die']); }
+      sfxBuffer(AUDIO_SRC.condor_hit); sfxBuffer(AUDIO_SRC.hee1); sfxBuffer(AUDIO_SRC.hee2); sfxBuffer(AUDIO_SRC.hee3);
+      sfxBuffer(AUDIO_SRC.sumac1); sfxBuffer(AUDIO_SRC.sumac2); sfxBuffer(AUDIO_SRC.shooshy1); sfxBuffer(AUDIO_SRC.shooshy2);
+    }catch(e){} }, 2500); }catch(e){}
   }
   try{ if(actx && actx.state==='suspended') actx.resume(); if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
@@ -1196,8 +1203,13 @@ function playPunchSound(p){
   // net event, and this call already rides the 'punch' event, so guests would hear it twice.
   if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); return; }
   // Cóndor cries on every OTHER bomb — every single one would be too much
-  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%2===1) playOne(AUDIO_SRC.condor_hit, 0.7); return; }
+  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%2===1) playOne(AUDIO_SRC.condor_hit, 0.42); return; }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
+  if(state===STATE.PVP){
+    // bombs are placed far less often than horda punches — voice every 3rd bomb
+    if(k==='sumac'||k==='shooshy'){ if(c%3===1) playOne(AUDIO_SRC[k+(randi(1,4)===4?'2':'1')], 0.55); }
+    return;
+  }
   if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55); }
   else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55); }
 }
@@ -3624,7 +3636,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.1';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.2';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
