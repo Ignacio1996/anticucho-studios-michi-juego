@@ -418,6 +418,9 @@ PROP.bus=new Image(); PROP.bus.src='assets/img_061.png';
 PROP.key=new Image(); PROP.key.src="assets/img_062.png";
 PROP.walEvan=new Image(); PROP.walEvan.src='assets/img_063.png';
 PROP.walBrian=new Image(); PROP.walBrian.src='assets/img_064.png';
+// Fi-Chow map (imported from Anticucho Map Studio): flattened background + collision mask.
+PROP.fichowbg=new Image(); PROP.fichowbg.src='assets/map_fichow.png';
+PROP.fichowcol=new Image(); PROP.fichowcol.src='assets/map_fichow_collision.png';
 
 const MICHI_CELL={w:114,h:128}; const MICHI_PUNCH_DUR=0.18;
 const MICHI_SRC={
@@ -747,18 +750,74 @@ const TAU = Math.PI*2;
 // ---------- Game State ----------
 const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help', PVP:'pvp', MODOS:'modos', NETSELECT:'netselect' };
 let state = STATE.LOADING;
-let mainSel=0, mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapLockShake=0, currentMap='amazonas';
+let mainSel=0, mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapThumb5=null, mapLockShake=0, currentMap='amazonas';
 let pvpPending=false;   // the SELECT screen was entered from PVP → start the duel instead of a Horda run
 let modeSel=0;          // MODOS screen selection: 0 Horda · 1 PVP
 let WORLD_W=W, WORLD_H=H, camX=0, camY=0;
 let flowGrid=null, flowCols=0, flowRows=0, flowCell=46, flowTimer=0;
 let bossFlowGrid=null, bossFlowCols=0, bossFlowRows=0, bossFlowTimer=0;
-const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' } };
-const MAP_ORDER=['amazonas','stonebridge','templo','machu'];
+const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, fichow:{ countMul:1, hpMul:1, dmgMul:1, edges:'zones' } };
+const MAP_ORDER=['amazonas','stonebridge','templo','machu','fichow'];
 let mapsDone={}; try{ mapsDone=JSON.parse(localStorage.getItem('fm_progress')||'{}')||{}; }catch(e){ mapsDone={}; }
 const UNLOCK_ALL=false; // dev toggle: set true to unlock every map while testing
-function isMapUnlocked(i){ return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
+function isMapUnlocked(i){ if(MAP_ORDER[i]==='fichow') return true; /* test map: always open */ return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
 function saveMapBeaten(name){ if(name){ mapsDone[name]=1; try{ localStorage.setItem('fm_progress', JSON.stringify(mapsDone)); }catch(e){} } }
+// ================= Fi-Chow map (Anticucho Map Studio import) =================
+// A horde map exported from the map editor: a flattened background image
+// (PROP.fichowbg) plus a full-resolution collision bitmap (room walls + tables
+// are solid, the floor is walkable). The bitmap is decoded once from a compact
+// run-length string so the map stays self-contained (no canvas pixel reads).
+// It is larger than the canvas, so it scrolls with a camera that follows the
+// players, exactly like Templo / Machu Picchu.
+const FICHOW_W=1112, FICHOW_H=1012;
+const FICHOW_SPAWNS=[{x:148,y:734},{x:194,y:734},{x:248,y:733},{x:307,y:733}];
+const FICHOW_ZONES=[{x:91,y:615,w:21,h:10},{x:41,y:666,w:15,h:13},{x:399,y:615,w:20,h:15},{x:455,y:670,w:19,h:20},{x:461,y:948,w:17,h:20},{x:241,y:951,w:26,h:17},{x:37,y:950,w:20,h:19},{x:714,y:941,w:23,h:21},{x:887,y:938,w:35,h:23},{x:1025,y:940,w:28,h:21},{x:716,y:612,w:19,h:25},{x:1024,y:522,w:29,h:34},{x:1035,y:272,w:18,h:39},{x:1023,y:142,w:29,h:19},{x:715,y:139,w:24,h:22}];
+// one row per line; each row is runs of <count><a=walkable|b=solid>
+const FICHOW_COL_RLE="1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n1112a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n690a380b42a\n691a22b3a14b310a30b42a\n691a22b4a13b310a30b42a\n691a22b4a13b310a30b42a\n691a22b4a13b311a29b42a\n691a22b5a11b314a27b42a\n691a22b7a8b316a26b42a\n691a22b8a6b323a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b274a48b15a20b42a\n691a22b274a48b15a20b42a\n691a22b274a48b15a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b264a69b4a20b42a\n691a22b271a53b13a20b42a\n691a22b271a53b13a20b42a\n691a22b271a53b13a20b42a\n691a22b276a43b18a20b42a\n691a22b276a43b18a20b42a\n691a22b276a43b18a20b42a\n691a22b276a43b18a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b16a48b273a20b42a\n691a22b16a48b273a20b42a\n691a22b16a48b273a20b42a\n691a22b6a69b262a20b42a\n691a22b6a69b262a20b42a\n691a22b6a69b262a20b42a\n691a22b6a69b262a20b42a\n691a22b6a69b262a20b42a\n691a22b6a69b254a6b2a20b42a\n691a22b6a69b253a8b1a20b42a\n691a22b6a69b253a8b1a20b42a\n691a22b6a69b252a30b42a\n691a22b6a69b252a30b42a\n691a22b6a69b251a31b42a\n691a22b6a69b250a32b42a\n691a22b6a69b250a32b42a\n691a22b6a69b250a32b42a\n691a22b6a69b251a31b42a\n691a22b6a69b251a31b42a\n691a22b6a69b251a31b42a\n691a22b6a69b252a30b42a\n691a22b6a69b254a28b42a\n691a22b13a53b264a6b1a20b42a\n691a22b13a53b271a20b42a\n691a22b13a53b271a20b42a\n691a22b18a43b276a20b42a\n691a22b18a43b276a20b42a\n691a22b18a43b276a20b42a\n691a22b18a43b276a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b276a48b13a20b42a\n691a22b276a48b13a20b42a\n691a22b276a48b13a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b266a69b2a20b42a\n691a22b273a53b11a20b42a\n691a22b273a53b11a20b42a\n691a22b273a53b11a20b42a\n691a22b278a43b16a20b42a\n691a22b278a43b16a20b42a\n691a22b278a43b16a20b42a\n691a22b278a43b16a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b20a48b269a20b42a\n691a22b20a48b269a20b42a\n691a22b20a48b269a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b10a69b258a20b42a\n691a22b17a53b267a20b42a\n691a22b17a53b267a20b42a\n691a22b17a53b267a20b42a\n691a22b22a43b272a20b42a\n691a22b22a43b272a20b42a\n691a22b22a43b272a20b42a\n691a22b22a43b272a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b278a48b11a20b42a\n691a22b278a48b11a20b42a\n691a22b278a48b11a20b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b268a89b42a\n691a22b275a53b9a20b42a\n691a22b275a53b9a20b42a\n691a22b275a53b9a20b42a\n691a22b280a43b14a20b42a\n691a22b280a43b14a20b42a\n691a22b280a43b14a20b42a\n691a22b280a43b14a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b330a6b1a20b42a\n691a22b329a28b42a\n691a22b329a28b42a\n691a22b328a29b42a\n691a22b328a29b42a\n691a22b327a30b42a\n691a22b326a31b42a\n691a22b326a31b42a\n691a22b326a31b42a\n691a22b327a30b42a\n691a22b327a30b42a\n691a22b327a30b42a\n691a22b328a29b42a\n691a22b330a27b42a\n691a22b331a26b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b337a20b42a\n691a22b18a48b271a20b42a\n691a22b18a48b271a20b42a\n691a22b18a48b271a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n691a22b8a69b260a20b42a\n419a76b196a22b8a69b260a20b42a\n419a76b196a22b8a69b260a20b42a\n419a76b196a22b8a69b260a20b42a\n419a76b196a22b8a69b260a20b42a\n23a65b331a76b196a22b8a69b260a20b42a\n23a472b196a22b15a53b269a20b42a\n23a472b196a22b15a53b269a20b42a\n23a472b196a22b15a53b269a20b42a\n23a472b196a22b20a43b274a20b42a\n23a472b196a22b20a43b274a20b42a\n23a472b196a22b20a43b274a20b42a\n23a472b196a22b20a43b274a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a472b196a22b337a20b42a\n23a65b10a6b303a6b6a76b196a22b337a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b7a6b324a20b42a\n23a65b331a76b196a22b6a8b323a20b42a\n23a65b331a76b196a22b6a8b323a20b42a\n23a65b331a76b196a22b5a10b322a20b42a\n23a65b331a76b196a22b5a11b321a20b42a\n23a65b331a76b196a22b4a13b320a20b42a\n23a65b331a76b196a22b3a14b320a20b42a\n23a65b331a76b196a22b3a14b320a20b42a\n23a65b331a76b196a22b3a14b320a20b42a\n23a65b331a76b196a22b4a13b320a20b42a\n23a65b331a76b196a22b4a13b320a20b42a\n23a65b331a76b196a22b4a13b320a20b42a\n23a65b331a76b196a22b5a11b321a20b42a\n23a65b331a76b196a22b7a8b322a20b42a\n23a65b331a76b196a22b8a6b323a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b337a20b42a\n23a65b331a76b196a22b278a48b11a20b42a\n23a65b331a76b196a22b278a48b11a20b42a\n23a65b331a76b196a22b278a48b11a20b42a\n23a65b331a76b196a22b268a89b42a\n23a65b331a76b196a22b268a89b42a\n23a65b331a76b196a22b268a89b42a\n23a65b331a76b196a22b268a89b42a\n23a65b331a76b196a22b268a89b42a\n23a65b331a76b196a22b268a89b42a\n23a65b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b331a76b196a22b268a89b42a\n21a67b223a48b60a76b196a22b268a89b42a\n21a67b223a48b60a295b274a53b9a20b42a\n21a67b223a48b60a295b274a53b9a20b42a\n21a67b213a69b49a295b274a53b9a20b42a\n21a30b250a69b49a295b279a43b14a20b42a\n21a30b71a48b131a69b49a295b279a43b14a20b42a\n21a30b71a48b131a69b49a295b279a43b14a20b42a\n21a30b71a48b131a69b49a295b279a43b14a20b42a\n21a30b61a69b120a69b49a295b336a20b42a\n21a30b61a69b120a69b49a295b336a20b42a\n21a30b61a69b120a69b49a295b336a20b42a\n21a17b1a11b62a69b120a69b92a252b336a20b42a\n21a17b3a8b63a69b120a69b91a253b336a20b42a\n21a17b4a6b64a69b120a69b91a253b336a20b42a\n21a17b74a69b120a69b91a253b336a20b42a\n21a17b74a69b120a69b92a252b336a20b42a\n21a17b74a69b120a69b92a252b336a20b42a\n21a17b74a69b120a69b92a252b336a20b42a\n21a17b74a69b120a69b93a11b1a239b336a20b42a\n21a17b74a69b120a69b95a8b2a239b336a20b42a\n21a17b74a69b120a69b96a6b3a239b336a20b42a\n21a17b74a69b120a69b105a239b336a20b42a\n21a17b74a69b127a53b114a239b336a20b42a\n21a17b74a69b127a53b114a239b336a20b42a\n21a17b74a69b127a53b114a239b336a20b42a\n21a17b74a69b132a43b119a239b336a20b42a\n21a17b74a69b132a43b119a239b336a20b42a\n21a17b81a53b141a43b119a239b336a20b42a\n21a17b81a53b141a43b119a239b336a20b42a\n21a17b81a53b303a239b336a20b42a\n21a17b86a43b308a239b336a20b42a\n21a17b86a43b308a239b336a20b42a\n21a17b86a43b308a239b336a20b42a\n21a17b86a43b308a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b15a48b273a20b42a\n21a17b437a239b15a48b273a20b42a\n21a17b437a239b15a48b273a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b5a69b262a20b42a\n21a17b437a239b12a53b271a20b42a\n21a17b437a239b12a53b271a20b42a\n21a17b437a239b12a53b271a20b42a\n21a17b437a239b17a43b276a20b42a\n21a17b437a239b17a43b276a20b42a\n21a17b437a239b17a43b276a20b42a\n21a17b437a239b17a43b276a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b437a239b336a20b42a\n21a17b183a48b206a239b336a20b42a\n21a17b183a48b206a239b336a20b42a\n21a17b183a48b206a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b195a239b336a20b42a\n21a17b173a69b770a20b42a\n21a17b173a69b770a20b42a\n21a17b173a69b770a20b42a\n21a17b173a69b770a20b42a\n21a17b173a69b770a20b42a\n21a17b173a69b770a20b42a\n21a17b173a69b770a20b42a\n21a17b180a53b779a20b42a\n21a17b180a53b779a20b42a\n21a17b180a53b779a20b42a\n21a17b185a43b784a20b42a\n21a17b185a43b784a20b42a\n21a17b185a43b784a20b42a\n21a17b185a43b784a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b3a6b1003a20b42a\n21a17b2a8b1002a20b42a\n21a17b2a8b1002a20b42a\n21a17b1a10b942a48b11a20b42a\n21a17b1a11b941a48b11a20b42a\n21a30b940a48b11a20b42a\n21a30b930a89b42a\n21a30b930a89b42a\n21a30b930a89b42a\n21a30b930a89b42a\n21a30b930a89b42a\n21a30b930a89b42a\n21a17b1a11b931a89b42a\n21a17b3a8b932a89b42a\n21a17b4a6b933a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b943a89b42a\n21a17b950a53b9a20b42a\n21a17b950a53b9a20b42a\n21a17b950a53b9a20b42a\n21a17b955a43b14a20b42a\n21a17b955a43b14a20b42a\n21a17b955a43b14a20b42a\n21a17b955a43b14a20b42a\n21a17b1012a20b42a\n21a17b1012a20b42a\n21a17b440a237b335a20b42a\n21a17b440a237b335a20b42a\n21a17b440a237b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b88a48b303a238b335a20b42a\n21a17b88a48b303a238b335a20b42a\n21a17b88a48b303a238b335a20b42a\n21a17b78a69b131a48b113a238b335a20b42a\n21a17b78a69b131a48b113a238b335a20b42a\n21a17b78a69b131a48b113a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b78a69b121a69b102a238b335a20b42a\n21a17b85a53b130a69b102a238b335a20b42a\n21a17b85a53b130a69b102a238b335a20b42a\n21a17b85a53b130a69b102a238b19a48b268a20b42a\n21a17b90a43b142a53b111a238b19a48b268a20b42a\n21a17b90a43b142a53b111a238b19a48b268a20b42a\n21a17b90a43b142a53b111a238b9a69b257a20b42a\n21a17b90a43b147a43b116a238b9a69b257a20b42a\n21a17b280a43b116a238b9a69b257a20b42a\n21a17b280a43b116a238b9a69b257a20b42a\n21a17b280a43b116a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b9a69b257a20b42a\n21a17b439a238b16a53b266a20b42a\n21a17b439a238b16a53b266a20b42a\n21a17b439a238b16a53b266a20b42a\n21a17b439a238b21a43b271a20b42a\n21a17b439a238b21a43b271a20b42a\n21a17b439a238b21a43b271a20b42a\n21a17b439a238b21a43b271a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b335a20b42a\n21a17b439a238b5a6b175a6b135a6b2a20b42a\n21a17b439a238b4a8b173a8b133a8b1a20b42a\n21a17b439a238b4a8b173a8b133a8b1a20b42a\n21a17b439a238b3a10b171a10b131a30b42a\n21a17b439a238b3a11b170a11b130a30b42a\n21a17b439a238b2a13b168a13b128a31b42a\n21a17b439a238b1a14b167a14b127a32b42a\n21a17b439a238b1a14b167a14b127a32b42a\n21a17b4a6b203a6b212a6b2a238b1a14b167a14b127a32b42a\n21a17b3a8b201a8b210a8b1a238b2a13b168a13b128a31b42a\n21a17b3a8b201a8b210a8b1a238b2a13b168a13b128a31b42a\n21a17b2a10b199a10b208a607b38a\n21a17b2a11b198a11b207a607b38a\n21a17b1a13b196a13b205a608b38a\n21a31b195a14b204a609b38a\n21a31b195a14b204a609b38a\n21a31b195a14b204a609b38a\n21a17b1a13b196a13b205a608b38a\n21a17b1a13b196a13b205a608b38a\n21a17b1a13b196a13b205a608b38a\n21a17b2a11b198a11b207a607b38a\n21a17b4a8b201a8b210a605b38a\n21a17b5a6b203a6b212a6b1a597b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a1053b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a482b200a371b38a\n21a17b665a371b38a\n21a17b665a371b38a\n703a371b38a\n703a371b38a\n703a371b38a\n703a371b38a\n703a371b38a\n703a371b38a\n703a371b38a\n703a371b38a";
+let fichowSolid=null;
+function ensureFichowGrid(){
+  if(fichowSolid) return;
+  const g=new Uint8Array(FICHOW_W*FICHOW_H);
+  const rows=FICHOW_COL_RLE.split('\n');
+  for(let y=0;y<rows.length && y<FICHOW_H;y++){
+    const s=rows[y]; let x=0, i=0;
+    while(i<s.length){
+      let n=0;
+      while(i<s.length){ const cc=s.charCodeAt(i); if(cc>=48&&cc<=57){ n=n*10+(cc-48); i++; } else break; }
+      const solid=(s[i]==='b'); i++;
+      if(solid){ const base=y*FICHOW_W; for(let k=0;k<n && x+k<FICHOW_W;k++) g[base+x+k]=1; }
+      x+=n;
+    }
+  }
+  fichowSolid=g;
+}
+function fichowSolidAt(x,y){
+  if(!fichowSolid) return false;
+  const xi=x|0, yi=y|0;
+  if(xi<0||yi<0||xi>=FICHOW_W||yi>=FICHOW_H) return true;
+  return fichowSolid[yi*FICHOW_W+xi]===1;
+}
+// push a circle out of the collision bitmap (relax toward the nearest solid pixel a few times)
+function fichowResolve(ent){
+  ensureFichowGrid();
+  const r=ent.radius;
+  ent.x=clamp(ent.x, r, FICHOW_W-r); ent.y=clamp(ent.y, r, FICHOW_H-r);
+  if(!fichowSolid) return;
+  for(let iter=0; iter<3; iter++){
+    const x0=Math.max(0,(ent.x-r)|0), x1=Math.min(FICHOW_W-1,Math.ceil(ent.x+r));
+    const y0=Math.max(0,(ent.y-r)|0), y1=Math.min(FICHOW_H-1,Math.ceil(ent.y+r));
+    let bx=0,by=0,bd2=r*r,hit=false;
+    for(let yy=y0; yy<=y1; yy+=2){ const rb=yy*FICHOW_W;
+      for(let xx=x0; xx<=x1; xx+=2){ if(fichowSolid[rb+xx]){ const dx=ent.x-xx, dy=ent.y-yy, d2=dx*dx+dy*dy; if(d2<bd2){ bd2=d2; bx=xx; by=yy; hit=true; } } }
+    }
+    if(!hit) break;
+    let d=Math.sqrt(bd2);
+    if(d<0.5){ ent.y=by-r; }                      // dead-centre on a solid pixel: nudge straight up
+    else { const nx=(ent.x-bx)/d, ny=(ent.y-by)/d; ent.x=bx+nx*r; ent.y=by+ny*r; }
+    ent.x=clamp(ent.x, r, FICHOW_W-r); ent.y=clamp(ent.y, r, FICHOW_H-r);
+  }
+}
+
 let prevState = STATE.PLAY;
 let mode = 2; // 1 or 2 players
 let menuSel = 0;          // menu selection
@@ -871,6 +930,7 @@ function circleRectCollide(cx, cy, r, rect) {
 // push a circle out of all obstacles + arena bounds
 function resolveCollision(ent) {
   const r = ent.radius;
+  if(currentMap==='fichow'){ if(ent.phase>0){ ent.x=clamp(ent.x,r,FICHOW_W-r); ent.y=clamp(ent.y,r,FICHOW_H-r); return; } fichowResolve(ent); return; }
   if(currentMap==='templo'){ ent.x=clamp(ent.x, 58+r, WORLD_W-58-r); ent.y=clamp(ent.y, 58+r, WORLD_H-58-r); }
   else if(currentMap==='machu'){ ent.x=clamp(ent.x, 38+r, WORLD_W-38-r); ent.y=clamp(ent.y, MACHU_SKY+8+r, WORLD_H-30-r-machuElev(ent.x)); }
   else { ent.x = clamp(ent.x, r+8, WORLD_W-r-8); if(currentMap==='stonebridge'){ ent.y = clamp(ent.y, 116+r, 572-r); } else { ent.y = clamp(ent.y, r+8, WORLD_H-r-8); } }
@@ -1000,6 +1060,16 @@ function spawnEnemy(){
     const bz=BUSES[randi(0,BUSES.length-1)];
     x=clamp(bz.x+rand(-24,24), 42, WORLD_W-42);
     y=clamp(bz.y+rand(2,16), MACHU_SKY+16, WORLD_H-30-machuElev(x));
+  } else if(currentMap==='fichow'){
+    // pick a random horde spawn zone, then a random walkable point inside it
+    ensureFichowGrid();
+    x=0; y=0; let placed=false;
+    for(let a=0;a<30 && !placed;a++){
+      const z=FICHOW_ZONES[randi(0,FICHOW_ZONES.length-1)];
+      const zx=z.x+rand(0,z.w), zy=z.y+rand(0,z.h);
+      if(!fichowSolidAt(zx,zy)){ x=zx; y=zy; placed=true; }
+    }
+    if(!placed){ const z=FICHOW_ZONES[randi(0,FICHOW_ZONES.length-1)]; x=z.x+z.w/2; y=z.y+z.h/2; }
   } else {
     const edge = randi(0,3);
     if(edge===0){ x=rand(20,WORLD_W-20); y=20; }
@@ -1072,6 +1142,7 @@ function spawnApuPos(){
     else y=(currentMap==='stonebridge')?rand(150,540):((WORLD_H>H)?rand(camY+120,camY+H-120):rand(110,H-110));
     let ok=true;
     for(const o of obstacles){ if(circleRectCollide(x,y,24,o)){ok=false;break;} }
+    if(ok && currentMap==='fichow' && (fichowSolidAt(x,y)||fichowSolidAt(x-16,y)||fichowSolidAt(x+16,y)||fichowSolidAt(x,y-16)||fichowSolidAt(x,y+16))) ok=false;
     if(ok && cliffs.length) for(const c of cliffs){ if(x>c.x-24&&x<c.x+c.w+24&&y>c.y-24&&y<c.y+c.h+24){ok=false;break;} }
     if(ok) for(const a of apuchis){ if(dist(x,y,a.x,a.y)<60){ok=false;break;} }
     if(ok) return {x,y};
@@ -1927,13 +1998,23 @@ function nearestPlayer(e){
 }
 
 function buildFlow(){
-  flowCell=36; flowCols=Math.ceil(WORLD_W/flowCell); flowRows=Math.ceil(WORLD_H/flowCell);
+  const isFi=(currentMap==='fichow');
+  flowCell=isFi?20:36; flowCols=Math.ceil(WORLD_W/flowCell); flowRows=Math.ceil(WORLD_H/flowCell);
   const N=flowCols*flowRows; const blocked=new Uint8Array(N);
+  if(isFi){ ensureFichowGrid();
+    const q4=flowCell/4;
+    for(let r=0;r<flowRows;r++) for(let c=0;c<flowCols;c++){
+      const x=c*flowCell+flowCell/2, y=r*flowCell+flowCell/2;
+      const bl = fichowSolidAt(x,y)||fichowSolidAt(x-q4,y-q4)||fichowSolidAt(x+q4,y-q4)||fichowSolidAt(x-q4,y+q4)||fichowSolidAt(x+q4,y+q4);
+      blocked[r*flowCols+c]=bl?1:0;
+    }
+  } else {
   for(let r=0;r<flowRows;r++) for(let c=0;c<flowCols;c++){
     const x=c*flowCell+flowCell/2, y=r*flowCell+flowCell/2; let bl=false;
     for(const o of obstacles){ if(x>o.x-8&&x<o.x+o.w+8&&y>o.y-8&&y<o.y+o.h+8){bl=true;break;} }
     if(!bl && cliffs.length){ for(const cf of cliffs){ const ex=(x-(cf.x+cf.w/2))/(cf.w*0.5), ey=(y-(cf.y+cf.h/2))/(cf.h*0.5); if(ex*ex+ey*ey<1){bl=true;break;} } }
     blocked[r*flowCols+c]=bl?1:0;
+  }
   }
   const dist=new Int32Array(N); dist.fill(-1); const q=[];
   for(const p of players){ if(!p.alive) continue; const c=Math.max(0,Math.min(flowCols-1,Math.floor(p.x/flowCell))), r=Math.max(0,Math.min(flowRows-1,Math.floor(p.y/flowCell))); const idx=r*flowCols+c; if(dist[idx]<0){ dist[idx]=0; q.push(idx); } }
@@ -2021,6 +2102,11 @@ function updateEnemies(dt){
         if(turTgt){
           const td=dist(e.x,e.y,turTgt.x,turTgt.y)||1;
           dx=(turTgt.x-e.x)/td; dy=(turTgt.y-e.y)/td;
+        } else if(currentMap==='fichow'){
+          const fd=flowDir(e);
+          let los=true; const stp=Math.min(40,Math.max(3,Math.floor(d/12)));
+          for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; if(fichowSolidAt(tx,ty)){ los=false; break; } }
+          if(fd && (!los || (e._stuckT||0)>0.3)){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
         } else if(currentMap==='templo'||currentMap==='machu'){
           const fd=flowDir(e);
           let los=true; const stp=Math.min(40,Math.max(3,Math.floor(d/12)));
@@ -2191,7 +2277,8 @@ function startBreak(){
 
 function updatePlay(dt){
   updatePlayers(dt);
-  if(currentMap==='templo'||currentMap==='machu'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; }
+  if(currentMap==='fichow'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; } bossFlowGrid=null; }
+  else if(currentMap==='templo'||currentMap==='machu'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; }
     bossFlowTimer-=dt; if(bossFlowTimer<=0){ const _jb=enemies.find(en=>en.boss&&en.kind==='jarjacha'); if(_jb) buildBossFlow(_jb.radius); else bossFlowGrid=null; bossFlowTimer=0.2; } } else { flowGrid=null; bossFlowGrid=null; }
   updateEnemies(dt);
   updateEffects(dt);
@@ -2359,7 +2446,7 @@ function drawPicket(g,x,y,ang,len){
   g.restore();
 }
 function buildTreeBorder(g){
-  if(currentMap==='templo'||currentMap==='machu'){ return; }
+  if(currentMap==='templo'||currentMap==='machu'||currentMap==='fichow'){ return; }
   if(currentMap==='stonebridge'){ buildStonebridgeBorder(g); return; }
   // jungle foliage backdrop
   const T=[], add=(x,y,s)=>T.push([x,y,s]);
@@ -2699,7 +2786,13 @@ function buildMachuBG(g){
   drawIncaWall(g,MACHU_STX1,MACHU_LOWSKY-4,WORLD_W-MACHU_STX1,16);
 }
 
+function buildFichowBG(g){
+  g.fillStyle='#1c1e30'; g.fillRect(0,0,WORLD_W,WORLD_H);   // void colour behind the rooms
+  const img=PROP.fichowbg;
+  if(img && img.naturalWidth){ g.drawImage(img, 0,0,img.naturalWidth,img.naturalHeight, 0,0,WORLD_W,WORLD_H); }
+}
 function buildArenaBG(g){
+  if(currentMap==='fichow'){ buildFichowBG(g); return; }
   if(currentMap==='machu'){ buildMachuBG(g); return; }
   if(currentMap==='templo'){ buildTemploBG(g); return; }
   if(currentMap==='stonebridge'){ buildStonebridgeBG(g); return; }
@@ -2981,21 +3074,21 @@ function fireSupayballs(e,tgt){
 }
 function spawnGiantBoss(){
   enemies.push({ id:_entId++, boss:true, giant:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
-    x:WORLD_W/2, y:(currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):96)), radius:48,
+    x:(currentMap==='fichow'?885:WORLD_W/2), y:(currentMap==='fichow'?260:currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):96)), radius:48,
     hp:6900, maxhp:6900, dmg:(currentMap==='templo'?40:0), speed:(currentMap==='templo'?110:currentMap==='machu'?36:30),
     dir:'s', moving:false, animTime:Math.random()*2,
     punching:0, whipDone:false, punchDir:'s', whipCd:2.6,
     hitFlash:0, stuck:0, punchRight:true, stagger:0, vx:0, vy:0, wob:0, pts:1000 });
-  floatText(WORLD_W/2,140,(currentMap==='stonebridge'?'\u00a1BRUJA BLANCA COLOSAL!':currentMap==='templo'?'\u00a1JARJACHA COLOSAL!':'\u00a1TEDDINGTON COLOSAL!'),'#bfefff');
+  floatText((currentMap==='fichow'?885:WORLD_W/2),(currentMap==='fichow'?200:140),(currentMap==='stonebridge'?'\u00a1BRUJA BLANCA COLOSAL!':currentMap==='templo'?'\u00a1JARJACHA COLOSAL!':'\u00a1TEDDINGTON COLOSAL!'),'#bfefff');
 }
 function spawnBoss(r){
   enemies.push({ id:_entId++, boss:true, type:'boss', kind:(currentMap==='stonebridge'?'bruja':currentMap==='templo'?'jarjacha':'teddington'),
-    x:(WORLD_W>W?WORLD_W/2:W/2), y:(currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):80)), radius:40,
+    x:(currentMap==='fichow'?885:(WORLD_W>W?WORLD_W/2:W/2)), y:(currentMap==='fichow'?260:currentMap==='stonebridge'?150:(WORLD_H>H?Math.round(WORLD_H*0.30):80)), radius:40,
     hp:Math.round((500+r*100)*1.15), maxhp:Math.round((500+r*100)*1.15), dmg:20+r*1.5, speed:(currentMap==='templo'?120:currentMap==='machu'?Math.round(Math.min(60,34+r)*1.2):Math.min(60,34+r)),
     dir:'s', moving:false, animTime:Math.random()*2,
     punching:0, whipDone:false, punchDir:'s', whipCd:2.4,
     hitFlash:0, stuck:0, punchRight:true, stagger:0, vx:0, vy:0, wob:0, pts:200+r*25 });
-  floatText((WORLD_W>W?WORLD_W/2:W/2), 120, (currentMap==='stonebridge'?'\u00a1BRUJA BLANCA!':currentMap==='templo'?'\u00a1JARJACHA!':'\u00a1TEDDINGTON!'), (currentMap==='templo'?'#b06fb8':currentMap==='stonebridge'?'#bfefff':'#ffd24a'));
+  floatText((currentMap==='fichow'?885:(WORLD_W>W?WORLD_W/2:W/2)), (currentMap==='fichow'?200:120), (currentMap==='stonebridge'?'\u00a1BRUJA BLANCA!':currentMap==='templo'?'\u00a1JARJACHA!':'\u00a1TEDDINGTON!'), (currentMap==='templo'?'#b06fb8':currentMap==='stonebridge'?'#bfefff':'#ffd24a'));
 }
 function bossIceRay(b){
   const reach=b.giant?300:175;
@@ -3679,7 +3772,11 @@ function renderArenaThumb(layout, mapName){
   const prevO=obstacles, prevM=currentMap, prevW=WORLD_W, prevH=WORLD_H;
   obstacles=layout; currentMap=mapName; arenaBG=null; arenaTrees=null;
   const oc=document.createElement('canvas'); oc.width=W; oc.height=H; const octx=oc.getContext('2d');
-  if(mapName==='machu'){
+  if(mapName==='fichow'){
+    octx.fillStyle='#1c1e30'; octx.fillRect(0,0,W,H);
+    const img=PROP.fichowbg;
+    if(img && img.naturalWidth){ const sc=Math.min(W/img.naturalWidth, H/img.naturalHeight), dw=img.naturalWidth*sc, dh=img.naturalHeight*sc; octx.drawImage(img,(W-dw)/2,(H-dh)/2,dw,dh); }
+  } else if(mapName==='machu'){
     WORLD_W=Math.round(2.6*W); WORLD_H=Math.round(2.236*H);
     const big=document.createElement('canvas'); big.width=WORLD_W; big.height=WORLD_H; const g=big.getContext('2d');
     const img=PROP.machubg;
@@ -3697,14 +3794,15 @@ function renderArenaThumb(layout, mapName){
   return oc;
 }
 function ensureMapThumb(){
-  if(mapThumb && mapThumb2 && mapThumb3 && mapThumb4) return;
+  if(mapThumb && mapThumb2 && mapThumb3 && mapThumb4 && mapThumb5) return;
   mapThumb=renderArenaThumb(OBST_AMAZONAS,'amazonas');
   mapThumb2=renderArenaThumb(OBST_STONEBRIDGE,'stonebridge');
   mapThumb3=renderArenaThumb(OBST_TEMPLO,'templo');
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
+  mapThumb5=renderArenaThumb([],'fichow');
 }
 
-const BUILD='v2026-07-15.7';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.8';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3729,8 +3827,8 @@ function drawMainMenu(){
 function drawMapas(){
   drawBannerBG();
   ensureMapThumb();
-  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'}];
-  const n=4, cw=232, gap=24, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=160, chh=320;
+  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'},{name:'Fi-Chow',short:'Fi-Chow'}];
+  const n=maps.length, cw=196, gap=18, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=160, chh=320;
   for(let i=0;i<n;i++){
     const m=maps[i], locked=!isMapUnlocked(i);
     let ox=(i===mapSel && mapLockShake>0 && locked)?Math.sin(time*45)*5:0;
@@ -3738,7 +3836,7 @@ function drawMapas(){
     ctx.save(); ctx.translate(cx,cy);
     ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
     ctx.save(); rrect(12,12,cw-24,184,6); ctx.clip();
-    const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:((i===3)?mapThumb4:null)));
+    const thumb = [mapThumb,mapThumb2,mapThumb3,mapThumb4,mapThumb5][i]||null;
     if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,184); }
     else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,184); }
     if(locked){ ctx.fillStyle='rgba(0,0,0,0.64)'; ctx.fillRect(12,12,cw-24,184); }
@@ -3874,7 +3972,7 @@ function drawArrowIcon(cx,cy,s){
 // ---------- Menus ----------
 function drawMenu(){
   ensureMapThumb();
-  const _th=(currentMap==='stonebridge')?mapThumb2:(currentMap==='templo')?mapThumb3:(currentMap==='machu')?mapThumb4:mapThumb;
+  const _th=(currentMap==='stonebridge')?mapThumb2:(currentMap==='templo')?mapThumb3:(currentMap==='machu')?mapThumb4:(currentMap==='fichow')?mapThumb5:mapThumb;
   if(_th){ ctx.drawImage(_th,0,0,W,H); } else { drawArena(); }
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
@@ -4052,9 +4150,9 @@ function handleMenuKey(code){
     if(code==='Escape') enterLobby();   // back to the SALA — picks reset on the next Enter
   } else if(state===STATE.MAPAS){
     if(code==='Escape'){ state=STATE.MODOS; modeSel=0; return; }
-    if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+3)%4;
-    if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%4;
-    if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=(mapSel===1)?'stonebridge':(mapSel===2)?'templo':(mapSel===3)?'machu':'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
+    if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+MAP_ORDER.length-1)%MAP_ORDER.length;
+    if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%MAP_ORDER.length;
+    if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=MAP_ORDER[mapSel]||'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
   } else if(state===STATE.HELP){
     if(code==='Escape'||code==='Enter'||code==='Space'){ state=STATE.MAINMENU; mainSel=0; }
   } else if(state===STATE.MENU){
@@ -4251,9 +4349,10 @@ function startGame(){
   resumeCumbia();
   // copy the map's obstacle list — Inca wall blocks get pushed/spliced into `obstacles` at runtime,
   // so the pristine per-map arrays must never be mutated
-  obstacles = ((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
-  WORLD_W = (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
-  WORLD_H = (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H; camX=0; camY=0;
+  obstacles = ((currentMap==='fichow')?[]:(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
+  if(currentMap==='fichow') ensureFichowGrid();
+  WORLD_W = (currentMap==='fichow')?FICHOW_W : (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
+  WORLD_H = (currentMap==='fichow')?FICHOW_H : (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H; camX=0; camY=0;
   cliffs = (currentMap==='templo')?CLIFFS_TEMPLO:[];
   round=0; score=0; particles.length=0; enemies.length=0;
   apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
@@ -4277,6 +4376,7 @@ function startGame(){
     players.push(makePlayer(selChar1||'freddy', WORLD_W/2-40, sy, P1));
     players.push(makePlayer(selChar2||'michi', WORLD_W/2+40, sy, P2));
   }
+  if(currentMap==='fichow'){ for(let i=0;i<players.length;i++){ const sp=FICHOW_SPAWNS[i%FICHOW_SPAWNS.length]; players[i].x=sp.x; players[i].y=sp.y; } camX=clamp(FICHOW_SPAWNS[0].x-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(FICHOW_SPAWNS[0].y-H/2,0,Math.max(0,WORLD_H-H)); }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
   else startIntro();
 }
@@ -5249,10 +5349,11 @@ function _frameBody(now){
   if(state===STATE.LOBBY){ drawLobby(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.PVP){ safe('drawPvp',drawPvp); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.DYING){ ctx.save(); ctx.translate(-camX,-camY); drawDeathScene(); ctx.restore(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); ctx.restore(); requestAnimationFrame(frame); return; }
-  if(state===STATE.OVER){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); if(dying) drawDeathScene(); else drawArena(); ctx.restore(); drawOver(); ctx.restore(); requestAnimationFrame(frame); return; }
-  if(state===STATE.VICTORY){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); drawArena(); ctx.restore(); drawVictory(); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.OVER){ if(currentMap==='machu') drawMachuSky(); else if(currentMap==='fichow'){ ctx.fillStyle='#1c1e30'; ctx.fillRect(0,0,W,H); } ctx.save(); ctx.translate(-camX,-camY); if(dying) drawDeathScene(); else drawArena(); ctx.restore(); drawOver(); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.VICTORY){ if(currentMap==='machu') drawMachuSky(); else if(currentMap==='fichow'){ ctx.fillStyle='#1c1e30'; ctx.fillRect(0,0,W,H); } ctx.save(); ctx.translate(-camX,-camY); drawArena(); ctx.restore(); drawVictory(); ctx.restore(); requestAnimationFrame(frame); return; }
 
   if(currentMap==='machu') drawMachuSky();
+  else if(currentMap==='fichow'){ ctx.fillStyle='#1c1e30'; ctx.fillRect(0,0,W,H); }
   ctx.save(); ctx.translate(-camX,-camY);
   safe('arena',drawArena);
   if(currentMap==='machu'){ safe('buses',drawBuses); }
@@ -5501,8 +5602,9 @@ function netApplyMeta(s){
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
   if(currentMap!==s.currentMap){
     currentMap=s.currentMap;
-    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice();
+    obstacles=((currentMap==='fichow')?[]:(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice();
     cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
+    if(currentMap==='fichow') ensureFichowGrid();
     gWallSig=null;   // force the wall/obstacle rebuild on the fresh map
   }
   WORLD_W=s.worldW; WORLD_H=s.worldH;
