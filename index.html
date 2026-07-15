@@ -107,6 +107,9 @@ for(const nm of ['alfredo','mati','sebas','vannucci']){
   AUDIO_SRC[nm+'_hit2']="assets/snd_"+nm+"_hit2.mp3";
 }
 AUDIO_SRC.sebas_hit2=AUDIO_SRC.sebas_hit1;   // Sebas shipped with a single HIT take
+// Flash: INTRO + DEATH only for now — no HIT takes yet, so he punches/bombs silently
+AUDIO_SRC.flash_sel="assets/snd_flash_sel.mp3";
+AUDIO_SRC.flash_die="assets/snd_flash_die.mp3";
 const MENU_IMG={ main:new Image(), banner:new Image() };
 MENU_IMG.main.src="assets/img_001.jpg"; MENU_IMG.banner.src="assets/img_002.jpg";
 // Audio elements play through their own native output — they are deliberately NOT routed
@@ -502,7 +505,7 @@ function shooshyLoaded(){ return SHOOSHY.ew1 && SHOOSHY.ew1.naturalWidth>0; }
 // 3-frame walks in every direction, 2-frame east/south punches, 1-frame north punch.
 const NCHAR_CELL={w:320,h:290};
 const NCHAR={};
-for(const nm of ['alfredo','mati','sebas','vannucci']){
+for(const nm of ['alfredo','mati','sebas','vannucci','flash']){
   const m={};
   for(const k of ['ew1','ew2','ew3','ep1','ep2','nw1','nw2','nw3','np','sw1','sw2','sw3','sp1','sp2']){
     const im=new Image(); im.src='assets/char_'+nm+'_'+k+'.png'; m[k]=im;
@@ -532,21 +535,26 @@ const CHARS={
     selCrop:{sx:95,sy:0,sw:120,sh:95},   // chest-up card art: head + chest + wing shoulders
     loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
-// The four "equilibrado" characters — stats midway between Fuerte/Lento and Ágil/Rápido.
-// Playable in BOTH modes (unlike Teddington/Cóndor). Chest-up selCrop for the selector cards.
+// The five newcomers — playable in BOTH modes (unlike Teddington/Cóndor), each with an archetype:
+// equil = midway stats · agil = Michi-class · fuerte = Freddy-class. Chest-up selCrop card art.
 {
-  const NBASE={maxhp:170,dmg:26,knock:185,speed:145,cd:0.35,radius:15};
-  const NCOL={alfredo:'#e07b3a', mati:'#3aa8c0', sebas:'#7aa03a', vannucci:'#c04a8a'};
-  for(const nm of ['alfredo','mati','sebas','vannucci']){
+  const ARCH={
+    equil:  { tag:'Equilibrado', heavy:false, base:{maxhp:170,dmg:26,knock:185,speed:145,cd:0.35,radius:15} },
+    agil:   { tag:null,          heavy:false, base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
+    fuerte: { tag:null,          heavy:true,  base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
+  };
+  const NDEF={ alfredo:['#e07b3a','equil'], mati:['#3aa8c0','agil'], sebas:['#7aa03a','equil'], vannucci:['#c04a8a','agil'], flash:['#e6cf2a','fuerte'] };
+  for(const nm in NDEF){
+    const A=ARCH[NDEF[nm][1]];
     CHARS[nm]={ S:NCHAR[nm], cell:NCHAR_CELL, pd:0.22, dh:58, npKey:'np', sIdle:'sw2', eIdle:'ew2',
-      name:nm.toUpperCase(), color:NCOL[nm], heavy:false, tag:'Equilibrado',
+      name:nm.toUpperCase(), color:NDEF[nm][0], heavy:A.heavy, tag:A.tag,
       selCrop:{sx:64,sy:0,sw:192,sh:136},
-      loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...NBASE} };
+      loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...A.base} };
   }
 }
-const CHAR_LIST=['freddy','michi','sumac','shooshy','alfredo','mati','sebas','vannucci'];
-// PVP roster ordered so the two-row pick screen groups the original six on top, the new four below
-const PVP_CHAR_LIST=['freddy','michi','sumac','shooshy','teddington','condor','alfredo','mati','sebas','vannucci'];
+const CHAR_LIST=['freddy','michi','sumac','shooshy','alfredo','mati','sebas','vannucci','flash'];
+// PVP roster ordered so the two-row pick screen groups the original six on top, the newcomers below
+const PVP_CHAR_LIST=['freddy','michi','sumac','shooshy','teddington','condor','alfredo','mati','sebas','vannucci','flash'];
 let selMode=1, selCursor1=0, selCursor2=1, selChar1=null, selChar2=null, modTest=false, selPending=false, selStartTimer=0;
 function charFrame(p){
   const C=CHARS[p.kind], S=C.S, d=p.dir;
@@ -3696,7 +3704,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.5';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.7';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4130,8 +4138,8 @@ function drawIntroUI(){
 }
 function enterSelect(){ state=STATE.SELECT; selPending=false; pvpPending=false; selStartTimer=0; selCursor1=0; selCursor2=1; selChar1=null; selChar2=null; }
 function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0; }
-// cards per row on the pick screens: single row up to 6, then originals-on-top rows
-function charsPerRow(n){ return (n<=6)? n : ((n<=8)?4:6); }
+// cards per row on the pick screens: single row up to 6, then two balanced originals-on-top rows
+function charsPerRow(n){ return (n<=6)? n : Math.ceil(n/2); }
 function handleSelectKey(code){
   if(selPending) return;
   if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
