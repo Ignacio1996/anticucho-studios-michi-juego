@@ -535,16 +535,21 @@ const CHARS={
     selCrop:{sx:95,sy:0,sw:120,sh:95},   // chest-up card art: head + chest + wing shoulders
     loaded:()=>!!(CONDOR.c1&&CONDOR.c1.naturalWidth), base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
 };
-// The four "equilibrado" characters — stats midway between Fuerte/Lento and Ágil/Rápido.
-// Playable in BOTH modes (unlike Teddington/Cóndor). Chest-up selCrop for the selector cards.
+// The five newcomers — playable in BOTH modes (unlike Teddington/Cóndor), each with an archetype:
+// equil = midway stats · agil = Michi-class · fuerte = Freddy-class. Chest-up selCrop card art.
 {
-  const NBASE={maxhp:170,dmg:26,knock:185,speed:145,cd:0.35,radius:15};
-  const NCOL={alfredo:'#e07b3a', mati:'#3aa8c0', sebas:'#7aa03a', vannucci:'#c04a8a', flash:'#e6cf2a'};
-  for(const nm of ['alfredo','mati','sebas','vannucci','flash']){
+  const ARCH={
+    equil:  { tag:'Equilibrado', heavy:false, base:{maxhp:170,dmg:26,knock:185,speed:145,cd:0.35,radius:15} },
+    agil:   { tag:null,          heavy:false, base:{maxhp:140,dmg:18,knock:130,speed:156,cd:0.26,radius:15} },
+    fuerte: { tag:null,          heavy:true,  base:{maxhp:200,dmg:34,knock:240,speed:135,cd:0.45,radius:16} },
+  };
+  const NDEF={ alfredo:['#e07b3a','equil'], mati:['#3aa8c0','agil'], sebas:['#7aa03a','equil'], vannucci:['#c04a8a','agil'], flash:['#e6cf2a','fuerte'] };
+  for(const nm in NDEF){
+    const A=ARCH[NDEF[nm][1]];
     CHARS[nm]={ S:NCHAR[nm], cell:NCHAR_CELL, pd:0.22, dh:58, npKey:'np', sIdle:'sw2', eIdle:'ew2',
-      name:nm.toUpperCase(), color:NCOL[nm], heavy:false, tag:'Equilibrado',
+      name:nm.toUpperCase(), color:NDEF[nm][0], heavy:A.heavy, tag:A.tag,
       selCrop:{sx:64,sy:0,sw:192,sh:136},
-      loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...NBASE} };
+      loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...A.base} };
   }
 }
 const CHAR_LIST=['freddy','michi','sumac','shooshy','alfredo','mati','sebas','vannucci','flash'];
@@ -3699,7 +3704,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.6';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-15.7';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
