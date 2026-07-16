@@ -4149,8 +4149,17 @@ function beginStart(){ if(selPending) return; selPending=true; selStartTimer=2.0
 // cards per row on the pick screens: single row up to 6, then two balanced originals-on-top rows
 function charsPerRow(n){ return (n<=6)? n : Math.ceil(n/2); }
 function handleSelectKey(code){
+  if(code==='Escape'){
+    // Esc means "let me pick again", not "leave the screen", whenever a choice is in play: abort a
+    // start countdown (a single-player pick triggers it right away) and un-choose the picked
+    // character(s) — most-recent first in two-player. Only Esc from a clean slate exits.
+    if(selPending){ selPending=false; selStartTimer=0; if(selMode===1) selChar1=null; return; }
+    if(selChar2){ selChar2=null; return; }
+    if(selChar1){ selChar1=null; return; }
+    if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; }   // playMenuMusic also pauses the PVP track — no mixing
+    return;
+  }
   if(selPending) return;
-  if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
   const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length, pr=charsPerRow(n);   // Teddington/Cóndor are PVP-only
   if(selMode===1){
     if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+n-1)%n;
