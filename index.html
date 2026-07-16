@@ -766,8 +766,7 @@ const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebr
 const MAP_ORDER=['amazonas','stonebridge','templo','machu'];
 let mapsDone={}; try{ mapsDone=JSON.parse(localStorage.getItem('fm_progress')||'{}')||{}; }catch(e){ mapsDone={}; }
 const UNLOCK_ALL=false; // dev toggle: set true to unlock every map while testing
-function isMapUnlocked(i){ if(i===4) return true;   // Las Palmas (survival) is always open for testing
-  return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
+function isMapUnlocked(i){ return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
 function saveMapBeaten(name){ if(name){ mapsDone[name]=1; try{ localStorage.setItem('fm_progress', JSON.stringify(mapsDone)); }catch(e){} } }
 let prevState = STATE.PLAY;
 let mode = 2; // 1 or 2 players
@@ -898,10 +897,18 @@ function drawLpProp(pr){
     ctx.drawImage(img, -pr.w/2, -pr.h/2, pr.w, pr.h); ctx.restore(); }
   else ctx.drawImage(img, dx, dy, pr.w, pr.h);
 }
+// Flat ground decals (the tennis court, prop file index 18) render like terrain — UNDER all
+// entities — so a player standing at its edge never disappears behind it. It's also solid
+// (baked into the collision grid below), so nothing actually walks onto it.
+const LP_GROUND_FI=[18];
+function drawLpGround(){ for(const pr of LP_PROPS){ if(LP_GROUND_FI.indexOf(pr.fi)>=0){ try{ drawLpProp(pr); }catch(e){} } } }
 const LP_COL_CELL=16, LP_COL_COLS=205, LP_COL_ROWS=368;
 const LP_COL_B64="AAAAAAAAAAAAAAAAAAAAwP//////AQAAAAAAAAAAAAAAAAAAAAAAAAD4/////z8AAAAAAAAAAAAAAAAAAAAAAAAAAP//////BwAAAAAAAAAAAAAAAAAAAAAAAADg//////8AAAAAAAAAAAAAAAAAAAAAAAAAAPz/////HwAAAAAAAAAAAAAAAAAAAAAAAAaA//////8DAAAAAAAAAAAAAAAAAAAAAADAAPD/////fwAAAAAAAAAAAAAAAAAAAAAAAAAA/v////8PAAAAAAAAAADg/wEAAAAAAAAAAMb//////wEAAAAAAAAAAPx/wP8HAAAAAAAA+P////8/AAAAAAAAAACA/w/8/4EBAAAAAAD//////wcAAAAAAAAAAPD/gf8/AAAAAAAA4P//////AAAAAAAAAAAA/B/w/wMAAAAAAAD8/////x8AAAAAAAAAAAAAAAAAAAAAAAAAgP//////AwAAAAAAAAAAAAAAAAAAAAAAAADw/////38AAAAAAAAAAAAAAAAOAAAAAAAAAP7/////DwAAAAAAAAAAAAB8wAMAAAAAAADA//////8BAAAAAAAAAAAA4H94AAAAAAAAAPj/////PwAAAAAAAAAAAAD+HwYAAAAAAAAA//////8HAAAAAAAAAAAAwP8DAAAAAAAAAOD//////wAAAAAAAAAAAAD8fwAAAAAAAAAA/P////8fAAAAAAAAAAAAgP8PAAAAAAAAAID//////wMAAAAAAAAAAADw/wEAAAAAAAAA8P////9/AAAAAAAAAAAAAPwfAAAAAAAAAAD+/////w8AAAAAAAAAAACA/wEAAAAAAAAAwP//////AQAAAAAAAAAAAMAfAAAAAAAAAAD4/////z8AAAAAAAAAAAAAAAAAAAAAAAAAAP//////BwAAAAAAAAAAAAAAAAAAAAAAAADg//////8AAAAAAAAAADAAAAAAAAAGAAAAAPz/////HwAAAAAAAAAABgAAAAAAAAAAAACA//////8DAAAAAAAAAAAAAAAAAAAAAAAAAPD/////fwAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAMA4P8BAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAD8PwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8HAAAAAAAAAAAAAAAAAAAAAAAAAIAHAADw/wAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAP4fAAAAAAAAAAAAAAAAAAAAAAAAAAAOAADA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAA8AAA/D8AAAAAAAAAAAAAAAAAAAAAAAAAAAAeAID/BwAAAAAAAAAAAAAAAAAAAAAAAAAAwAMA8P8AAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAD+HwAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAwP8DAAAAAMADAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg/wEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPw/AAAAAAAAABwAAAAAAAAAAAAAAAAAAACA/wcAAAAAAADAAwAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAA/h8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+H8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4P8BAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAD8PwAAAAAAAPABAAAAwP//AQAAAAAAAAAAgP8HAAAAAAAAPwAAAAD8//8DAAAAAAAAAADw/wAAAAAAAOAHAAAAgP///wAAAAAAAAAAAP4fAAAAAAAA/AAAAAD4//8/AAAAAAAAAADA//sfAAAAAAAfAAAAAP///w8AAAAAAAAAAAB8/wMAAAAAwAEAAADw////AwAAAAAAAAAAAOB/AAAAAAAAAAAAAP///38AAAAAAAAAAAAA/A8AAAAAAAAAAADw////DwAAAPj//wcAAID/AQAAAAAAAAAAAP7///8BAACA////AAAA8D8AAAAAAAAAAADA////fwAAAOD//x8AAAD+BwAAAAAAAAAAAPj///8PAAAAAAAAAAAAwP8AAOAHAAA/AAAA/////wEAAAAAAAAAAAD4HwAA/AAA4AcAAOD///8fAAAAAAAAAAAAAP8DAIAfAAD8AAAA/P///wMAAAAAAAAAAADgfwAAAOD/DwAAAAD///8/AAAAAAAAAAAAAPwPAAAA/P8BAAAA4P///wMAAAAAAAAAAACA/wEAwI//P34AAAD4//9/AAAAAAAAAAAAAPA/AAD48f/HDwAAAPz//wcAAAAAAAAAAAAA/gcAAD/+//gBAAAA/v9/AAAAAAAAAAAAAMD/AAAAwP8fAAAAAAD+/wcAAAAAAAAAAAAA+B8AAAD4/wMAAAAAAPwfAAAAAAAAAAAAAAD/AwAAAP9/AAAAAAAAAAAAAAAAAAAAAAAA4H8AAPDh/48fAAAAAAAAAAAAAAAAAAAAAAD8DwAAfvz/8QMAAAAAAAAAAAAAAAAAAAAAgP8BAMCP/z9+AAAAAAAAAAAAAAAAAAAAAADwPwAA+PH/BwAAAAAAAAAAAAAAAAAAAAAAAP4HAAAA/v8AAAAAAAAAAAAAAAAAAAAAAADA/wAAAMD/HwAAAAAAAAAAAAAAAAAAAAAAAPgfAAB8+P/DBwAAAAAAAAAAAAAAAAAAAAAA/wMAgA//f/wAAAAAAAAAAAAAAAAAAAAAAOB/AADw4f+PHwAAAAAAAAAAAAAAAAAAAMD//Q8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/L//AQDADwAAAAAAAAAAAAAAAAAAAAAAAID/9z8AAPgBAAAAAAAAAAAAAAAAAAAAAAAA8P/+BwAAPwAA8AEAAAAAAAAAAAAAAAAAAAD+3/8AAAAAAAA+AAAAAAAAAAAAAAAAAAAAwP/7HwAAAAAAwAcAAAAAAAAAAAAAAAAAAAD4f/8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/vfwAAAAAAAAAAAAAAAAAAAAAAAAAAAADg//0PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPy//wEAAAAAAAAAAAAAAAAAAAAAAAAAAACA//c/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD//gcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/t//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/+x8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA+H//AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/738AAAAAAAAAAAAAAAAAAAAAAAAAAAAA4P/9DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8P/gBAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8HMAAAAAAAAAAAAAAAAAAAAAAwAAAAAADw/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/D8AAAAAAAAAAAAAAAAAAAAAAAAADgAAAID/BwAAAAAAAAAAAAAAAAAAAAAAAMABAAAA8P8AAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAD+HwAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAADgAAD4fwAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAIAHAAAA4AAAAAAAAAAAAADg/wEAAAAAAAAA8AAAAAAcAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA/wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/t//AAAAAAAAAAAAAAAAgAMAAAAAAAAAAMD/+x8AAAAAAAAAAAAAAABwAAAAAAAAAAAA+H//AwAAAAAAAAAAAAAAAA4AAAAAAIADAAD/738AAAAAAAAAAAAAAAAAAAAAAAAAcAAA4P/9DwAAAAAAAAAAAAAAAAAAAAAAAAAOAAD8v/8BAAAAAAAAAAAAAAAAAAAAHAAAwAEAgP/3PwAAcAAAAAAAAAAAAAAAAIADAAA4AADw//4HAAAOAAAAAAAAAAAAAAAAAAAAAAAAAP7f/wAAAAAAAAAAAAAAAAAAAAAAAAAAAADA//sfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh//wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+9/AAAAAAD8/z8AAAAAAAAAAAAAAAAAAOD//Q8AAAAAgP//DwAAAAAAAPj/HwAAAAAA/L//AQDA/3/w//8BAOAAAAAA//+D/wMAAID/9z8AAPj/D/7/PwAAHAAAAOD/f/B/AAAA8P/+BwAA///B//8HAAAAAAAA/P8P/g8AAAD+3/8AAOD/P/j//wAAAAAAAID//8H/AQAAwP/7HwAA/P8H//8fAAAAAAAA8P8/+D8AAAD4f/8DAID//+D//wMAAAAAAAD+/wf/BwAAAP/vfwAA8P8f/P9/AAAAAAAAwP//4P8AAADg/wEIAAD+/4P//w8AAAAAAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA/wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/h8AAAAAAAAAAAAAwP8P/gcAAAAAAAAAAMD/AwAAAAAAAAAAAAD4/8H/AQAAAAAAAAAA+H8AAAAAAAAAAAAAAP8/+D8AAAAAAAAAAAD/DwAAAAAAAAAAAADg/wf/BwAAAAAAAAAA4P8BAAAAAAAAAAAAAPz/4P8AAAAAAAAAAAD8PwAAAAAAAAAAAACA/x/8HwAAAAAAAAAAgP8HAAAAAAAAAAAAAPD/g/8DAAAAAAAAAADw/wAAAAAAAAAAAAAA/n/wfwAAAAAAAAAAAP4fAAAAAAAAAAAAAMD/D/4PAAAAAAAAAADA/wMAAAAAAAAAAAAA+P/B/wEAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAPg/AAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/L//AQAAAAAAAAAAAAAAAAAAAAAAAAAAAID/9z8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA8P/+BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+3/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8DAAAAAAAAAAAAAAAAAAD4//8AAAAAAADgfwAAAAAAAAAAAAAAAAAAAP//HwAAAAAAAPwPAAAAAAAAAAAAAAAAAADg///zfwAAAACA/wEAAP7/4P8/AAAAAAAAAPz/f/4PAAAAAPA/AADA/x/8/wcAAAAAAACA///P/wEAAAAA/gcAAPj/g///AAAAAAAAAPD///k/AAAAAMD/AAAA/3/w/x8AAAAAAAAA/v8//wcAAAAA+B8AAOD/D/7/AwAAAAAAAMD//+f/AAAAAAD/AwAA/P/B/38AAAAAAAAA+P///B8AAAAA4H8AAID/P/j/DwAAAAAAAAD//5//AwAAAAD8DwAA8P8H//8BAAAAAAAAAAAA8H8AAAAAAPABAAD+/wAAAAAAAAAAAAAAAAD+DwAAAAAAAAAAwP8fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPj/DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA///D/wMAAAAAAAAAAAAAAAAAAAAAAAAAAOD/f/h/AAAAAAAAAAAAAAAAAAAAAAAAAAAA/P8P/w8AAAAAAAAAAOD/AQAAAAAAAAAAAID//+H/AQAAAAAAAAAA/D8AAAAAAAAAAAAA8P8//D8AAAAAAAAAAID/BwAAAAAAAAAAAAD+/4f/BwAAAAAAAAAA8P8AAAAAAAAAAAAAwP//4P8AAAAAAAAAAAD+HwAAAAAAAAAAAAD4/x8AAAAAAAAAAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg/wEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAgAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOB/AAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAA/A8AAADgAAAAAAAAAAAAAAAAAAAAAAAAAID/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8D8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8AAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAD4HwAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgfwAAAAAAAABgAAAAAAAAAAAAAAAAAAAAAPwPAAAAAAAAAAwAAAAAAAAAAAAAABwHAACA/wEAAAAAAAAAAAAAAAAAAAAAAACA4wAA//8/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD//wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/P//AAAAAACAAQAAAAAAAAAAAAAAAAAAAID//x8AAAAAADAAAAAAAAAAAAAAAAAAAAAA8P+AAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAD+/wEAAP8PAAAAAAAAAAAAAAAAAAAAAPj/4f9/AADg/wEAAID//wf//wEAAAD4PwAA/z/8/w8AAPw/AAAA+P//4P9/AOD/H/8HAOD/h///AQCA/wcAAAD//x/8/w8A/P/j/wAA/P/w/z8AAPD/AAAA4P//g///AYD/f/wfAID/H/7/BwAA/h8AAAD8/3/w/z8A8P+P/wMA8P/D//8AAMD/AwAAgP//D/7/BwD+//F/AAD+f/j/HwAA+H8AAADw///B//8AwP8//g8AwP8P//8DAAD/DwAAAP7/P/j/HwD4/8f/AQD4/+H/fwAA4P8BAADA//8H//8DAP//+D8AAP8/AAAAAADAPwAAAPj//wAAAAAAAAD/BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOB/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD//w8AAAAAAAAAAAAAAAAAAOD/f+D/DwAA+P//AQDg/38AAAAA4P//AQAA/P8P/v8BAAD//z8AAPz/D/z/BwD8/38AAID//8H/PwAA4P//BwCA//+B//8AgP//DwAA8P8/+P8HAAD8//8AAPD/P/D/HwDw///5PwD+/wf//wAAgP//HwAA/v8H/v8DAP7/P/8HwP//4P8fAADw//8DAMD//8D/fwDA///n/wD4/x/8/wMAAP7/fwAA+P8f+P8PAPj///wfAP//g/9/AADA//8PAAD//wP//wEA//+f/wMAAADw/w8AAPj//wEA4P9/4P8/AOD///N/AAAAAAAAAAAA//8/AAD4/wf4/wMA/P9//g8AAAAAAAAAAOD//wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+B8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4H8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAIADAAAAAAAAAAAAAAAAAAAAAAB4AAADAAAAcAAAAAAAAAAAAAAAAAAAAAAAAA8AYAAAAAAOAAAAAAAAAAAAAAAAAAAAAADgAQAMAAAAwAEAAAAAAAAAAAAAAAAAAAAAADwAAAAAAAA4AAAAAAAAAAAADgAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAMABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAAAwAEAAAAAAAAAAAAAAAAAAAAAAAAA8A8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPj/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAADw/z8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA8P//BwAAAAAAAAAAAAAAAAAAAAAAAAAAgP////8AAAAAAAAAAAAAAAAAAAAAwB8AwP//////HwAAAAAAAAAAAAD4//////////////////8DAAAAAAAAAP7/////////////////////fwAAAAAAAAD+//////////////////////8PAAAAAAAA/P///////////////////////wEAAAAAAPj///////////////////////8/AAAAAADw/////////////////////////wcAAAAAwP//////////////////////////AAAAAOD//////////////////////////99/AP7//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////w==";
 let LP_COL=null;
 (function(){ try{ const bin=atob(LP_COL_B64); LP_COL=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) LP_COL[i]=bin.charCodeAt(i); }catch(e){ LP_COL=new Uint8Array(((LP_COL_COLS*LP_COL_ROWS)+7)>>3); } })();
+// The tennis court stays WALKABLE (you play on it) — only its net line is solid, which the map's own
+// collision mask already carries. The court's fix is purely visual: it's a flat ground decal (see
+// LP_GROUND_FI) drawn UNDER entities, so the player never disappears behind it while standing on it.
 function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return true; const idx=r*LP_COL_COLS+c; return (LP_COL[idx>>3]>>(idx&7))&1; }
 function lpSolidAt(x,y){ return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL)); }
 // push a circle entity out of any solid grid cells it overlaps (2 passes for stability)
@@ -2874,7 +2881,7 @@ function drawLpArena(){
   else { ctx.fillStyle='#4f8a3a'; ctx.fillRect(sx,sy,sw,sh); }
 }
 function drawArena(){
-  if(currentMap==='laspalmas'){ drawLpArena(); return; }
+  if(currentMap==='laspalmas'){ drawLpArena(); drawLpGround(); return; }
   const tag=currentMap+'|'+WORLD_W+'|'+WORLD_H;
   if(!arenaBG || arenaTag!==tag){
     arenaBG=document.createElement('canvas'); arenaBG.width=WORLD_W; arenaBG.height=WORLD_H; buildArenaBG(arenaBG.getContext('2d'));
@@ -3865,7 +3872,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-16.2';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.3';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3890,29 +3897,26 @@ function drawMainMenu(){
 function drawMapas(){
   drawBannerBG();
   ensureMapThumb();
-  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'},{name:'Las Palmas',short:'Las Palmas'}];
-  const n=5, cw=200, gap=16, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=170, chh=300;
-  const thumbH=158;
+  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'}];
+  const n=4, cw=232, gap=24, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=160, chh=320;
   for(let i=0;i<n;i++){
     const m=maps[i], locked=!isMapUnlocked(i);
     let ox=(i===mapSel && mapLockShake>0 && locked)?Math.sin(time*45)*5:0;
     const cx=x0+i*(cw+gap)+ox;
     ctx.save(); ctx.translate(cx,cy);
     ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
-    ctx.save(); rrect(12,12,cw-24,thumbH,6); ctx.clip();
-    if(i===4){ if(LP_THUMB_IMG.naturalWidth){ ctx.drawImage(LP_THUMB_IMG, 0,0,LP_THUMB_IMG.naturalWidth,LP_THUMB_IMG.naturalHeight, 12,12,cw-24,thumbH); } else { ctx.fillStyle='#4f8a3a'; ctx.fillRect(12,12,cw-24,thumbH); } }
-    else { const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:mapThumb4));
-      if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,thumbH); } else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,thumbH); } }
-    if(locked){ ctx.fillStyle='rgba(0,0,0,0.64)'; ctx.fillRect(12,12,cw-24,thumbH); }
+    ctx.save(); rrect(12,12,cw-24,184,6); ctx.clip();
+    const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:mapThumb4));
+    if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,184); } else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,184); }
+    if(locked){ ctx.fillStyle='rgba(0,0,0,0.64)'; ctx.fillRect(12,12,cw-24,184); }
     ctx.restore();
-    if(locked){ drawLock(cw/2,86,1.0); ctx.fillStyle='#e8c98a'; ctx.font='bold 16px Courier New'; ctx.textAlign='center'; ctx.fillText('BLOQUEADO', cw/2, 150); }
+    if(locked){ drawLock(cw/2,96,1.05); ctx.fillStyle='#e8c98a'; ctx.font='bold 17px Courier New'; ctx.textAlign='center'; ctx.fillText('BLOQUEADO', cw/2, 172); }
     ctx.textAlign='center';
-    ctx.fillStyle=locked?'#9a8f75':'#ffe9b0'; ctx.font='bold 16px Courier New';
-    wrapLeftCentered(m.name, cw/2, 200, cw-26, 20);
-    if(locked){ ctx.fillStyle='#c9b489'; ctx.font='12px Courier New'; ctx.fillText('Supera '+maps[i-1].short, cw/2, 272); }
-    else if(i===4){ ctx.fillStyle='#ff9a5a'; ctx.font='bold 12px Courier New'; ctx.fillText('SUPERVIVENCIA ∞', cw/2, 268); ctx.fillStyle='#aef7c2'; ctx.font='11px Courier New'; ctx.fillText('Mejor: '+lpBestScore, cw/2, 286); }
-    else if(mapsDone[MAP_ORDER[i]]){ ctx.fillStyle='#ffd24a'; ctx.font='13px Courier New'; ctx.fillText('★ Completado', cw/2, 272); }
-    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 272); }
+    ctx.fillStyle=locked?'#9a8f75':'#ffe9b0'; ctx.font='bold 17px Courier New';
+    wrapLeftCentered(m.name, cw/2, 228, cw-26, 21);
+    if(locked){ ctx.fillStyle='#c9b489'; ctx.font='13px Courier New'; ctx.fillText('Supera '+maps[i-1].short, cw/2, 292); }
+    else if(mapsDone[MAP_ORDER[i]]){ ctx.fillStyle='#ffd24a'; ctx.font='13px Courier New'; ctx.fillText('★ Completado', cw/2, 292); }
+    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 292); }
     if(i===mapSel){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; rrect(2,2,cw-4,chh-4,10); ctx.stroke(); }
     ctx.restore();
   }
@@ -3936,25 +3940,26 @@ function drawModos(){
   ctx.fillStyle='#3a1606'; ctx.font='bold 15px Courier New';
   ctx.fillText('Elige el modo de juego', W/2, 130);
   const cards=[
-    {t:'HORDA', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe', d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', locked:false},
-    {t:'PVP',   d1:'Duelo explosivo: bombas, Apuchis',  d2:'y un solo golpe', d3:NET.hosting?'2-4 jugadores':'2 jugadores', locked:false},
+    {t:'HORDA',         c:'#8cc24a', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe',        d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Disponible', fc:'#aef7c2'},
+    {t:'MODO INFINITO', c:'#ff9a4a', d1:'Supervivencia sin fin: enemigos', d2:'que no paran de venir',    d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Mejor: '+lpBestScore, fc:'#ffd24a'},
+    {t:'PVP',           c:'#ff8a5a', d1:'Duelo explosivo: bombas, Apuchis', d2:'y un solo golpe',          d3:NET.hosting?'2-4 jugadores':'2 jugadores',   foot:'Disponible', fc:'#aef7c2'},
   ];
-  const cw=330, chh=280, gap=60, x0=(W-2*cw-gap)/2, cy=190;
+  const cw=300, chh=280, gap=34, x0=(W-3*cw-2*gap)/2, cy=180;
   cards.forEach((m,i)=>{
-    let ox=(i===modeSel && m.locked && mapLockShake>0)?Math.sin(time*45)*5:0;
-    const cx=x0+i*(cw+gap)+ox;
+    const cx=x0+i*(cw+gap);
     ctx.save(); ctx.translate(cx,cy);
     ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
-    ctx.fillStyle=m.locked?'#9a8f75':(i===0?'#8cc24a':'#ff8a5a'); ctx.font='bold 30px Courier New';
-    ctx.fillText(m.t, cw/2, 64);
-    ctx.fillStyle=m.locked?'#8a7f68':'#e8e0cc'; ctx.font='14px Courier New';
-    ctx.fillText(m.d1, cw/2, 118);
-    ctx.fillText(m.d2, cw/2, 140);
-    ctx.fillStyle=m.locked?'#8a7f68':'#aef7c2'; ctx.font='bold 13px Courier New';
-    ctx.fillText(m.d3, cw/2, 186);
-    if(m.locked){ ctx.fillStyle='#e8c98a'; ctx.font='bold 16px Courier New'; ctx.fillText('PRÓXIMAMENTE', cw/2, 236); }
-    else if(i===1){ const img=APU_IMG.piedra; if(img&&img.naturalWidth){ drawIconFit(img, cw/2, 226, 44); } }
-    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 236); }
+    ctx.fillStyle=m.c; ctx.font='bold 27px Courier New';
+    ctx.fillText(m.t, cw/2, 60);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText(m.d1, cw/2, 112);
+    ctx.fillText(m.d2, cw/2, 134);
+    ctx.fillStyle='#aef7c2'; ctx.font='bold 13px Courier New';
+    ctx.fillText(m.d3, cw/2, 180);
+    if(i===2){ const img=APU_IMG.piedra; if(img&&img.naturalWidth){ drawIconFit(img, cw/2, 222, 42); } }
+    else if(i===1){ ctx.fillStyle='#ff9a4a'; ctx.font='bold 30px Courier New'; ctx.fillText('∞', cw/2, 232); }
+    else { ctx.fillStyle='#8cc24a'; ctx.font='bold 22px Courier New'; ctx.fillText('★20', cw/2, 230); }
+    ctx.fillStyle=m.fc; ctx.font='12px Courier New'; ctx.fillText(m.foot, cw/2, 258);
     if(i===modeSel){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; rrect(2,2,cw-4,chh-4,10); ctx.stroke(); }
     ctx.restore();
   });
@@ -4211,9 +4216,15 @@ function handleMenuKey(code){
     if(code==='Enter'||code==='Space'){ if(mainSel===0){ NET.hosting=false; state=STATE.MODOS; modeSel=0; } else if(mainSel===1){ NET.hosting=true; state=STATE.MODOS; modeSel=0; } else { state=STATE.HELP; } }
   } else if(state===STATE.MODOS){
     if(code==='Escape'){ state=STATE.MAINMENU; mainSel=0; return; }
-    if(code==='ArrowLeft'||code==='KeyA'||code==='ArrowRight'||code==='KeyD'||code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') modeSel=(modeSel+1)%2;
+    // three modes: 0 HORDA · 1 MODO INFINITO · 2 PVP
+    if(code==='ArrowLeft'||code==='KeyA') modeSel=(modeSel+2)%3;
+    else if(code==='ArrowRight'||code==='KeyD'||code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') modeSel=(modeSel+1)%3;
     if(code==='Enter'||code==='Space'){
       if(modeSel===0){ lobbyMode='horda'; state=STATE.MAPAS; mapSel=0; }
+      else if(modeSel===1){ // MODO INFINITO — survival on Las Palmas (co-op / online / solo, like Horda)
+        lobbyMode='horda'; currentMap='laspalmas'; WORLD_W=W; camX=0;
+        if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); }
+      }
       else if(NET.hosting){ lobbyMode='pvp'; currentMap='pvp'; enterLobby(); }
       else { enterPvpSelect(); }
     }
@@ -4222,13 +4233,13 @@ function handleMenuKey(code){
     if(code==='Escape'){ if(!chooserDeselect(players[0])) enterLobby(); }
   } else if(state===STATE.MAPAS){
     if(code==='Escape'){ state=STATE.MODOS; modeSel=0; return; }
-    if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+4)%5;
-    if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%5;
-    if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=(mapSel===1)?'stonebridge':(mapSel===2)?'templo':(mapSel===3)?'machu':(mapSel===4)?'laspalmas':'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
+    if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+3)%4;
+    if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%4;
+    if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=(mapSel===1)?'stonebridge':(mapSel===2)?'templo':(mapSel===3)?'machu':'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
   } else if(state===STATE.HELP){
     if(code==='Escape'||code==='Enter'||code==='Space'){ state=STATE.MAINMENU; mainSel=0; }
   } else if(state===STATE.MENU){
-    if(code==='Escape'){ state=STATE.MAPAS; mapSel=0; playMenuMusic(); return; }
+    if(code==='Escape'){ if(currentMap==='laspalmas'){ state=STATE.MODOS; modeSel=1; } else { state=STATE.MAPAS; mapSel=0; } playMenuMusic(); return; }
     if(code==='ArrowUp'||code==='KeyW') menuSel=(menuSel+1)%2;
     if(code==='ArrowDown'||code==='KeyS') menuSel=(menuSel+1)%2;
     if(code==='Enter'||code==='Space'){ modTest=false; mode=(menuSel===1)?2:1; selMode=mode; enterSelect(); }
@@ -5450,7 +5461,7 @@ function _frameBody(now){
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
-  if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props only
+  if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
   if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
     for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
   }
