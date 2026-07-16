@@ -762,11 +762,12 @@ let modeSel=0;          // MODOS screen selection: 0 Horda · 1 PVP
 let WORLD_W=W, WORLD_H=H, camX=0, camY=0;
 let flowGrid=null, flowCols=0, flowRows=0, flowCell=46, flowTimer=0;
 let bossFlowGrid=null, bossFlowCols=0, bossFlowRows=0, bossFlowTimer=0;
-const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' } };
+const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, laspalmas:{ countMul:1, hpMul:1, dmgMul:1, edges:'ring' } };
 const MAP_ORDER=['amazonas','stonebridge','templo','machu'];
 let mapsDone={}; try{ mapsDone=JSON.parse(localStorage.getItem('fm_progress')||'{}')||{}; }catch(e){ mapsDone={}; }
 const UNLOCK_ALL=false; // dev toggle: set true to unlock every map while testing
-function isMapUnlocked(i){ return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
+function isMapUnlocked(i){ if(i===4) return true;   // Las Palmas (survival) is always open for testing
+  return UNLOCK_ALL || (i<=0 ? true : !!mapsDone[MAP_ORDER[i-1]]); }
 function saveMapBeaten(name){ if(name){ mapsDone[name]=1; try{ localStorage.setItem('fm_progress', JSON.stringify(mapsDone)); }catch(e){} } }
 let prevState = STATE.PLAY;
 let mode = 2; // 1 or 2 players
@@ -872,6 +873,56 @@ let cliffs=[];
 function inCliff(x,y){ for(const c of cliffs){ const dx=(x-(c.x+c.w/2))/(c.w*0.40), dy=(y-(c.y+c.h/2))/(c.h*0.40); if(dx*dx+dy*dy<1) return true; } return false; }
 let obstacles = OBST_AMAZONAS;
 
+// ================= LAS PALMAS — endless survival map =================
+// Big beachside town (3280x5880). No rounds: enemies stream in forever after the
+// Cóndor's intro; score = enemies killed. Collision comes from a downsampled bit-grid
+// (buildings/water tower/trees/beach are solid) instead of rectangle obstacles, and
+// enemies path around it with the existing BFS flow field. Apuchis drop from kills at
+// half size, and dying strips ALL your powers (even after a revive).
+const LP_W=3280, LP_H=5880;
+const LP_SPAWN={x:1640, y:1587};          // town centre, by the water tower (player start)
+const LP_BG_IMG=new Image(); LP_BG_IMG.src='assets/laspalmas_bg.png';
+const LP_COL_CELL=16, LP_COL_COLS=205, LP_COL_ROWS=368;
+const LP_COL_B64="AAAAAAAAAAAAAAAAAAAAwP//////AQAAAAAAAAAAAAAAAAAAAAAAAAD4/////z8AAAAAAAAAAAAAAAAAAAAAAAAAAP//////BwAAAAAAAAAAAAAAAAAAAAAAAADg//////8AAAAAAAAAAAAAAAAAAAAAAAAAAPz/////HwAAAAAAAAAAAAAAAAAAAAAAAAaA//////8DAAAAAAAAAAAAAAAAAAAAAADAAPD/////fwAAAAAAAAAAAAAAAAAAAAAAAAAA/v////8PAAAAAAAAAADg/wEAAAAAAAAAAMb//////wEAAAAAAAAAAPx/wP8HAAAAAAAA+P////8/AAAAAAAAAACA/w/8/4EBAAAAAAD//////wcAAAAAAAAAAPD/gf8/AAAAAAAA4P//////AAAAAAAAAAAA/B/w/wMAAAAAAAD8/////x8AAAAAAAAAAAAAAAAAAAAAAAAAgP//////AwAAAAAAAAAAAAAAAAAAAAAAAADw/////38AAAAAAAAAAAAAAAAOAAAAAAAAAP7/////DwAAAAAAAAAAAAB8wAMAAAAAAADA//////8BAAAAAAAAAAAA4H94AAAAAAAAAPj/////PwAAAAAAAAAAAAD+HwYAAAAAAAAA//////8HAAAAAAAAAAAAwP8DAAAAAAAAAOD//////wAAAAAAAAAAAAD8fwAAAAAAAAAA/P////8fAAAAAAAAAAAAgP8PAAAAAAAAAID//////wMAAAAAAAAAAADw/wEAAAAAAAAA8P////9/AAAAAAAAAAAAAPwfAAAAAAAAAAD+/////w8AAAAAAAAAAACA/wEAAAAAAAAAwP//////AQAAAAAAAAAAAMAfAAAAAAAAAAD4/////z8AAAAAAAAAAAAAAAAAAAAAAAAAAP//////BwAAAAAAAAAAAAAAAAAAAAAAAADg//////8AAAAAAAAAADAAAAAAAAAGAAAAAPz/////HwAAAAAAAAAABgAAAAAAAAAAAACA//////8DAAAAAAAAAAAAAAAAAAAAAAAAAPD/////fwAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAMA4P8BAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAD8PwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8HAAAAAAAAAAAAAAAAAAAAAAAAAIAHAADw/wAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAP4fAAAAAAAAAAAAAAAAAAAAAAAAAAAOAADA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAA8AAA/D8AAAAAAAAAAAAAAAAAAAAAAAAAAAAeAID/BwAAAAAAAAAAAAAAAAAAAAAAAAAAwAMA8P8AAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAD+HwAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAwP8DAAAAAMADAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg/wEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPw/AAAAAAAAABwAAAAAAAAAAAAAAAAAAACA/wcAAAAAAADAAwAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAA/h8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+H8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4P8BAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAD8PwAAAAAAAPABAAAAwP//AQAAAAAAAAAAgP8HAAAAAAAAPwAAAAD8//8DAAAAAAAAAADw/wAAAAAAAOAHAAAAgP///wAAAAAAAAAAAP4fAAAAAAAA/AAAAAD4//8/AAAAAAAAAADA//sfAAAAAAAfAAAAAP///w8AAAAAAAAAAAB8/wMAAAAAwAEAAADw////AwAAAAAAAAAAAOB/AAAAAAAAAAAAAP///38AAAAAAAAAAAAA/A8AAAAAAAAAAADw////DwAAAPj//wcAAID/AQAAAAAAAAAAAP7///8BAACA////AAAA8D8AAAAAAAAAAADA////fwAAAOD//x8AAAD+BwAAAAAAAAAAAPj///8PAAAAAAAAAAAAwP8AAOAHAAA/AAAA/////wEAAAAAAAAAAAD4HwAA/AAA4AcAAOD///8fAAAAAAAAAAAAAP8DAIAfAAD8AAAA/P///wMAAAAAAAAAAADgfwAAAOD/DwAAAAD///8/AAAAAAAAAAAAAPwPAAAA/P8BAAAA4P///wMAAAAAAAAAAACA/wEAwI//P34AAAD4//9/AAAAAAAAAAAAAPA/AAD48f/HDwAAAPz//wcAAAAAAAAAAAAA/gcAAD/+//gBAAAA/v9/AAAAAAAAAAAAAMD/AAAAwP8fAAAAAAD+/wcAAAAAAAAAAAAA+B8AAAD4/wMAAAAAAPwfAAAAAAAAAAAAAAD/AwAAAP9/AAAAAAAAAAAAAAAAAAAAAAAA4H8AAPDh/48fAAAAAAAAAAAAAAAAAAAAAAD8DwAAfvz/8QMAAAAAAAAAAAAAAAAAAAAAgP8BAMCP/z9+AAAAAAAAAAAAAAAAAAAAAADwPwAA+PH/BwAAAAAAAAAAAAAAAAAAAAAAAP4HAAAA/v8AAAAAAAAAAAAAAAAAAAAAAADA/wAAAMD/HwAAAAAAAAAAAAAAAAAAAAAAAPgfAAB8+P/DBwAAAAAAAAAAAAAAAAAAAAAA/wMAgA//f/wAAAAAAAAAAAAAAAAAAAAAAOB/AADw4f+PHwAAAAAAAAAAAAAAAAAAAMD//Q8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/L//AQDADwAAAAAAAAAAAAAAAAAAAAAAAID/9z8AAPgBAAAAAAAAAAAAAAAAAAAAAAAA8P/+BwAAPwAA8AEAAAAAAAAAAAAAAAAAAAD+3/8AAAAAAAA+AAAAAAAAAAAAAAAAAAAAwP/7HwAAAAAAwAcAAAAAAAAAAAAAAAAAAAD4f/8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/vfwAAAAAAAAAAAAAAAAAAAAAAAAAAAADg//0PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPy//wEAAAAAAAAAAAAAAAAAAAAAAAAAAACA//c/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD//gcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/t//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/+x8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA+H//AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/738AAAAAAAAAAAAAAAAAAAAAAAAAAAAA4P/9DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8P/gBAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8HMAAAAAAAAAAAAAAAAAAAAAAwAAAAAADw/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/D8AAAAAAAAAAAAAAAAAAAAAAAAADgAAAID/BwAAAAAAAAAAAAAAAAAAAAAAAMABAAAA8P8AAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAD+HwAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAADgAAD4fwAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAIAHAAAA4AAAAAAAAAAAAADg/wEAAAAAAAAA8AAAAAAcAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA/wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/t//AAAAAAAAAAAAAAAAgAMAAAAAAAAAAMD/+x8AAAAAAAAAAAAAAABwAAAAAAAAAAAA+H//AwAAAAAAAAAAAAAAAA4AAAAAAIADAAD/738AAAAAAAAAAAAAAAAAAAAAAAAAcAAA4P/9DwAAAAAAAAAAAAAAAAAAAAAAAAAOAAD8v/8BAAAAAAAAAAAAAAAAAAAAHAAAwAEAgP/3PwAAcAAAAAAAAAAAAAAAAIADAAA4AADw//4HAAAOAAAAAAAAAAAAAAAAAAAAAAAAAP7f/wAAAAAAAAAAAAAAAAAAAAAAAAAAAADA//sfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh//wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+9/AAAAAAD8/z8AAAAAAAAAAAAAAAAAAOD//Q8AAAAAgP//DwAAAAAAAPj/HwAAAAAA/L//AQDA/3/w//8BAOAAAAAA//+D/wMAAID/9z8AAPj/D/7/PwAAHAAAAOD/f/B/AAAA8P/+BwAA///B//8HAAAAAAAA/P8P/g8AAAD+3/8AAOD/P/j//wAAAAAAAID//8H/AQAAwP/7HwAA/P8H//8fAAAAAAAA8P8/+D8AAAD4f/8DAID//+D//wMAAAAAAAD+/wf/BwAAAP/vfwAA8P8f/P9/AAAAAAAAwP//4P8AAADg/wEIAAD+/4P//w8AAAAAAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA/wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/h8AAAAAAAAAAAAAwP8P/gcAAAAAAAAAAMD/AwAAAAAAAAAAAAD4/8H/AQAAAAAAAAAA+H8AAAAAAAAAAAAAAP8/+D8AAAAAAAAAAAD/DwAAAAAAAAAAAADg/wf/BwAAAAAAAAAA4P8BAAAAAAAAAAAAAPz/4P8AAAAAAAAAAAD8PwAAAAAAAAAAAACA/x/8HwAAAAAAAAAAgP8HAAAAAAAAAAAAAPD/g/8DAAAAAAAAAADw/wAAAAAAAAAAAAAA/n/wfwAAAAAAAAAAAP4fAAAAAAAAAAAAAMD/D/4PAAAAAAAAAADA/wMAAAAAAAAAAAAA+P/B/wEAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAPg/AAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/L//AQAAAAAAAAAAAAAAAAAAAAAAAAAAAID/9z8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA8P/+BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+3/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8DAAAAAAAAAAAAAAAAAAD4//8AAAAAAADgfwAAAAAAAAAAAAAAAAAAAP//HwAAAAAAAPwPAAAAAAAAAAAAAAAAAADg///zfwAAAACA/wEAAP7/4P8/AAAAAAAAAPz/f/4PAAAAAPA/AADA/x/8/wcAAAAAAACA///P/wEAAAAA/gcAAPj/g///AAAAAAAAAPD///k/AAAAAMD/AAAA/3/w/x8AAAAAAAAA/v8//wcAAAAA+B8AAOD/D/7/AwAAAAAAAMD//+f/AAAAAAD/AwAA/P/B/38AAAAAAAAA+P///B8AAAAA4H8AAID/P/j/DwAAAAAAAAD//5//AwAAAAD8DwAA8P8H//8BAAAAAAAAAAAA8H8AAAAAAPABAAD+/wAAAAAAAAAAAAAAAAD+DwAAAAAAAAAAwP8fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPj/DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA///D/wMAAAAAAAAAAAAAAAAAAAAAAAAAAOD/f/h/AAAAAAAAAAAAAAAAAAAAAAAAAAAA/P8P/w8AAAAAAAAAAOD/AQAAAAAAAAAAAID//+H/AQAAAAAAAAAA/D8AAAAAAAAAAAAA8P8//D8AAAAAAAAAAID/BwAAAAAAAAAAAAD+/4f/BwAAAAAAAAAA8P8AAAAAAAAAAAAAwP//4P8AAAAAAAAAAAD+HwAAAAAAAAAAAAD4/x8AAAAAAAAAAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg/wEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAgAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOB/AAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAA/A8AAADgAAAAAAAAAAAAAAAAAAAAAAAAAID/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8D8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8AAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAD4HwAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgfwAAAAAAAABgAAAAAAAAAAAAAAAAAAAAAPwPAAAAAAAAAAwAAAAAAAAAAAAAABwHAACA/wEAAAAAAAAAAAAAAAAAAAAAAACA4wAA//8/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD//wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/P//AAAAAACAAQAAAAAAAAAAAAAAAAAAAID//x8AAAAAADAAAAAAAAAAAAAAAAAAAAAA8P+AAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAD+/wEAAP8PAAAAAAAAAAAAAAAAAAAAAPj/4f9/AADg/wEAAID//wf//wEAAAD4PwAA/z/8/w8AAPw/AAAA+P//4P9/AOD/H/8HAOD/h///AQCA/wcAAAD//x/8/w8A/P/j/wAA/P/w/z8AAPD/AAAA4P//g///AYD/f/wfAID/H/7/BwAA/h8AAAD8/3/w/z8A8P+P/wMA8P/D//8AAMD/AwAAgP//D/7/BwD+//F/AAD+f/j/HwAA+H8AAADw///B//8AwP8//g8AwP8P//8DAAD/DwAAAP7/P/j/HwD4/8f/AQD4/+H/fwAA4P8BAADA//8H//8DAP//+D8AAP8/AAAAAADAPwAAAPj//wAAAAAAAAD/BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOB/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD//w8AAAAAAAAAAAAAAAAAAOD/f+D/DwAA+P//AQDg/38AAAAA4P//AQAA/P8P/v8BAAD//z8AAPz/D/z/BwD8/38AAID//8H/PwAA4P//BwCA//+B//8AgP//DwAA8P8/+P8HAAD8//8AAPD/P/D/HwDw///5PwD+/wf//wAAgP//HwAA/v8H/v8DAP7/P/8HwP//4P8fAADw//8DAMD//8D/fwDA///n/wD4/x/8/wMAAP7/fwAA+P8f+P8PAPj///wfAP//g/9/AADA//8PAAD//wP//wEA//+f/wMAAADw/w8AAPj//wEA4P9/4P8/AOD///N/AAAAAAAAAAAA//8/AAD4/wf4/wMA/P9//g8AAAAAAAAAAOD//wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+B8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4H8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAIADAAAAAAAAAAAAAAAAAAAAAAB4AAADAAAAcAAAAAAAAAAAAAAAAAAAAAAAAA8AYAAAAAAOAAAAAAAAAAAAAAAAAAAAAADgAQAMAAAAwAEAAAAAAAAAAAAAAAAAAAAAADwAAAAAAAA4AAAAAAAAAAAADgAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAMABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAAAwAEAAAAAAAAAAAAAAAAAAAAAAAAA8A8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPj/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAADw/z8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA8P//BwAAAAAAAAAAAAAAAAAAAAAAAAAAgP////8AAAAAAAAAAAAAAAAAAAAAwB8AwP//////HwAAAAAAAAAAAAD4//////////////////8DAAAAAAAAAP7/////////////////////fwAAAAAAAAD+//////////////////////8PAAAAAAAA/P///////////////////////wEAAAAAAPj///////////////////////8/AAAAAADw/////////////////////////wcAAAAAwP//////////////////////////AAAAAOD//////////////////////////99/AP7//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////w==";
+let LP_COL=null;
+(function(){ try{ const bin=atob(LP_COL_B64); LP_COL=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) LP_COL[i]=bin.charCodeAt(i); }catch(e){ LP_COL=new Uint8Array(((LP_COL_COLS*LP_COL_ROWS)+7)>>3); } })();
+function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return true; const idx=r*LP_COL_COLS+c; return (LP_COL[idx>>3]>>(idx&7))&1; }
+function lpSolidAt(x,y){ return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL)); }
+// nearest walkable point (spirals outward one grid ring at a time)
+function lpNudgeOpen(x,y){
+  if(!lpSolidAt(x,y)) return {x, y};
+  for(let ring=1; ring<28; ring++){ for(let a=0;a<12;a++){ const ang=a/12*TAU, nx=x+Math.cos(ang)*ring*LP_COL_CELL, ny=y+Math.sin(ang)*ring*LP_COL_CELL;
+    if(nx>12&&ny>12&&nx<LP_W-12&&ny<LP_H-12&&!lpSolidAt(nx,ny)) return {x:nx, y:ny}; } }
+  return {x:clamp(x,20,LP_W-20), y:clamp(y,20,LP_H-20)};
+}
+// push a circle entity out of any solid grid cells it overlaps (2 passes for stability)
+function lpResolve(ent){
+  const r=ent.radius, C=LP_COL_CELL;
+  for(let pass=0; pass<2; pass++){
+    const cc=Math.floor(ent.x/C), cr=Math.floor(ent.y/C);
+    if(lpSolidCell(cc,cr)){   // centre buried in a wall: shove toward the nearest open cell
+      let bx=0,by=0,bd=1e9;
+      for(let rr=-3;rr<=3;rr++) for(let dcx=-3;dcx<=3;dcx++){ if(lpSolidCell(cc+dcx,cr+rr)) continue; const dd=dcx*dcx+rr*rr; if(dd<bd){bd=dd;bx=dcx;by=rr;} }
+      if(bd<1e9){ const l=Math.hypot(bx,by)||1; ent.x+=bx/l*r; ent.y+=by/l*r; }
+      continue;
+    }
+    const c0=Math.floor((ent.x-r)/C), c1=Math.floor((ent.x+r)/C), r0=Math.floor((ent.y-r)/C), r1=Math.floor((ent.y+r)/C);
+    for(let rr=r0; rr<=r1; rr++) for(let dcx=c0; dcx<=c1; dcx++){ if(!lpSolidCell(dcx,rr)) continue;
+      const rx=dcx*C, ry=rr*C, nx=clamp(ent.x,rx,rx+C), ny=clamp(ent.y,ry,ry+C);
+      let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
+      if(dd<r && dd>0.0001){ ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; }
+    }
+  }
+  ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
+}
+// survival run state
+let survival=false, survTime=0, survSpawnT=0, kills=0;
+let lpBestScore=0; try{ lpBestScore=(+localStorage.getItem('fm_laspalmas_best'))||0; }catch(e){}
+function stripPowers(p){   // death wipes every buff — you re-earn them from scratch
+  p.tierra=0; p.piedra=0; p.shields=0; p.special='none'; p.specialCharges=0; p.oro=0; p.oroCharge=0; p.rioGrabbed=false;
+}
+
+
 function circleRectCollide(cx, cy, r, rect) {
   const nx = clamp(cx, rect.x, rect.x+rect.w);
   const ny = clamp(cy, rect.y, rect.y+rect.h);
@@ -880,6 +931,11 @@ function circleRectCollide(cx, cy, r, rect) {
 // push a circle out of all obstacles + arena bounds
 function resolveCollision(ent) {
   const r = ent.radius;
+  if(currentMap==='laspalmas'){
+    ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
+    if(ent.phase>0) return;
+    lpResolve(ent); return;
+  }
   if(currentMap==='templo'){ ent.x=clamp(ent.x, 58+r, WORLD_W-58-r); ent.y=clamp(ent.y, 58+r, WORLD_H-58-r); }
   else if(currentMap==='machu'){ ent.x=clamp(ent.x, 38+r, WORLD_W-38-r); ent.y=clamp(ent.y, MACHU_SKY+8+r, WORLD_H-30-r-machuElev(ent.x)); }
   else { ent.x = clamp(ent.x, r+8, WORLD_W-r-8); if(currentMap==='stonebridge'){ ent.y = clamp(ent.y, 116+r, 572-r); } else { ent.y = clamp(ent.y, r+8, WORLD_H-r-8); } }
@@ -1009,6 +1065,12 @@ function spawnEnemy(){
     const bz=BUSES[randi(0,BUSES.length-1)];
     x=clamp(bz.x+rand(-24,24), 42, WORLD_W-42);
     y=clamp(bz.y+rand(2,16), MACHU_SKY+16, WORLD_H-30-machuElev(x));
+  } else if(currentMap==='laspalmas'){
+    // ring-spawn around the players so the huge map keeps constant pressure, then snap to a
+    // walkable cell — the flow field routes them the rest of the way in around the buildings
+    let cx=0,cy=0,n=0; for(const pp of players){ if(pp.alive){ cx+=pp.x; cy+=pp.y; n++; } }
+    if(n){ cx/=n; cy/=n; } else { cx=LP_SPAWN.x; cy=LP_SPAWN.y; }
+    for(let t=0;t<20;t++){ const ang=Math.random()*TAU, rad=rand(560,860); const pos=lpNudgeOpen(cx+Math.cos(ang)*rad, cy+Math.sin(ang)*rad); x=pos.x; y=pos.y; if(dist(x,y,cx,cy)>340) break; }
   } else {
     const edge = randi(0,3);
     if(edge===0){ x=rand(20,WORLD_W-20); y=20; }
@@ -1016,7 +1078,8 @@ function spawnEnemy(){
     else if(edge===2){ x=rand(20,WORLD_W-20); y=WORLD_H-20; }
     else { x=20; y=rand(20,WORLD_H-20); }
   }
-  const scale = 1 + Math.min(round-1,14)*0.05;
+  let scale = 1 + Math.min(round-1,14)*0.05;
+  if(survival) scale += Math.max(0,round-15)*0.02;   // endless: keep toughening past the round-15 cap
   let skin='chu', radius=t.radius, speed=t.speed, leafer=!!t.leafer, archer=false, supay=false, llama=false, ttype=null, tint=t.tint, baseHp=t.hp;
   if(currentMap==='stonebridge'){
     if(type==='normal'){ skin='knight'; }
@@ -1092,6 +1155,15 @@ function spawnApuPos(){
 function placeApu(type){
   const pos=spawnApuPos();
   apuchis.push({id:_entId++, type, x:pos.x, y:pos.y, r:18, bob:Math.random()*TAU, spawn:0});
+}
+// Las Palmas: enemies drop Apuchis (half size) on death — not every time, and the rare ones
+// (Morganita/Safiro) stay rare thanks to weightedApu's weights + late-game gating.
+function lpMaybeDropApu(e){
+  if(apuchis.length>=42) return;                       // don't carpet the map
+  const ch = e.type==='large' ? 0.24 : (e.type==='fast' ? 0.07 : 0.10);
+  if(Math.random()>=ch) return;
+  const type=weightedApu(true,true);
+  apuchis.push({id:_entId++, type, x:e.x+rand(-8,8), y:e.y+rand(-8,8), r:9, bob:Math.random()*TAU, spawn:0});
 }
 function spawnBreakItems(){
   apuchis.length=0;
@@ -1505,6 +1577,7 @@ function killEnemy(e,p){
   if(e.skin==='tourist' && !e.dead){ e.dead=true; e.deathT=0; e.hitFlash=0; e.vx=0; e.vy=0; score+=e.pts; if(e.type==='normal'||e.type==='fast') dropNugget(e.x,e.y); spark(e.x,e.y,e.color||'#fff',12,160); floatText(e.x,e.y-10,'+'+e.pts,'#ffe680'); return; }
   enemies.splice(idx,1);
   score += e.pts;
+  if(survival && !e.boss){ kills++; lpMaybeDropApu(e); }
   if(e.type==='large'){ hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16}); }
   if(e.boss){
     for(let k=0;k<80;k++) spark(e.x+rand(-40,40), e.y+rand(-54,20), ['#ffd24a','#ff7a3a','#ffffff','#ff5050','#ffe24a'][randi(0,4)], 1, 260);
@@ -1942,8 +2015,11 @@ function buildFlow(){
   const N=flowCols*flowRows; const blocked=new Uint8Array(N);
   for(let r=0;r<flowRows;r++) for(let c=0;c<flowCols;c++){
     const x=c*flowCell+flowCell/2, y=r*flowCell+flowCell/2; let bl=false;
-    for(const o of obstacles){ if(x>o.x-8&&x<o.x+o.w+8&&y>o.y-8&&y<o.y+o.h+8){bl=true;break;} }
-    if(!bl && cliffs.length){ for(const cf of cliffs){ const ex=(x-(cf.x+cf.w/2))/(cf.w*0.5), ey=(y-(cf.y+cf.h/2))/(cf.h*0.5); if(ex*ex+ey*ey<1){bl=true;break;} } }
+    if(currentMap==='laspalmas'){ bl=!!lpSolidAt(x,y); }
+    else {
+      for(const o of obstacles){ if(x>o.x-8&&x<o.x+o.w+8&&y>o.y-8&&y<o.y+o.h+8){bl=true;break;} }
+      if(!bl && cliffs.length){ for(const cf of cliffs){ const ex=(x-(cf.x+cf.w/2))/(cf.w*0.5), ey=(y-(cf.y+cf.h/2))/(cf.h*0.5); if(ex*ex+ey*ey<1){bl=true;break;} } }
+    }
     blocked[r*flowCols+c]=bl?1:0;
   }
   const dist=new Int32Array(N); dist.fill(-1); const q=[];
@@ -2032,10 +2108,10 @@ function updateEnemies(dt){
         if(turTgt){
           const td=dist(e.x,e.y,turTgt.x,turTgt.y)||1;
           dx=(turTgt.x-e.x)/td; dy=(turTgt.y-e.y)/td;
-        } else if(currentMap==='templo'||currentMap==='machu'){
+        } else if(currentMap==='templo'||currentMap==='machu'||currentMap==='laspalmas'){
           const fd=flowDir(e);
           let los=true; const stp=Math.min(40,Math.max(3,Math.floor(d/12)));
-          for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; let hit=false; for(const o of obstacles){ if(tx>o.x-6&&tx<o.x+o.w+6&&ty>o.y-6&&ty<o.y+o.h+6){hit=true;break;} } if(!hit && cliffs.length && inCliff(tx,ty)) hit=true; if(hit){los=false;break;} }
+          for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; let hit=false; if(currentMap==='laspalmas'){ hit=!!lpSolidAt(tx,ty); } else { for(const o of obstacles){ if(tx>o.x-6&&tx<o.x+o.w+6&&ty>o.y-6&&ty<o.y+o.h+6){hit=true;break;} } if(!hit && cliffs.length && inCliff(tx,ty)) hit=true; } if(hit){los=false;break;} }
           // hysteresis: once an enemy starts getting stuck, trust the flow field even if line of
           // sight flickers open at a corner — stops the straight-line/flow oscillation on stairs
           if(fd && (!los || (e._stuckT||0)>0.3)){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
@@ -2092,6 +2168,7 @@ function updateEnemies(dt){
         let px=-ay/al, py=ax/al;   // perpendicular to the chase direction
         const open=(sx,sy)=>{ const qx=e.x+sx*52, qy=e.y+sy*52;
           if(qx<20||qx>WORLD_W-20||qy<20||qy>WORLD_H-20) return false;
+          if(currentMap==='laspalmas') return !lpSolidAt(qx,qy);
           if(cliffs.length && inCliff(qx,qy)) return false;
           for(const o of obstacles){ if(qx>o.x-e.radius&&qx<o.x+o.w+e.radius&&qy>o.y-e.radius&&qy<o.y+o.h+e.radius) return false; }
           return true; };
@@ -2200,10 +2277,37 @@ function startBreak(){
   score += bonus;
 }
 
+// ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
+function startSurvival(){
+  state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
+  apuchis.length=0; leaves.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0;
+}
+function updateSurvival(dt){
+  survTime+=dt;
+  updateBreakItems(dt);   // Apuchis bob + get picked up DURING play (there is no shop break)
+  for(const p of players){
+    if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
+    else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
+  }
+  const nParty=activePlayerCount();
+  // more players -> the clock effectively runs faster, so difficulty ramps sooner; solo is chill early
+  const rf=1 + 0.35*(nParty-1);
+  const dtf=survTime*rf;
+  round = 1 + Math.floor(dtf/22);   // virtual round drives spawnEnemy's type pool + base scaling
+  const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
+  const cap = Math.min(70, Math.round(4 + 4*nParty + dtf*0.11));
+  survSpawnT-=dt;
+  if(aliveN<cap && survSpawnT<=0){
+    const burst=(dtf>60 && Math.random()<0.5)?2:1;
+    for(let i=0;i<burst;i++){ if(enemies.reduce((a,e)=>a+(e.dead?0:1),0)>=cap) break; spawnEnemy(); }
+    survSpawnT = Math.max(0.26, (nParty>=2?0.8:1.05) - dtf*0.004);
+  }
+}
+
 function updatePlay(dt){
   updatePlayers(dt);
-  if(currentMap==='templo'||currentMap==='machu'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; }
-    bossFlowTimer-=dt; if(bossFlowTimer<=0){ const _jb=enemies.find(en=>en.boss&&en.kind==='jarjacha'); if(_jb) buildBossFlow(_jb.radius); else bossFlowGrid=null; bossFlowTimer=0.2; } } else { flowGrid=null; bossFlowGrid=null; }
+  if(currentMap==='templo'||currentMap==='machu'||currentMap==='laspalmas'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; }
+    if(currentMap!=='laspalmas'){ bossFlowTimer-=dt; if(bossFlowTimer<=0){ const _jb=enemies.find(en=>en.boss&&en.kind==='jarjacha'); if(_jb) buildBossFlow(_jb.radius); else bossFlowGrid=null; bossFlowTimer=0.2; } } else bossFlowGrid=null; } else { flowGrid=null; bossFlowGrid=null; }
   updateEnemies(dt);
   updateEffects(dt);
   updateLeaves(dt);
@@ -2217,17 +2321,20 @@ function updatePlay(dt){
   updateWallets(dt);
   updateGear(dt);
   updateBossDrops(dt);
-  // spawn enemies gradually
-  if(spawnQueue>0){
-    spawnTimer-=dt;
-    if(spawnTimer<=0){
-      const burst=randi(1,2);
-      for(let i=0;i<burst && spawnQueue>0;i++){ spawnEnemy(); spawnQueue--; }
-      spawnTimer=rand(0.65,1.15)/spawnPace;
+  if(survival){ updateSurvival(dt); }
+  else {
+    // spawn enemies gradually
+    if(spawnQueue>0){
+      spawnTimer-=dt;
+      if(spawnTimer<=0){
+        const burst=randi(1,2);
+        for(let i=0;i<burst && spawnQueue>0;i++){ spawnEnemy(); spawnQueue--; }
+        spawnTimer=rand(0.65,1.15)/spawnPace;
+      }
     }
+    // round clear
+    if(state===STATE.PLAY && spawnQueue<=0 && enemies.filter(en=>!en.dead).length===0 && !amuleto && wallets.length===0){ startBreak(); }
   }
-  // round clear
-  if(state===STATE.PLAY && spawnQueue<=0 && enemies.filter(en=>!en.dead).length===0 && !amuleto && wallets.length===0){ startBreak(); }
   // all dead?
   if(players.every(p=>!p.alive) && !players.some(p=>p.fell&&p.fallT>0)) gameOver();
 }
@@ -2280,6 +2387,7 @@ function updateDying(dt){
 }
 function drawDying(){ drawDeathScene(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); }
 function gameOver(){
+  if(survival && kills>lpBestScore){ lpBestScore=kills; try{ localStorage.setItem('fm_laspalmas_best', lpBestScore); }catch(e){} }
   camX = clamp((lastDead?lastDead.x:W/2) - W/2, 0, Math.max(0,WORLD_W-W));
   camY = clamp((lastDead?lastDead.y:H/2) - H/2, 0, Math.max(0,WORLD_H-H));
   if(lastDead && lastDead.fell){ dying=null; state=STATE.OVER; menuSel=0; playDeathMusic(); return; }
@@ -2741,7 +2849,17 @@ function buildArenaBG(g){
   }
 }
 let arenaBG=null, arenaTrees=null, arenaTag='';
+// Las Palmas draws its pre-rendered composite straight from the image (only the visible slice),
+// so we never allocate a 3280x5880 offscreen canvas for it.
+function drawLpArena(){
+  const sx=Math.max(0,Math.floor(camX)), sy=Math.max(0,Math.floor(camY));
+  const sw=Math.min(W, WORLD_W-sx), sh=Math.min(H, WORLD_H-sy);
+  if(sw<=0||sh<=0) return;
+  if(LP_BG_IMG.naturalWidth){ ctx.drawImage(LP_BG_IMG, sx,sy,sw,sh, sx,sy,sw,sh); }
+  else { ctx.fillStyle='#4f8a3a'; ctx.fillRect(sx,sy,sw,sh); }
+}
 function drawArena(){
+  if(currentMap==='laspalmas'){ drawLpArena(); return; }
   const tag=currentMap+'|'+WORLD_W+'|'+WORLD_H;
   if(!arenaBG || arenaTag!==tag){
     arenaBG=document.createElement('canvas'); arenaBG.width=WORLD_W; arenaBG.height=WORLD_H; buildArenaBG(arenaBG.getContext('2d'));
@@ -2750,7 +2868,7 @@ function drawArena(){
   }
   ctx.drawImage(arenaBG,0,0);
 }
-function drawTreeBorder(){ if(arenaTrees) ctx.drawImage(arenaTrees,0,0); }
+function drawTreeBorder(){ if(currentMap==='laspalmas') return; if(arenaTrees) ctx.drawImage(arenaTrees,0,0); }
 
 function freddyFrame(p){
   const d=p.dir, S=SPRITES;
@@ -3520,20 +3638,21 @@ function drawEnemy(e){
 
 function drawApuchi(a){
   const img=APU_IMG[a.type], D=APU_DEF[a.type];
-  const bounce=Math.abs(Math.sin(a.bob))*9;          // lively hop
+  const half=(currentMap==='laspalmas');            // Las Palmas Apuchis are half size
+  const bounce=Math.abs(Math.sin(a.bob))*(half?4.5:9);          // lively hop
   const squash=1+0.12*Math.sin(a.bob*2+1.2);         // squash & stretch
   const pop=clamp(a.spawn,0,1);
   const cy=a.y-bounce;
   // shadow shrinks as it rises
   ctx.fillStyle='rgba(0,0,0,0.25)';
-  ctx.beginPath(); ctx.ellipse(a.x, a.y+16, 13-bounce*0.5, 4.5, 0,0,TAU); ctx.fill();
-  if(D.rare){ ctx.shadowColor=D.color; ctx.shadowBlur=14+6*Math.sin(time*6); }
+  ctx.beginPath(); ctx.ellipse(a.x, a.y+(half?8:16), (half?7:13)-bounce*0.5, half?2.6:4.5, 0,0,TAU); ctx.fill();
+  if(D.rare){ ctx.shadowColor=D.color; ctx.shadowBlur=(half?9:14)+6*Math.sin(time*6); }
   if(img && img.naturalWidth){
-    const H0=38*pop, asp=img.naturalWidth/img.naturalHeight;
+    const H0=(half?19:38)*pop, asp=img.naturalWidth/img.naturalHeight;
     const h=H0*squash, w=H0*asp/squash;
     ctx.drawImage(img, a.x-w/2, cy-h/2, w, h);
   } else {
-    ctx.fillStyle=D.color; ctx.beginPath(); ctx.arc(a.x,cy,14*pop,0,TAU); ctx.fill();
+    ctx.fillStyle=D.color; ctx.beginPath(); ctx.arc(a.x,cy,(half?7:14)*pop,0,TAU); ctx.fill();
   }
   ctx.shadowBlur=0;
   if(D.rare && Math.random()<0.25){ spark(a.x+rand(-14,14), cy+rand(-14,14), '#ffffff', 1, 25); }
@@ -3572,7 +3691,23 @@ function drawApuStatus(p,x,y){
 function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,52);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 18px Courier New'; ctx.textAlign='center';
-  if(state===STATE.PLAY){
+  if(state===STATE.PLAY && survival){
+    const cnt='Enemigos: '+enemies.filter(en=>!en.dead).length;
+    if(players.length>=3){
+      const label='ELIMINADOS '+kills;
+      ctx.font='bold 16px Courier New';
+      const bw=Math.max(ctx.measureText(label).width, ctx.measureText(cnt).width)+24, by=56, bx=W-8-bw;
+      ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(bx,by,bw,40);
+      ctx.strokeStyle='rgba(255,225,74,0.45)'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,40);
+      ctx.textAlign='right';
+      ctx.fillStyle='#ffe9b0'; ctx.font='bold 16px Courier New'; ctx.fillText(label, W-20, by+18);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W-20, by+33);
+      ctx.textAlign='center';
+    } else {
+      ctx.fillText('ELIMINADOS: '+kills, W/2, 22);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 40);
+    }
+  } else if(state===STATE.PLAY){
     const cnt='Enemigos: '+(enemies.filter(en=>!en.dead).length+spawnQueue);
     if(players.length>=3){
       // 3-4 players (online): the health bars fill the whole top strip and boss bars fill the
@@ -3715,7 +3850,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.7';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.1';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3740,27 +3875,29 @@ function drawMainMenu(){
 function drawMapas(){
   drawBannerBG();
   ensureMapThumb();
-  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'}];
-  const n=4, cw=232, gap=24, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=160, chh=320;
+  const maps=[{name:'Espíritu del Amazonas',short:'Amazonas'},{name:'Stonebridge',short:'Stonebridge'},{name:'Templo de la Jarjacha',short:'el Templo'},{name:'Machu Picchu',short:'Machu Picchu'},{name:'Las Palmas',short:'Las Palmas'}];
+  const n=5, cw=200, gap=16, totW=n*cw+(n-1)*gap, x0=(W-totW)/2, cy=170, chh=300;
+  const thumbH=158;
   for(let i=0;i<n;i++){
     const m=maps[i], locked=!isMapUnlocked(i);
     let ox=(i===mapSel && mapLockShake>0 && locked)?Math.sin(time*45)*5:0;
     const cx=x0+i*(cw+gap)+ox;
     ctx.save(); ctx.translate(cx,cy);
     ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
-    ctx.save(); rrect(12,12,cw-24,184,6); ctx.clip();
-    const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:((i===3)?mapThumb4:null)));
-    if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,184); }
-    else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,184); }
-    if(locked){ ctx.fillStyle='rgba(0,0,0,0.64)'; ctx.fillRect(12,12,cw-24,184); }
+    ctx.save(); rrect(12,12,cw-24,thumbH,6); ctx.clip();
+    if(i===4){ if(LP_BG_IMG.naturalWidth){ ctx.drawImage(LP_BG_IMG, 0,0,LP_W,LP_H, 12,12,cw-24,thumbH); } else { ctx.fillStyle='#4f8a3a'; ctx.fillRect(12,12,cw-24,thumbH); } }
+    else { const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:mapThumb4));
+      if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,thumbH); } else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,thumbH); } }
+    if(locked){ ctx.fillStyle='rgba(0,0,0,0.64)'; ctx.fillRect(12,12,cw-24,thumbH); }
     ctx.restore();
-    if(locked){ drawLock(cw/2,96,1.05); ctx.fillStyle='#e8c98a'; ctx.font='bold 17px Courier New'; ctx.textAlign='center'; ctx.fillText('BLOQUEADO', cw/2, 172); }
+    if(locked){ drawLock(cw/2,86,1.0); ctx.fillStyle='#e8c98a'; ctx.font='bold 16px Courier New'; ctx.textAlign='center'; ctx.fillText('BLOQUEADO', cw/2, 150); }
     ctx.textAlign='center';
-    ctx.fillStyle=locked?'#9a8f75':'#ffe9b0'; ctx.font='bold 17px Courier New';
-    wrapLeftCentered(m.name, cw/2, 228, cw-26, 21);
-    if(locked){ ctx.fillStyle='#c9b489'; ctx.font='13px Courier New'; ctx.fillText('Supera '+maps[i-1].short, cw/2, 292); }
-    else if(mapsDone[MAP_ORDER[i]]){ ctx.fillStyle='#ffd24a'; ctx.font='13px Courier New'; ctx.fillText('★ Completado', cw/2, 292); }
-    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 292); }
+    ctx.fillStyle=locked?'#9a8f75':'#ffe9b0'; ctx.font='bold 16px Courier New';
+    wrapLeftCentered(m.name, cw/2, 200, cw-26, 20);
+    if(locked){ ctx.fillStyle='#c9b489'; ctx.font='12px Courier New'; ctx.fillText('Supera '+maps[i-1].short, cw/2, 272); }
+    else if(i===4){ ctx.fillStyle='#ff9a5a'; ctx.font='bold 12px Courier New'; ctx.fillText('SUPERVIVENCIA ∞', cw/2, 268); ctx.fillStyle='#aef7c2'; ctx.font='11px Courier New'; ctx.fillText('Mejor: '+lpBestScore, cw/2, 286); }
+    else if(mapsDone[MAP_ORDER[i]]){ ctx.fillStyle='#ffd24a'; ctx.font='13px Courier New'; ctx.fillText('★ Completado', cw/2, 272); }
+    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 272); }
     if(i===mapSel){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; rrect(2,2,cw-4,chh-4,10); ctx.stroke(); }
     ctx.restore();
   }
@@ -3921,8 +4058,14 @@ function drawOver(){
   ctx.fillStyle='#ff5a4a'; ctx.font='bold 46px Courier New';
   ctx.fillText('FIN DEL JUEGO', W/2, 150);
   ctx.fillStyle='#ffe9b0'; ctx.font='20px Courier New';
-  ctx.fillText('Ronda alcanzada: '+round, W/2, 210);
-  ctx.fillText('Puntos totales: '+score, W/2, 244);
+  if(survival){
+    ctx.fillText('Enemigos eliminados: '+kills, W/2, 210);
+    ctx.fillStyle=(kills>=lpBestScore&&kills>0)?'#ffd24a':'#aef7c2'; ctx.font='18px Courier New';
+    ctx.fillText((kills>=lpBestScore&&kills>0)?('¡NUEVO RÉCORD!  '+lpBestScore):('Mejor: '+lpBestScore), W/2, 240);
+  } else {
+    ctx.fillText('Ronda alcanzada: '+round, W/2, 210);
+    ctx.fillText('Puntos totales: '+score, W/2, 244);
+  }
   // per player summary
   let yy=300;
   ctx.font='15px Courier New';
@@ -4064,9 +4207,9 @@ function handleMenuKey(code){
     if(code==='Escape'){ if(!chooserDeselect(players[0])) enterLobby(); }
   } else if(state===STATE.MAPAS){
     if(code==='Escape'){ state=STATE.MODOS; modeSel=0; return; }
-    if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+3)%4;
-    if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%4;
-    if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=(mapSel===1)?'stonebridge':(mapSel===2)?'templo':(mapSel===3)?'machu':'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
+    if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+4)%5;
+    if(code==='ArrowRight'||code==='KeyD') mapSel=(mapSel+1)%5;
+    if(code==='Enter'||code==='Space'){ if(isMapUnlocked(mapSel)){ currentMap=(mapSel===1)?'stonebridge':(mapSel===2)?'templo':(mapSel===3)?'machu':(mapSel===4)?'laspalmas':'amazonas'; WORLD_W=W; camX=0; if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); } } else { mapLockShake=0.45; } }
   } else if(state===STATE.HELP){
     if(code==='Escape'||code==='Enter'||code==='Space'){ state=STATE.MAINMENU; mainSel=0; }
   } else if(state===STATE.MENU){
@@ -4107,7 +4250,9 @@ let condor=null, introTimer=0;
 function magicDust(x,y){ for(let i=0;i<3;i++) spark(x+rand(-24,24), y+rand(-30,18), ['#ffe9a0','#ffffff','#ffd24a','#aef7c2','#9adcff'][randi(0,4)], 1, 70); }
 function startIntro(){
   state=STATE.INTRO; introTimer=15;
-  condor={ x:WORLD_W/2, y:(WORLD_H>H?WORLD_H*0.42:H*0.40), scale:0, spin:0, animTime:0, pose:3, apSnd:false, lvSnd:false, msg:false };
+  const cxx = survival?LP_SPAWN.x : WORLD_W/2;
+  const cyy = survival?(LP_SPAWN.y-120) : (WORLD_H>H?WORLD_H*0.42:H*0.40);
+  condor={ x:cxx, y:cyy, scale:0, spin:0, animTime:0, pose:3, apSnd:false, lvSnd:false, msg:false };
 }
 function updateCondor(dt){
   const c=condor; if(!c) return;
@@ -4128,7 +4273,7 @@ function updateIntro(dt){
   updateCondor(dt);
   if(players.length && players.every(p=>!p.alive) && !players.some(p=>p.fell&&p.fallT>0)) gameOver();
   introTimer-=dt;
-  if(introTimer<=0){ condor=null; startRound(); }
+  if(introTimer<=0){ condor=null; if(survival) startSurvival(); else startRound(); }
 }
 function drawCondor(){
   const c=condor; if(!c||c.scale<=0.01) return;
@@ -4142,9 +4287,10 @@ function drawCondor(){
   ctx.restore();
 }
 function drawIntroUI(){
-  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(W/2-110,58,220,30);
+  const bw=survival?300:220;
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(W/2-bw/2,58,bw,30);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New'; ctx.textAlign='center';
-  ctx.fillText('RONDA 1 EN '+Math.ceil(introTimer)+'s', W/2, 79);
+  ctx.fillText(survival?('¡A SOBREVIVIR EN '+Math.ceil(introTimer)+'s!'):('RONDA 1 EN '+Math.ceil(introTimer)+'s'), W/2, 79);
   if(condor && condor.scale>0.3){ ctx.fillStyle='#ffe14a'; ctx.font='bold 14px Courier New'; ctx.fillText('C\u00f3ndor Ganso', condor.x-camX, condor.y-camY-44*condor.scale-8); }
   ctx.textAlign='left';
 }
@@ -4263,10 +4409,14 @@ function startGame(){
   resumeCumbia();
   // copy the map's obstacle list — Inca wall blocks get pushed/spliced into `obstacles` at runtime,
   // so the pristine per-map arrays must never be mutated
-  obstacles = ((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
-  WORLD_W = (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
-  WORLD_H = (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H; camX=0; camY=0;
+  obstacles = ((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
+  WORLD_W = (currentMap==='laspalmas')?LP_W : (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
+  WORLD_H = (currentMap==='laspalmas')?LP_H : (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H;
   cliffs = (currentMap==='templo')?CLIFFS_TEMPLO:[];
+  survival=(currentMap==='laspalmas'); survTime=0; survSpawnT=0; kills=0;
+  const sx0 = survival?LP_SPAWN.x : WORLD_W/2;
+  const sy0base = survival?LP_SPAWN.y : (currentMap==='stonebridge')?344:WORLD_H/2;
+  camX=clamp(sx0-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(sy0base-H/2,0,Math.max(0,WORLD_H-H));
   round=0; score=0; particles.length=0; enemies.length=0;
   apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
   bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
@@ -4274,20 +4424,19 @@ function startGame(){
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   if(NET.hosting){
-    const sy0=(currentMap==='stonebridge')?344:WORLD_H/2;
+    const sy0=sy0base;
     const total=Math.min(4, Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-    for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
+    for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
     if(netSelPicks){ for(let i=0;i<players.length && i<netSelPicks.length;i++){ if(netSelPicks[i]) reassignKind(players[i], netSelPicks[i]); } netSelPicks=null; }
     else randomizeOnlineChars();   // fallback only — the lobby now goes through the NETSELECT pick screen
   } else if(mode===1){
-    players.push(makePlayer(selChar1||'freddy', WORLD_W/2, (currentMap==='stonebridge')?344:WORLD_H/2, P1));
+    players.push(makePlayer(selChar1||'freddy', sx0, sy0base, P1));
   } else {
-    const sy=(currentMap==='stonebridge')?344:WORLD_H/2;
-    players.push(makePlayer(selChar1||'freddy', WORLD_W/2-40, sy, P1));
-    players.push(makePlayer(selChar2||'michi', WORLD_W/2+40, sy, P2));
+    players.push(makePlayer(selChar1||'freddy', sx0-40, sy0base, P1));
+    players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
   else startIntro();
@@ -5284,7 +5433,7 @@ function _frameBody(now){
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,f:()=>drawTurret(t)}))];
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, f:()=>drawProp(o)}); } } }
-  if(state===STATE.BREAK){
+  if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
     for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
   }
   drawables.sort((a,b)=>a.y-b.y);
@@ -5442,6 +5591,7 @@ function netSerializeSnapshot(){
   while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();   // drop SFX/text events already resent ~4 times
   return { _snap:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
     state, round, score, spawnQueue, breakTimer, introTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
+    survival, kills,
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
@@ -5519,9 +5669,10 @@ function netApplyMeta(s){
   }
   if(s.state===STATE.PAUSE && state!==STATE.PAUSE){ pauseView='main'; pauseSel=0; }   // fresh local menu each time the host pauses
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
+  survival=!!s.survival; kills=s.kills||0;
   if(currentMap!==s.currentMap){
     currentMap=s.currentMap;
-    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice();
+    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS).slice();
     cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
     gWallSig=null;   // force the wall/obstacle rebuild on the fresh map
   }
@@ -5695,7 +5846,7 @@ function netApplyGuest(dt){
     if(gIntroSeq!==cur.seq){ gIntroSeq=cur.seq; introTimer=cur.introTimer||0; }
     else introTimer=Math.max(0, introTimer-dt);          // smooth the countdown between ~18Hz snapshots
     if(!condor && (15-introTimer)<14){
-      condor={ x:WORLD_W/2, y:(WORLD_H>H?WORLD_H*0.42:H*0.40), scale:0, spin:0, animTime:0, pose:3,
+      condor={ x:(survival?LP_SPAWN.x:WORLD_W/2), y:(survival?(LP_SPAWN.y-120):(WORLD_H>H?WORLD_H*0.42:H*0.40)), scale:0, spin:0, animTime:0, pose:3,
                apSnd:true, lvSnd:true,   // the host relays its playMagic() cues via net events — don't double them
                msg:false };              // the condor voice line is NOT relayed → play it locally
     }
@@ -5771,7 +5922,7 @@ function netApplyGuest(dt){
       gWallSig=sig;
       incaWalls.length=0;
       for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:WALL_HP, id:w2.id});
-      const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS;
+      const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS;
       obstacles=base.concat(incaWalls);
     } }
   for(const l of leaves){  l.x+=(l.vx||0)*dt; l.y+=(l.vy||0)*dt; }
@@ -5783,7 +5934,7 @@ function netApplyGuest(dt){
 
   // local audio cues driven off snapshot deltas
   if(gPrevRound===-999) gPrevRound=cur.round;
-  try{ if(cur.state===STATE.PLAY && cur.round!==gPrevRound) playRoundStart(cur.round); }catch(e){}
+  try{ if(!survival && cur.state===STATE.PLAY && cur.round!==gPrevRound) playRoundStart(cur.round); }catch(e){}
   try{ netGuestMusic(cur.state); }catch(e){}
   gPrevRound=cur.round;
 }
