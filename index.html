@@ -2077,15 +2077,19 @@ function updatePlayers(dt){
         resolveCollision(p);
       }
     }
-    if(survival){ if(state===STATE.PLAY && ks[c.punch]) tryShoot(p); p.wasPunch=!!ks[c.punch]; }   // Modo Infinito: 8-way shooting (not during the intro countdown)
+    if(survival){ if(state===STATE.PLAY && ks[c.punch] && !p.wasPunch) tryShoot(p); p.wasPunch=!!ks[c.punch]; }   // Modo Infinito: tap-to-fire 8-way shot (one per press, no spam-holding; not during the intro countdown)
     else if(p.special==='oro'){
       if(ks[c.punch]){ p.oroCharge=(p.oroCharge||0)+dt; if(p.oroCharge>=1.0){ fireLightning(p,'#ff9a2a',180); p.oroCharge=0; p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; p.oro=0; floatText(p.x,p.y-26,'ORO agotado','#ff9a2a'); } } }
       else { if(p.wasPunch && p.oroCharge>0 && p.oroCharge<0.28) tryPunch(p); p.oroCharge=0; }
       p.wasPunch = !!ks[c.punch];
     } else { if(ks[c.punch]) tryPunch(p); p.wasPunch=!!ks[c.punch]; }
-    // gear key (F for J1 / . for the rest): place or detonate the boss-drop gadget (edge-triggered)
+    // gear key (F for J1 / . for the rest): boss-drop gadget in Horda; in Modo Infinito it unleashes
+    // the gold ULTIMATE — a golden lightning nova once the ORO meter is full (50/50)
     const gkd=!!(c.gear && ks[c.gear]);
-    if(gkd && !p.wasGear) useGear(p);
+    if(gkd && !p.wasGear){
+      if(survival){ if(p.oro>=50){ fireLightning(p,'#ff9a2a',260); spark(p.x,p.y,'#ffe24a',30,220); cameraShake=12; floatText(p.x,p.y-30,'¡ORO DESATADO!','#ff9a2a'); playOroPower(); p.oro=0; p.special='none'; } }
+      else useGear(p);
+    }
     p.wasGear=gkd;
     if(p.alive && cliffs.length && inCliff(p.x,p.y)){ p.alive=false; p.fell=true; p.fallT=0.5; p.deathAnim=null; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,'#6a5a40',22,180); cameraShake=7; }
   }
@@ -3849,7 +3853,10 @@ function drawHUD(){
       }
     }
     ctx.font='bold 11px Courier New'; ctx.textAlign='right';
-    if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO 50/50 \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); }
+    if(survival){ const gk=(players.indexOf(p)===0?'F':'.');
+      if(p.oro>=50){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('\u00a1ORO LISTO ['+gk+']!', px+w, 14); } }
+      else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); } }
+    else if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO 50/50 \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); }
     ctx.textAlign='left';
     drawApuStatus(p, px, 48);
     px += w+40;
@@ -3939,7 +3946,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-16.5';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.6';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
