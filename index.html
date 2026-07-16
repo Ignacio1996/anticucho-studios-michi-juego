@@ -4049,7 +4049,8 @@ function handleMenuKey(code){
       else { enterPvpSelect(); }
     }
   } else if(state===STATE.NETSELECT){
-    if(code==='Escape') enterLobby();   // back to the SALA — picks reset on the next Enter
+    // 1st Esc un-picks your character (choose again); 2nd Esc backs out to the SALA
+    if(code==='Escape'){ if(!chooserDeselect(players[0])) enterLobby(); }
   } else if(state===STATE.MAPAS){
     if(code==='Escape'){ state=STATE.MODOS; modeSel=0; return; }
     if(code==='ArrowLeft'||code==='KeyA') mapSel=(mapSel+3)%4;
@@ -4486,6 +4487,14 @@ function pvpConfirmPick(pl,k){
   pl.selKind=k; reassignKind(pl,k);
   pl.wasPunch=true; pl.wasGear=true;   // the confirming key must not drop a bomb once they spawn
   playCharSelect(k); netQSnd('sel',k);
+}
+// Esc on the pick screen backs a player out of their locked-in character so they can choose again.
+// Reset selWas so the same key press that triggered the Esc/confirm can't instantly re-pick.
+function chooserDeselect(pl){
+  if(!pl || !pl.selKind) return false;
+  pl.selKind=null;
+  pl.selWas={l:true,r:true,p:true,u:true,d:true};
+  return true;
 }
 function updateChoosers(dt, roster){   // shared by the PVP 'chars' phase and the Horda NETSELECT screen
   const N=roster.length;
@@ -5870,7 +5879,13 @@ requestAnimationFrame(frame);
       // Escape isn't part of the input packet. Horda: it asks the host to toggle the shared pause
       // (edge-triggered). PVP: pause is local-only — toggle our own info overlay, the duel keeps running.
       if(e.code==='Escape' && down && !gk[e.code]){
-        if(state===STATE.PVP){
+        // on the Horda pick screen (replicated via {_nsel}): ask the host to un-pick our character
+        // so we can choose again. (No {pt:1} pause here — there's nothing to pause yet.)
+        const nselMe = NET.nsel && NET.nsel.list && NET.nsel.list[NET.slot];
+        if(NET.nsel){
+          if(nselMe && nselMe.skd && NET.conn && NET.conn.open){ try{ NET.conn.send({ds:1}); }catch(_e){} }
+        }
+        else if(state===STATE.PVP){
           if(pvpInfo && pvp.pauseView==='settings') pvp.pauseView='main';
           else if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){ pvpInfo=!pvpInfo; if(pvpInfo){ pvp.pauseSel=0; pvp.pauseView='main'; } }
         }
@@ -5911,13 +5926,42 @@ requestAnimationFrame(frame);
     addEventListener('keyup',   swallow, true);
 
     const peer = new Peer(); NET.peer = peer;
-    peer.on('open', () => {
-      const conn = peer.connect(joinId, { reliable:false }); NET.conn = conn;
-      conn.on('data',  d => { try{ netOnSnapshot(d); if(banner) banner.style.display='none'; }catch(_e){} });
-      conn.on('open',  () => { setBanner('Conectado - esperando al anfitrión…'); lastSig=''; sendInput(true); });
-      conn.on('close', () => { NET.guestReady=false; setBanner('Anfitrión desconectado.'); });
+    // Opening the WebRTC data channel is NOT reliable: the handshake can silently stall (a dropped
+    // ICE packet, or the host momentarily off the signaling server) and leave this guest stuck on
+    // "Conectando con el anfitrión…" forever — while other guests get in fine. So keep (re)trying
+    // until a channel actually opens, tearing down each half-open attempt before the next.
+    let joined=false, connTimer=null, attempt=0;
+    const clearConnTimer=()=>{ if(connTimer){ clearTimeout(connTimer); connTimer=null; } };
+    function tryConnect(){
+      if(joined || NET.role!=='guest') return;
+      clearConnTimer();
+      if(NET.conn){ try{ NET.conn.close(); }catch(_e){} }   // retire the previous half-open attempt first
+      attempt++;
+      setBanner(attempt>1 ? 'Reintentando conexión ('+attempt+')…' : 'Conectando con el anfitrión…');
+      let conn;
+      try{ conn = peer.connect(joinId, { reliable:false }); }catch(_e){ connTimer=setTimeout(tryConnect,2000); return; }
+      NET.conn = conn;
+      const onUp=()=>{ if(joined) return; joined=true; clearConnTimer(); lastSig=''; };
+      conn.on('data',  d => { onUp(); try{ netOnSnapshot(d); if(banner) banner.style.display='none'; }catch(_e){} });
+      conn.on('open',  () => { onUp(); setBanner('Conectado - esperando al anfitrión…'); sendInput(true); });
+      conn.on('close', () => { NET.guestReady=false; if(joined){ joined=false; setBanner('Conexión perdida. Reconectando…'); tryConnect(); } });
+      conn.on('error', () => {});                              // recovered by the retry timer / peer 'error' below
+      connTimer=setTimeout(()=>{ if(!joined) tryConnect(); }, 5000);   // handshake didn't finish → drop it and retry
+    }
+    peer.on('open', tryConnect);
+    // idle or a network blip can drop us from the signaling server; rejoin so we can (re)connect
+    peer.on('disconnected', () => { if(!joined){ try{ peer.reconnect(); }catch(_e){} } });
+    peer.on('error', e => {
+      const t=(e&&e.type)||'';
+      // "peer-unavailable" = the host id isn't registered on the server yet (host still loading, or it
+      // briefly dropped off). All of these are transient — keep retrying instead of giving up.
+      if(!joined && (t==='peer-unavailable'||t==='network'||t==='server-error'||t==='socket-error'||t==='socket-closed'||t==='disconnected')){
+        setBanner('Buscando al anfitrión… (reintentando)');
+        clearConnTimer(); connTimer=setTimeout(tryConnect, 2000);
+      } else if(!joined){
+        setBanner('Error de conexión: ' + t);
+      }
     });
-    peer.on('error', e => setBanner('Error de conexión: ' + e.type));
 
     // stream our pose + input ~30×/s so the host tracks our client-authoritative position smoothly and
     // any dropped packet (unreliable channel) self-corrects on the next tick. Instant key-toggle sends
@@ -5929,6 +5973,9 @@ requestAnimationFrame(frame);
     NET.role = 'host';
     const inGame = () => state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING;
     const peer = new Peer(); NET.peer = peer;
+    // if idle or a network blip drops the host off the signaling server, guests can no longer find us
+    // ("peer-unavailable" → stuck on Conectando…). Rejoin the server so new guests keep connecting.
+    peer.on('disconnected', () => { try{ peer.reconnect(); }catch(_e){} });
     peer.on('open', id => {
       NET.link = location.origin + location.pathname + '?r=' + id;
       if(linkBox) linkBox.value = NET.link;
@@ -5942,7 +5989,11 @@ requestAnimationFrame(frame);
       const guest = { conn, keys:{}, slot };
       NET.conns.push(guest);
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(slot+1)+' listo)');
-      conn.on('data', d => { if(d && d.pt){ if(state!==STATE.PVP) togglePause(); return; } applyRemote(guest, d); });   // guest→host input / pose / pause-toggle packets (PVP pause is local per player — ignore)
+      conn.on('data', d => {
+        if(d && d.pt){ if(state!==STATE.PVP) togglePause(); return; }                        // pause-toggle request
+        if(d && d.ds){ if(state===STATE.NETSELECT) chooserDeselect(players[guest.slot]); return; }   // un-pick request (pick screen)
+        applyRemote(guest, d);   // guest→host input / pose packets
+      });
       conn.on('close', () => {
         const ci=NET.conns.indexOf(guest); if(ci>=0) NET.conns.splice(ci,1);
         // mark their player departed: no more input, down until they reconnect, and
