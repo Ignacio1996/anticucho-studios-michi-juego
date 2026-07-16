@@ -173,7 +173,7 @@ function playSfxElement(src, vol, rate){
       else { a=pool.shift(); pool.push(a); try{ a.pause(); }catch(e){} }   // all busy → steal oldest
     }
     try{ a.currentTime=0; }catch(e){}
-    a.volume=vol*sfxVol;
+    a.volume=Math.min(1, vol*sfxVol);   // element volume caps at 1 (setting >1 throws); buffer path can amplify
     a.preservesPitch=a.mozPreservesPitch=a.webkitPreservesPitch=!rate;
     a.playbackRate=rate||1;
     a.play().catch(()=>{});
@@ -218,10 +218,11 @@ let voices=[];
 function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
 function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
 function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); }
-// Alfredo & Mati recorded their voice takes quieter than the rest of the roster — lift their
-// select/death/hit volume a notch. Clamped to 1 so the <audio> element fallback never throws.
-const CHAR_VOL_BOOST={ alfredo:1.35, mati:1.35 };
-function charVol(kind, base){ return Math.min(1, base*(CHAR_VOL_BOOST[kind]||1)); }
+// Alfredo & Mati recorded their voice takes much quieter than the rest of the roster. The decoded
+// Web Audio buffer path (the one their voices actually run through) amplifies past 1.0, so push
+// their gain well above unity; the <audio> element fallback caps volume at 1 on its own.
+const CHAR_VOL_BOOST={ alfredo:2.4, mati:2.4 };
+function charVol(kind, base){ return base*(CHAR_VOL_BOOST[kind]||1); }
 function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], charVol(kind,0.95)); }
 function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], charVol(kind,0.95)); }
 function playRoundStart(r){
