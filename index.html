@@ -58,8 +58,10 @@ const W = cv.width, H = cv.height;
 // ---------- Audio ----------
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
 let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, pvpMusic=null, actx=null, sfxGain=null, audioStarted=false;
+let lpMx=[], lpMxIdx=0, lpMxNext=-1;   // Las Palmas Modo Infinito playlist (3 tracks, crossfaded in order)
+const LP_MX_VOL=0.42, LP_MX_FADE=3.2;
 // (the old masterGain/streamDest WebRTC audio tap is gone — guests play their own audio locally)
-let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
+let musicVol=0.55, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}   // start music quieter by default (raise it in AJUSTES)
 let pauseView='main', pauseSel=0, setSel=0;
 function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.4*musicVol; }
 function adjustVol(sel,delta){ if(sel===0){ musicVol=clamp(musicVol+delta,0,1); applyMusicVol(); } else { sfxVol=clamp(sfxVol+delta,0,1); if(sfxGain) sfxGain.gain.value=sfxVol; } try{ localStorage.setItem('fm_musicVol',musicVol); localStorage.setItem('fm_sfxVol',sfxVol); }catch(e){} } let lastWow=0, plinCount=0;
@@ -82,6 +84,9 @@ AUDIO_SRC.condor_templo_single="assets/snd_034.mp3";
 AUDIO_SRC.condor_templo_coop="assets/snd_035.mp3";
 AUDIO_SRC.tpbg="assets/snd_036.mp3";
 AUDIO_SRC.elvalle='assets/snd_037.mp3';
+AUDIO_SRC.lpmx1='assets/snd_lp_mx1.mp3';   // Modo Infinito (Las Palmas) music — 3 tracks played in order, crossfaded
+AUDIO_SRC.lpmx2='assets/snd_lp_mx2.mp3';
+AUDIO_SRC.lpmx3='assets/snd_lp_mx3.mp3';
 AUDIO_SRC.camclick='assets/snd_038.mp3';
 AUDIO_SRC.condor_mp_single='assets/snd_039.mp3';
 AUDIO_SRC.condor_mp_coop='assets/snd_040.mp3';
@@ -200,6 +205,7 @@ function initAudio(){
     try{ deathMusic=mkMusic(AUDIO_SRC.death, 0.5); }catch(e){}
     try{ losAndesMusic=mkMusic(AUDIO_SRC.losandes, 0.5); }catch(e){}
     try{ pvpMusic=mkMusic(AUDIO_SRC.pvpbg, 0.4); }catch(e){}
+    try{ lpMx=[mkMusic(AUDIO_SRC.lpmx1,0), mkMusic(AUDIO_SRC.lpmx2,0), mkMusic(AUDIO_SRC.lpmx3,0)]; for(const t of lpMx) t.loop=false; }catch(e){ lpMx=[]; }
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
@@ -237,11 +243,45 @@ function playPvpBoom(){ playSfx(AUDIO_SRC.pvpboom, 0.8); }
 function playBrujaAttack(giant){ playSfx(AUDIO_SRC.bruja_attack, 0.72, giant?0.62:0); }
 function playHeeGiant(){ playSfx(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.62, 0.62); }
 function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
-function playDeathMusic(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
-function playLosAndes(){ try{ if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
-function gameTrack(){ return currentMap==='pvp'?pvpMusic:currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
+function playDeathMusic(){ try{ lpMusicStop(); if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
+function playLosAndes(){ try{ lpMusicStop(); if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
+function gameTrack(){ if(currentMap==='laspalmas') return lpMx[lpMxIdx]||null;   // Las Palmas uses its own crossfading playlist, not a single looping track
+  return currentMap==='pvp'?pvpMusic:currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
 function otherTrack(){ return currentMap==='stonebridge'?bgMusic:sbMusic; }
-function resumeCumbia(){ try{ if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(pvpMusic&&pvpMusic!==g)pvpMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
+function resumeCumbia(){ try{ if(currentMap==='laspalmas'){ lpMusicStart(); return; } lpMusicStop(); if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(pvpMusic&&pvpMusic!==g)pvpMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
+// ---- Las Palmas (Modo Infinito) playlist: 3 tracks in order, crossfading one into the next ----
+function lpMusicStop(){ try{ for(const t of lpMx){ if(t) t.pause(); } }catch(e){} }
+function lpMusicStart(){
+  if(!lpMx.length) return;
+  try{ if(menuMusic)menuMusic.pause(); if(bgMusic)bgMusic.pause(); if(sbMusic)sbMusic.pause(); if(tpMusic)tpMusic.pause(); if(evMusic)evMusic.pause(); if(pvpMusic)pvpMusic.pause(); if(deathMusic){deathMusic.pause();deathMusic.currentTime=0;} if(losAndesMusic){losAndesMusic.pause();losAndesMusic.currentTime=0;} }catch(e){}
+  if(lpMx.some(t=>t && !t.paused)) return;   // already going (e.g. from the intro) → don't restart
+  lpMxIdx=0; lpMxNext=-1;
+  for(const t of lpMx){ try{ t.pause(); t.currentTime=0; t.volume=0; }catch(e){} }
+  try{ const t0=lpMx[0]; t0.currentTime=0; t0.volume=LP_MX_VOL*musicVol; t0.play().catch(()=>{}); }catch(e){}
+}
+function lpMusicUpdate(dt){
+  if(!lpMx.length) return; const cur=lpMx[lpMxIdx]; if(!cur) return;
+  // Safety net / loop: if the active track played to its END with no crossfade queued (e.g. the last
+  // track), jump straight to the next one (wrapping 3→1). `ended` distinguishes a natural finish from
+  // an intentional pause (menu/stop), which leaves ended=false.
+  if(cur.ended && lpMxNext<0){
+    try{ cur.currentTime=0; }catch(e){}
+    lpMxIdx=(lpMxIdx+1)%lpMx.length; const nx=lpMx[lpMxIdx];
+    try{ nx.currentTime=0; nx.volume=LP_MX_VOL*musicVol; nx.play().catch(()=>{}); }catch(e){}
+    return;
+  }
+  if(cur.paused) return;   // intentionally stopped (menu/death) — don't resurrect it here
+  const dur=cur.duration||0, ct=cur.currentTime||0;
+  if(lpMxNext<0 && dur>0 && ct>dur-LP_MX_FADE){    // near the end → start the next track fading in
+    lpMxNext=(lpMxIdx+1)%lpMx.length; const nx=lpMx[lpMxNext];
+    try{ nx.currentTime=0; nx.volume=0; nx.play().catch(()=>{}); }catch(e){}
+  }
+  if(lpMxNext>=0){
+    const nx=lpMx[lpMxNext], remain=Math.max(0,(cur.duration||0)-(cur.currentTime||0)), f=clamp(1-remain/LP_MX_FADE,0,1);
+    try{ cur.volume=LP_MX_VOL*musicVol*(1-f); nx.volume=LP_MX_VOL*musicVol*f; }catch(e){}
+    if(cur.ended || remain<=0.06){ try{ cur.pause(); cur.currentTime=0; }catch(e){} lpMxIdx=lpMxNext; lpMxNext=-1; try{ nx.volume=LP_MX_VOL*musicVol; }catch(e){} }
+  } else { try{ cur.volume=LP_MX_VOL*musicVol; }catch(e){} }
+}
 function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; playSfx(AUDIO_SRC.wow, 0.4); }
 function playPickup(){
   if(!actx) return;
@@ -762,7 +802,7 @@ let modeSel=0;          // MODOS screen selection: 0 Horda · 1 PVP
 let WORLD_W=W, WORLD_H=H, camX=0, camY=0;
 let flowGrid=null, flowCols=0, flowRows=0, flowCell=46, flowTimer=0;
 let bossFlowGrid=null, bossFlowCols=0, bossFlowRows=0, bossFlowTimer=0;
-const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' } };
+const MAP_CFG={ amazonas:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, stonebridge:{ countMul:0.6, hpMul:1.6, dmgMul:1.3, edges:'lr' }, templo:{ countMul:1.1, hpMul:1, dmgMul:1, edges:'all' }, machu:{ countMul:1, hpMul:1, dmgMul:1, edges:'all' }, laspalmas:{ countMul:1, hpMul:1, dmgMul:1, edges:'ring' } };
 const MAP_ORDER=['amazonas','stonebridge','templo','machu'];
 let mapsDone={}; try{ mapsDone=JSON.parse(localStorage.getItem('fm_progress')||'{}')||{}; }catch(e){ mapsDone={}; }
 const UNLOCK_ALL=false; // dev toggle: set true to unlock every map while testing
@@ -872,6 +912,74 @@ let cliffs=[];
 function inCliff(x,y){ for(const c of cliffs){ const dx=(x-(c.x+c.w/2))/(c.w*0.40), dy=(y-(c.y+c.h/2))/(c.h*0.40); if(dx*dx+dy*dy<1) return true; } return false; }
 let obstacles = OBST_AMAZONAS;
 
+// ================= LAS PALMAS — endless survival map =================
+// Big beachside town (3280x5880). No rounds: enemies stream in forever after the
+// Cóndor's intro; score = enemies killed. Collision comes from a downsampled bit-grid
+// (buildings/water tower/trees/beach are solid) instead of rectangle obstacles, and
+// enemies path around it with the existing BFS flow field. Apuchis drop from kills at
+// half size, and dying strips ALL your powers (even after a revive).
+const LP_W=3280, LP_H=5880;
+const LP_SPAWN={x:1640, y:1587};          // town centre, by the water tower (player start)
+const LP_TERRAIN_IMG=new Image(); LP_TERRAIN_IMG.src='assets/laspalmas_terrain.png';   // prop-free ground (background layers flattened)
+const LP_THUMB_IMG=new Image(); LP_THUMB_IMG.src='assets/laspalmas_thumb.png';         // map-select card art
+// Prop instances from the map pack: x,y = sprite CENTER; sy = sort_y (feet line); zt = z_tiebreak;
+// fg = on a foreground-plane layer (drawn on top); fl = horizontal flip; rot = rotation degrees.
+const LP_PROP_FILES=["assets/lp_prop_0.png","assets/lp_prop_1.png","assets/lp_prop_2.png","assets/lp_prop_3.png","assets/lp_prop_4.png","assets/lp_prop_5.png","assets/lp_prop_6.png","assets/lp_prop_7.png","assets/lp_prop_8.png","assets/lp_prop_9.png","assets/lp_prop_10.png","assets/lp_prop_11.png","assets/lp_prop_12.png","assets/lp_prop_13.png","assets/lp_prop_14.png","assets/lp_prop_15.png","assets/lp_prop_16.png","assets/lp_prop_17.png","assets/lp_prop_18.png","assets/lp_prop_19.png","assets/lp_prop_20.png","assets/lp_prop_21.png","assets/lp_prop_22.png","assets/lp_prop_23.png","assets/lp_prop_24.png","assets/lp_prop_25.png","assets/lp_prop_26.png","assets/lp_prop_27.png","assets/lp_prop_28.png","assets/lp_prop_29.png"];
+const LP_PROPS=[{"fi":0,"x":632,"y":2389,"w":258,"h":191,"sy":2485,"zt":0,"fg":0,"fl":0,"rot":0},{"fi":1,"x":1010,"y":2371,"w":332,"h":224,"sy":2483,"zt":1,"fg":0,"fl":0,"rot":0},{"fi":2,"x":1521,"y":2578,"w":231,"h":233,"sy":2695,"zt":2,"fg":0,"fl":0,"rot":0},{"fi":3,"x":1795,"y":2586,"w":173,"h":244,"sy":2708,"zt":3,"fg":0,"fl":0,"rot":0},{"fi":4,"x":2209,"y":2374,"w":286,"h":193,"sy":2471,"zt":4,"fg":0,"fl":0,"rot":0},{"fi":5,"x":2519,"y":2392,"w":185,"h":156,"sy":2470,"zt":5,"fg":0,"fl":0,"rot":0},{"fi":2,"x":664,"y":2906,"w":231,"h":233,"sy":3023,"zt":6,"fg":0,"fl":0,"rot":0},{"fi":0,"x":1000,"y":2900,"w":258,"h":191,"sy":2996,"zt":7,"fg":0,"fl":0,"rot":0},{"fi":3,"x":2556,"y":2892,"w":173,"h":244,"sy":3014,"zt":8,"fg":0,"fl":0,"rot":0},{"fi":4,"x":1498,"y":3084,"w":286,"h":193,"sy":3181,"zt":9,"fg":0,"fl":0,"rot":0},{"fi":1,"x":2264,"y":2864,"w":332,"h":224,"sy":2976,"zt":10,"fg":0,"fl":0,"rot":0},{"fi":5,"x":1814,"y":3082,"w":185,"h":156,"sy":3160,"zt":11,"fg":0,"fl":0,"rot":0},{"fi":1,"x":639,"y":3845,"w":332,"h":224,"sy":3957,"zt":12,"fg":0,"fl":0,"rot":0},{"fi":4,"x":1017,"y":3839,"w":286,"h":193,"sy":3936,"zt":13,"fg":0,"fl":0,"rot":0},{"fi":0,"x":1521,"y":3845,"w":258,"h":191,"sy":3941,"zt":14,"fg":0,"fl":0,"rot":0},{"fi":3,"x":1791,"y":3839,"w":173,"h":244,"sy":3961,"zt":15,"fg":0,"fl":0,"rot":0},{"fi":2,"x":2271,"y":3817,"w":231,"h":233,"sy":3934,"zt":16,"fg":0,"fl":0,"rot":0},{"fi":6,"x":2593,"y":3813,"w":271,"h":222,"sy":3924,"zt":17,"fg":0,"fl":0,"rot":0},{"fi":6,"x":625,"y":4317,"w":271,"h":222,"sy":4428,"zt":18,"fg":0,"fl":0,"rot":0},{"fi":4,"x":2245,"y":4293,"w":286,"h":193,"sy":4390,"zt":19,"fg":0,"fl":0,"rot":0},{"fi":0,"x":2595,"y":4303,"w":258,"h":191,"sy":4399,"zt":20,"fg":0,"fl":0,"rot":0},{"fi":0,"x":1001,"y":4329,"w":258,"h":191,"sy":4425,"zt":21,"fg":0,"fl":0,"rot":0},{"fi":1,"x":1541,"y":4325,"w":332,"h":224,"sy":4437,"zt":22,"fg":0,"fl":0,"rot":0},{"fi":5,"x":1831,"y":4353,"w":185,"h":156,"sy":4431,"zt":23,"fg":0,"fl":0,"rot":0},{"fi":7,"x":488,"y":4498,"w":156,"h":372,"sy":4684,"zt":24,"fg":0,"fl":0,"rot":0},{"fi":7,"x":942,"y":4756,"w":156,"h":372,"sy":4942,"zt":25,"fg":0,"fl":0,"rot":0},{"fi":7,"x":2210,"y":4546,"w":156,"h":372,"sy":4732,"zt":26,"fg":0,"fl":0,"rot":0},{"fi":7,"x":2656,"y":4420,"w":156,"h":372,"sy":4606,"zt":27,"fg":0,"fl":0,"rot":0},{"fi":8,"x":712,"y":4764,"w":264,"h":780,"sy":5154,"zt":28,"fg":0,"fl":0,"rot":0},{"fi":8,"x":1126,"y":4540,"w":264,"h":780,"sy":4930,"zt":29,"fg":0,"fl":0,"rot":0},{"fi":8,"x":1840,"y":4706,"w":264,"h":780,"sy":5096,"zt":30,"fg":0,"fl":0,"rot":0},{"fi":8,"x":2746,"y":4694,"w":264,"h":780,"sy":5084,"zt":31,"fg":0,"fl":0,"rot":0},{"fi":8,"x":2696,"y":1858,"w":264,"h":780,"sy":2248,"zt":32,"fg":0,"fl":0,"rot":0},{"fi":8,"x":2488,"y":1646,"w":264,"h":780,"sy":2036,"zt":33,"fg":0,"fl":0,"rot":0},{"fi":9,"x":1090,"y":1854,"w":300,"h":492,"sy":2100,"zt":34,"fg":0,"fl":0,"rot":0},{"fi":9,"x":962,"y":750,"w":300,"h":492,"sy":996,"zt":35,"fg":0,"fl":0,"rot":0},{"fi":9,"x":726,"y":650,"w":300,"h":492,"sy":896,"zt":36,"fg":0,"fl":0,"rot":0},{"fi":9,"x":2734,"y":442,"w":300,"h":492,"sy":688,"zt":37,"fg":0,"fl":0,"rot":0},{"fi":9,"x":2638,"y":498,"w":300,"h":492,"sy":744,"zt":38,"fg":0,"fl":0,"rot":0},{"fi":9,"x":2752,"y":606,"w":300,"h":492,"sy":852,"zt":39,"fg":0,"fl":0,"rot":0},{"fi":10,"x":1513,"y":4673,"w":216,"h":348,"sy":4847,"zt":40,"fg":0,"fl":0,"rot":0},{"fi":10,"x":519,"y":5007,"w":216,"h":348,"sy":5181,"zt":41,"fg":0,"fl":1,"rot":0},{"fi":10,"x":2807,"y":3475,"w":216,"h":348,"sy":3649,"zt":42,"fg":0,"fl":1,"rot":0},{"fi":10,"x":2717,"y":3473,"w":216,"h":348,"sy":3647,"zt":43,"fg":0,"fl":0,"rot":0},{"fi":11,"x":2293,"y":3395,"w":216,"h":384,"sy":3587,"zt":44,"fg":0,"fl":0,"rot":0},{"fi":11,"x":705,"y":3313,"w":216,"h":384,"sy":3505,"zt":45,"fg":0,"fl":0,"rot":0},{"fi":11,"x":1049,"y":3189,"w":216,"h":384,"sy":3381,"zt":46,"fg":0,"fl":0,"rot":0},{"fi":11,"x":2245,"y":2069,"w":216,"h":384,"sy":2261,"zt":47,"fg":0,"fl":0,"rot":0},{"fi":11,"x":1525,"y":2197,"w":216,"h":384,"sy":2389,"zt":48,"fg":0,"fl":0,"rot":0},{"fi":11,"x":1833,"y":1993,"w":216,"h":384,"sy":2185,"zt":49,"fg":0,"fl":0,"rot":0},{"fi":11,"x":1693,"y":1901,"w":216,"h":384,"sy":2093,"zt":50,"fg":0,"fl":0,"rot":0},{"fi":11,"x":541,"y":2077,"w":216,"h":384,"sy":2269,"zt":51,"fg":0,"fl":0,"rot":0},{"fi":7,"x":929,"y":3525,"w":156,"h":372,"sy":3711,"zt":52,"fg":0,"fl":0,"rot":0},{"fi":7,"x":1163,"y":3449,"w":156,"h":372,"sy":3635,"zt":53,"fg":0,"fl":1,"rot":0},{"fi":7,"x":2535,"y":3203,"w":156,"h":372,"sy":3389,"zt":54,"fg":0,"fl":1,"rot":0},{"fi":7,"x":2495,"y":4691,"w":156,"h":372,"sy":4877,"zt":55,"fg":0,"fl":1,"rot":0},{"fi":7,"x":2159,"y":4879,"w":156,"h":372,"sy":5065,"zt":56,"fg":0,"fl":1,"rot":0},{"fi":7,"x":1697,"y":4579,"w":156,"h":372,"sy":4765,"zt":57,"fg":0,"fl":1,"rot":0},{"fi":7,"x":1533,"y":4831,"w":156,"h":372,"sy":5017,"zt":58,"fg":0,"fl":1,"rot":0},{"fi":12,"x":1697,"y":748,"w":1052,"h":1656,"sy":1576,"zt":59,"fg":1,"fl":0,"rot":0},{"fi":13,"x":839,"y":308,"w":224,"h":194,"sy":405,"zt":60,"fg":0,"fl":0,"rot":0},{"fi":14,"x":704,"y":130,"w":229,"h":141,"sy":201,"zt":61,"fg":0,"fl":0,"rot":0},{"fi":15,"x":1012,"y":142,"w":295,"h":135,"sy":210,"zt":62,"fg":0,"fl":0,"rot":0},{"fi":16,"x":1018,"y":265,"w":81,"h":69,"sy":300,"zt":63,"fg":0,"fl":0,"rot":0},{"fi":17,"x":2445,"y":318,"w":1024,"h":752,"sy":694,"zt":64,"fg":0,"fl":0,"rot":0},{"fi":18,"x":2616,"y":1202,"w":675,"h":645,"sy":1525,"zt":65,"fg":0,"fl":0,"rot":90},{"fi":19,"x":3216,"y":2652,"w":237,"h":129,"sy":2717,"zt":66,"fg":0,"fl":1,"rot":0},{"fi":19,"x":3213,"y":2345,"w":237,"h":129,"sy":2409,"zt":67,"fg":0,"fl":1,"rot":0},{"fi":19,"x":3197,"y":1884,"w":237,"h":129,"sy":1948,"zt":68,"fg":0,"fl":1,"rot":0},{"fi":19,"x":75,"y":2414,"w":237,"h":129,"sy":2479,"zt":69,"fg":0,"fl":0,"rot":0},{"fi":19,"x":74,"y":1659,"w":237,"h":129,"sy":1723,"zt":70,"fg":0,"fl":0,"rot":0},{"fi":20,"x":59,"y":1788,"w":125,"h":85,"sy":1831,"zt":71,"fg":0,"fl":0,"rot":0},{"fi":20,"x":3225,"y":3168,"w":125,"h":85,"sy":3210,"zt":72,"fg":0,"fl":1,"rot":0},{"fi":20,"x":3226,"y":2720,"w":125,"h":85,"sy":2763,"zt":73,"fg":0,"fl":1,"rot":0},{"fi":21,"x":3221,"y":3707,"w":138,"h":83,"sy":3749,"zt":74,"fg":0,"fl":1,"rot":0},{"fi":21,"x":3233,"y":2196,"w":138,"h":83,"sy":2237,"zt":75,"fg":0,"fl":1,"rot":0},{"fi":21,"x":63,"y":4245,"w":138,"h":83,"sy":4287,"zt":76,"fg":0,"fl":0,"rot":0},{"fi":22,"x":2744,"y":1950,"w":168,"h":204,"sy":2052,"zt":77,"fg":0,"fl":1,"rot":0},{"fi":21,"x":51,"y":3496,"w":138,"h":83,"sy":3538,"zt":78,"fg":0,"fl":0,"rot":0},{"fi":23,"x":3203,"y":3853,"w":181,"h":101,"sy":3904,"zt":79,"fg":0,"fl":0,"rot":0},{"fi":23,"x":3199,"y":2479,"w":181,"h":101,"sy":2529,"zt":80,"fg":0,"fl":0,"rot":0},{"fi":23,"x":76,"y":2925,"w":181,"h":101,"sy":2975,"zt":81,"fg":0,"fl":1,"rot":0},{"fi":23,"x":82,"y":1205,"w":181,"h":101,"sy":1255,"zt":82,"fg":0,"fl":1,"rot":0},{"fi":24,"x":3179,"y":4313,"w":229,"h":97,"sy":4362,"zt":83,"fg":0,"fl":1,"rot":0},{"fi":24,"x":3192,"y":1738,"w":191,"h":85,"sy":1780,"zt":84,"fg":0,"fl":1,"rot":0},{"fi":24,"x":94,"y":2789,"w":229,"h":97,"sy":2838,"zt":85,"fg":0,"fl":0,"rot":0},{"fi":25,"x":86,"y":1538,"w":171,"h":103,"sy":1590,"zt":86,"fg":0,"fl":0,"rot":0},{"fi":25,"x":3180,"y":1009,"w":206,"h":110,"sy":1064,"zt":87,"fg":0,"fl":1,"rot":0},{"fi":26,"x":3203,"y":727,"w":185,"h":91,"sy":772,"zt":88,"fg":0,"fl":1,"rot":0},{"fi":26,"x":75,"y":2225,"w":185,"h":91,"sy":2271,"zt":89,"fg":0,"fl":0,"rot":0},{"fi":26,"x":101,"y":4497,"w":185,"h":91,"sy":4543,"zt":90,"fg":0,"fl":0,"rot":0},{"fi":27,"x":60,"y":3619,"w":138,"h":90,"sy":3664,"zt":91,"fg":0,"fl":0,"rot":0},{"fi":27,"x":3191,"y":1616,"w":138,"h":90,"sy":1661,"zt":92,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2099,"y":2529,"w":64,"h":44,"sy":2551,"zt":93,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2223,"y":2526,"w":64,"h":44,"sy":2548,"zt":94,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1023,"y":2545,"w":64,"h":44,"sy":2567,"zt":95,"fg":0,"fl":1,"rot":0},{"fi":28,"x":816,"y":2455,"w":64,"h":44,"sy":2477,"zt":96,"fg":0,"fl":1,"rot":0},{"fi":28,"x":780,"y":2453,"w":64,"h":44,"sy":2475,"zt":97,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1212,"y":3028,"w":64,"h":44,"sy":3050,"zt":98,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1213,"y":2703,"w":64,"h":44,"sy":2725,"zt":99,"fg":0,"fl":1,"rot":0},{"fi":28,"x":747,"y":2995,"w":64,"h":44,"sy":3017,"zt":100,"fg":0,"fl":1,"rot":0},{"fi":28,"x":801,"y":2994,"w":64,"h":44,"sy":3016,"zt":101,"fg":0,"fl":1,"rot":0},{"fi":28,"x":884,"y":3945,"w":64,"h":44,"sy":3967,"zt":102,"fg":0,"fl":1,"rot":0},{"fi":28,"x":826,"y":3945,"w":64,"h":44,"sy":3967,"zt":103,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1905,"y":3950,"w":64,"h":44,"sy":3972,"zt":104,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1883,"y":3164,"w":64,"h":44,"sy":3186,"zt":105,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1727,"y":3168,"w":64,"h":44,"sy":3190,"zt":106,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2825,"y":3011,"w":64,"h":44,"sy":3033,"zt":107,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2761,"y":3011,"w":64,"h":44,"sy":3033,"zt":108,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2716,"y":3632,"w":64,"h":44,"sy":3654,"zt":109,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2774,"y":3631,"w":64,"h":44,"sy":3653,"zt":110,"fg":0,"fl":1,"rot":0},{"fi":28,"x":1217,"y":4451,"w":64,"h":44,"sy":4473,"zt":111,"fg":0,"fl":1,"rot":0},{"fi":28,"x":2085,"y":4512,"w":64,"h":44,"sy":4534,"zt":112,"fg":0,"fl":1,"rot":0},{"fi":29,"x":771,"y":2996,"w":64,"h":48,"sy":3020,"zt":113,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2811,"y":3634,"w":64,"h":48,"sy":3658,"zt":114,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2758,"y":3642,"w":64,"h":48,"sy":3666,"zt":115,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2813,"y":3947,"w":64,"h":48,"sy":3971,"zt":116,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2281,"y":3916,"w":64,"h":48,"sy":3940,"zt":117,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2145,"y":3919,"w":64,"h":48,"sy":3943,"zt":118,"fg":0,"fl":1,"rot":0},{"fi":29,"x":1401,"y":4418,"w":64,"h":48,"sy":4442,"zt":119,"fg":0,"fl":1,"rot":0},{"fi":29,"x":506,"y":1855,"w":64,"h":48,"sy":1879,"zt":120,"fg":0,"fl":1,"rot":0},{"fi":29,"x":562,"y":1853,"w":64,"h":48,"sy":1877,"zt":121,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2020,"y":483,"w":64,"h":48,"sy":507,"zt":122,"fg":0,"fl":1,"rot":0},{"fi":29,"x":2080,"y":483,"w":64,"h":48,"sy":507,"zt":123,"fg":0,"fl":1,"rot":0},{"fi":29,"x":1188,"y":433,"w":64,"h":48,"sy":457,"zt":124,"fg":0,"fl":1,"rot":0},{"fi":29,"x":1136,"y":437,"w":64,"h":48,"sy":461,"zt":125,"fg":0,"fl":1,"rot":0},{"fi":29,"x":586,"y":441,"w":64,"h":48,"sy":465,"zt":126,"fg":0,"fl":1,"rot":0},{"fi":28,"x":916,"y":1863,"w":64,"h":44,"sy":1885,"zt":127,"fg":0,"fl":1,"rot":0},{"fi":28,"x":645,"y":442,"w":64,"h":44,"sy":464,"zt":128,"fg":0,"fl":1,"rot":0},{"fi":22,"x":1376,"y":364,"w":168,"h":204,"sy":466,"zt":129,"fg":0,"fl":1,"rot":0},{"fi":22,"x":1242,"y":78,"w":168,"h":204,"sy":180,"zt":130,"fg":0,"fl":1,"rot":0},{"fi":22,"x":528,"y":370,"w":168,"h":204,"sy":472,"zt":131,"fg":0,"fl":1,"rot":0},{"fi":22,"x":1930,"y":406,"w":168,"h":204,"sy":508,"zt":132,"fg":0,"fl":1,"rot":0},{"fi":22,"x":1948,"y":42,"w":168,"h":204,"sy":144,"zt":133,"fg":0,"fl":1,"rot":0},{"fi":22,"x":1812,"y":2,"w":168,"h":204,"sy":104,"zt":134,"fg":0,"fl":1,"rot":0},{"fi":22,"x":2314,"y":1776,"w":168,"h":204,"sy":1878,"zt":135,"fg":0,"fl":1,"rot":0}];
+const LP_SPAWN_ZONES=[{"x":0,"y":0,"w":1137,"h":50},{"x":0,"y":133,"w":73,"h":925},{"x":1360,"y":0,"w":365,"h":50},{"x":2728,"y":0,"w":547,"h":48},{"x":3084,"y":105,"w":196,"h":491},{"x":3148,"y":1187,"w":132,"h":345},{"x":3136,"y":2799,"w":144,"h":263},{"x":3128,"y":3259,"w":152,"h":359},{"x":3096,"y":3953,"w":184,"h":271},{"x":3098,"y":4471,"w":182,"h":459},{"x":0,"y":3767,"w":153,"h":339},{"x":0,"y":4659,"w":133,"h":525},{"x":0,"y":3043,"w":149,"h":353},{"x":0,"y":2501,"w":153,"h":199},{"x":0,"y":1891,"w":139,"h":217}];
+const LP_PROP_IMGS=LP_PROP_FILES.map(f=>{ const im=new Image(); im.src=f; return im; });
+function drawLpProp(pr){
+  const img=LP_PROP_IMGS[pr.fi]; if(!img||!img.naturalWidth) return;
+  const dx=pr.x-pr.w/2, dy=pr.sy-pr.h;   // anchor by feet: top-left = (center-w/2, sort_y - h)
+  if(pr.fl||pr.rot){ ctx.save(); ctx.translate(pr.x, pr.sy-pr.h/2);
+    if(pr.rot) ctx.rotate(pr.rot*Math.PI/180);
+    if(pr.fl) ctx.scale(-1,1);
+    ctx.drawImage(img, -pr.w/2, -pr.h/2, pr.w, pr.h); ctx.restore(); }
+  else ctx.drawImage(img, dx, dy, pr.w, pr.h);
+}
+// Flat ground decals (the tennis court, prop file index 18) render like terrain — UNDER all
+// entities — so a player standing at its edge never disappears behind it. It's also solid
+// (baked into the collision grid below), so nothing actually walks onto it.
+const LP_GROUND_FI=[18];
+function drawLpGround(){ for(const pr of LP_PROPS){ if(LP_GROUND_FI.indexOf(pr.fi)>=0){ try{ drawLpProp(pr); }catch(e){} } } }
+const LP_COL_CELL=16, LP_COL_COLS=205, LP_COL_ROWS=368;
+const LP_COL_B64="AAAAAAAAAAAAAAAAAAAAwP//////AQAAAAAAAAAAAAAAAAAAAAAAAAD4/////z8AAAAAAAAAAAAAAAAAAAAAAAAAAP//////BwAAAAAAAAAAAAAAAAAAAAAAAADg//////8AAAAAAAAAAAAAAAAAAAAAAAAAAPz/////HwAAAAAAAAAAAAAAAAAAAAAAAAaA//////8DAAAAAAAAAAAAAAAAAAAAAADAAPD/////fwAAAAAAAAAAAAAAAAAAAAAAAAAA/v////8PAAAAAAAAAADg/wEAAAAAAAAAAMb//////wEAAAAAAAAAAPx/wP8HAAAAAAAA+P////8/AAAAAAAAAACA/w/8/4EBAAAAAAD//////wcAAAAAAAAAAPD/gf8/AAAAAAAA4P//////AAAAAAAAAAAA/B/w/wMAAAAAAAD8/////x8AAAAAAAAAAAAAAAAAAAAAAAAAgP//////AwAAAAAAAAAAAAAAAAAAAAAAAADw/////38AAAAAAAAAAAAAAAAOAAAAAAAAAP7/////DwAAAAAAAAAAAAB8wAMAAAAAAADA//////8BAAAAAAAAAAAA4H94AAAAAAAAAPj/////PwAAAAAAAAAAAAD+HwYAAAAAAAAA//////8HAAAAAAAAAAAAwP8DAAAAAAAAAOD//////wAAAAAAAAAAAAD8fwAAAAAAAAAA/P////8fAAAAAAAAAAAAgP8PAAAAAAAAAID//////wMAAAAAAAAAAADw/wEAAAAAAAAA8P////9/AAAAAAAAAAAAAPwfAAAAAAAAAAD+/////w8AAAAAAAAAAACA/wEAAAAAAAAAwP//////AQAAAAAAAAAAAMAfAAAAAAAAAAD4/////z8AAAAAAAAAAAAAAAAAAAAAAAAAAP//////BwAAAAAAAAAAAAAAAAAAAAAAAADg//////8AAAAAAAAAADAAAAAAAAAGAAAAAPz/////HwAAAAAAAAAABgAAAAAAAAAAAACA//////8DAAAAAAAAAAAAAAAAAAAAAAAAAPD/////fwAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAMA4P8BAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAD8PwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8HAAAAAAAAAAAAAAAAAAAAAAAAAIAHAADw/wAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAP4fAAAAAAAAAAAAAAAAAAAAAAAAAAAOAADA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAA8AAA/D8AAAAAAAAAAAAAAAAAAAAAAAAAAAAeAID/BwAAAAAAAAAAAAAAAAAAAAAAAAAAwAMA8P8AAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAD+HwAAAAAAHgAAAAAAAAAAAAAAAAAAAAAAwP8DAAAAAMADAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg/wEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPw/AAAAAAAAABwAAAAAAAAAAAAAAAAAAACA/wcAAAAAAADAAwAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAHgAAAAAAAAAAAAAAAAAAAAA/h8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+H8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4P8BAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAD8PwAAAAAAAPABAAAAwP//AQAAAAAAAAAAgP8HAAAAAAAAPwAAAAD8//8DAAAAAAAAAADw/wAAAAAAAOAHAAAAgP///wAAAAAAAAAAAP4fAAAAAAAA/AAAAAD4//8/AAAAAAAAAADA//sfAAAAAAAfAAAAAP///w8AAAAAAAAAAAB8/wMAAAAAwAEAAADw////AwAAAAAAAAAAAOB/AAAAAAAAAAAAAP///38AAAAAAAAAAAAA/A8AAAAAAAAAAADw////DwAAAPj//wcAAID/AQAAAAAAAAAAAP7///8BAACA////AAAA8D8AAAAAAAAAAADA////fwAAAOD//x8AAAD+BwAAAAAAAAAAAPj///8PAAAAAAAAAAAAwP8AAOAHAAA/AAAA/////wEAAAAAAAAAAAD4HwAA/AAA4AcAAOD///8fAAAAAAAAAAAAAP8DAIAfAAD8AAAA/P///wMAAAAAAAAAAADgfwAAAOD/DwAAAAD///8/AAAAAAAAAAAAAPwPAAAA/P8BAAAA4P///wMAAAAAAAAAAACA/wEAwI//P34AAAD4//9/AAAAAAAAAAAAAPA/AAD48f/HDwAAAPz//wcAAAAAAAAAAAAA/gcAAD/+//gBAAAA/v9/AAAAAAAAAAAAAMD/AAAAwP8fAAAAAAD+/wcAAAAAAAAAAAAA+B8AAAD4/wMAAAAAAPwfAAAAAAAAAAAAAAD/AwAAAP9/AAAAAAAAAAAAAAAAAAAAAAAA4H8AAPDh/48fAAAAAAAAAAAAAAAAAAAAAAD8DwAAfvz/8QMAAAAAAAAAAAAAAAAAAAAAgP8BAMCP/z9+AAAAAAAAAAAAAAAAAAAAAADwPwAA+PH/BwAAAAAAAAAAAAAAAAAAAAAAAP4HAAAA/v8AAAAAAAAAAAAAAAAAAAAAAADA/wAAAMD/HwAAAAAAAAAAAAAAAAAAAAAAAPgfAAB8+P/DBwAAAAAAAAAAAAAAAAAAAAAA/wMAgA//f/wAAAAAAAAAAAAAAAAAAAAAAOB/AADw4f+PHwAAAAAAAAAAAAAAAAAAAMD//Q8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA/L//AQDADwAAAAAAAAAAAAAAAAAAAAAAAID/9z8AAPgBAAAAAAAAAAAAAAAAAAAAAAAA8P/+BwAAPwAA8AEAAAAAAAAAAAAAAAAAAAD+3/8AAAAAAAA+AAAAAAAAAAAAAAAAAAAAwP/7HwAAAAAAwAcAAAAAAAAAAAAAAAAAAAD4f/8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/vfwAAAAAAAAAAAAAAAAAAAAAAAAAAAADg//0PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPy//wEAAAAAAAAAAAAAAAAAAAAAAAAAAACA//c/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD//gcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/t//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/+x8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA+H//AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/738AAAAAAAAAAAAAAAAAAAAAAAAAAAAA4P/9DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8P/gBAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8HMAAAAAAAAAAAAAAAAAAAAAAwAAAAAADw/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/D8AAAAAAAAAAAAAAAAAAAAAAAAADgAAAID/BwAAAAAAAAAAAAAAAAAAAAAAAMABAAAA8P8AAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAD+HwAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAADgAAD4fwAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAIAHAAAA4AAAAAAAAAAAAADg/wEAAAAAAAAA8AAAAAAcAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA/wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/t//AAAAAAAAAAAAAAAAgAMAAAAAAAAAAMD/+x8AAAAAAAAAAAAAAABwAAAAAAAAAAAA+H//AwAAAAAAAAAAAAAAAA4AAAAAAIADAAD/738AAAAAAAAAAAAAAAAAAAAAAAAAcAAA4P/9DwAAAAAAAAAAAAAAAAAAAAAAAAAOAAD8v/8BAAAAAAAAAAAAAAAAAAAAHAAAwAEAgP/3PwAAcAAAAAAAAAAAAAAAAIADAAA4AADw//4HAAAOAAAAAAAAAAAAAAAAAAAAAAAAAP7f/wAAAAAAAAAAAAAAAAAAAAAAAAAAAADA//sfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPh//wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+9/AAAAAAD8/z8AAAAAAAAAAAAAAAAAAOD//Q8AAAAAgP//DwAAAAAAAPj/HwAAAAAA/L//AQDA/3/w//8BAOAAAAAA//+D/wMAAID/9z8AAPj/D/7/PwAAHAAAAOD/f/B/AAAA8P/+BwAA///B//8HAAAAAAAA/P8P/g8AAAD+3/8AAOD/P/j//wAAAAAAAID//8H/AQAAwP/7HwAA/P8H//8fAAAAAAAA8P8/+D8AAAD4f/8DAID//+D//wMAAAAAAAD+/wf/BwAAAP/vfwAA8P8f/P9/AAAAAAAAwP//4P8AAADg/wEIAAD+/4P//w8AAAAAAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAACA/wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/h8AAAAAAAAAAAAAwP8P/gcAAAAAAAAAAMD/AwAAAAAAAAAAAAD4/8H/AQAAAAAAAAAA+H8AAAAAAAAAAAAAAP8/+D8AAAAAAAAAAAD/DwAAAAAAAAAAAADg/wf/BwAAAAAAAAAA4P8BAAAAAAAAAAAAAPz/4P8AAAAAAAAAAAD8PwAAAAAAAAAAAACA/x/8HwAAAAAAAAAAgP8HAAAAAAAAAAAAAPD/g/8DAAAAAAAAAADw/wAAAAAAAAAAAAAA/n/wfwAAAAAAAAAAAP4fAAAAAAAAAAAAAMD/D/4PAAAAAAAAAADA/wMAAAAAAAAAAAAA+P/B/wEAAAAAAAAAAPh/AAAAAAAAAAAAAAAAAPg/AAAAAAAAAAAA/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/L//AQAAAAAAAAAAAAAAAAAAAAAAAAAAAID/9z8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA8P/+BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+3/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8DAAAAAAAAAAAAAAAAAAD4//8AAAAAAADgfwAAAAAAAAAAAAAAAAAAAP//HwAAAAAAAPwPAAAAAAAAAAAAAAAAAADg///zfwAAAACA/wEAAP7/4P8/AAAAAAAAAPz/f/4PAAAAAPA/AADA/x/8/wcAAAAAAACA///P/wEAAAAA/gcAAPj/g///AAAAAAAAAPD///k/AAAAAMD/AAAA/3/w/x8AAAAAAAAA/v8//wcAAAAA+B8AAOD/D/7/AwAAAAAAAMD//+f/AAAAAAD/AwAA/P/B/38AAAAAAAAA+P///B8AAAAA4H8AAID/P/j/DwAAAAAAAAD//5//AwAAAAD8DwAA8P8H//8BAAAAAAAAAAAA8H8AAAAAAPABAAD+/wAAAAAAAAAAAAAAAAD+DwAAAAAAAAAAwP8fAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPj/DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA///D/wMAAAAAAAAAAAAAAAAAAAAAAAAAAOD/f/h/AAAAAAAAAAAAAAAAAAAAAAAAAAAA/P8P/w8AAAAAAAAAAOD/AQAAAAAAAAAAAID//+H/AQAAAAAAAAAA/D8AAAAAAAAAAAAA8P8//D8AAAAAAAAAAID/BwAAAAAAAAAAAAD+/4f/BwAAAAAAAAAA8P8AAAAAAAAAAAAAwP//4P8AAAAAAAAAAAD+HwAAAAAAAAAAAAD4/x8AAAAAAAAAAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8PAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADg/wEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPw/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAgAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOB/AAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAA/A8AAADgAAAAAAAAAAAAAAAAAAAAAAAAAID/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8D8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8AAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAD4HwAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgfwAAAAAAAABgAAAAAAAAAAAAAAAAAAAAAPwPAAAAAAAAAAwAAAAAAAAAAAAAABwHAACA/wEAAAAAAAAAAAAAAAAAAAAAAACA4wAA//8/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAOD//wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/P//AAAAAACAAQAAAAAAAAAAAAAAAAAAAID//x8AAAAAADAAAAAAAAAAAAAAAAAAAAAA8P+AAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4fwAAAAAAAAAAAAAAAAAAAAAAAAD+/wEAAP8PAAAAAAAAAAAAAAAAAAAAAPj/4f9/AADg/wEAAID//wf//wEAAAD4PwAA/z/8/w8AAPw/AAAA+P//4P9/AOD/H/8HAOD/h///AQCA/wcAAAD//x/8/w8A/P/j/wAA/P/w/z8AAPD/AAAA4P//g///AYD/f/wfAID/H/7/BwAA/h8AAAD8/3/w/z8A8P+P/wMA8P/D//8AAMD/AwAAgP//D/7/BwD+//F/AAD+f/j/HwAA+H8AAADw///B//8AwP8//g8AwP8P//8DAAD/DwAAAP7/P/j/HwD4/8f/AQD4/+H/fwAA4P8BAADA//8H//8DAP//+D8AAP8/AAAAAADAPwAAAPj//wAAAAAAAAD/BwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP4HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOB/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD//w8AAAAAAAAAAAAAAAAAAOD/f+D/DwAA+P//AQDg/38AAAAA4P//AQAA/P8P/v8BAAD//z8AAPz/D/z/BwD8/38AAID//8H/PwAA4P//BwCA//+B//8AgP//DwAA8P8/+P8HAAD8//8AAPD/P/D/HwDw///5PwD+/wf//wAAgP//HwAA/v8H/v8DAP7/P/8HwP//4P8fAADw//8DAMD//8D/fwDA///n/wD4/x/8/wMAAP7/fwAA+P8f+P8PAPj///wfAP//g/9/AADA//8PAAD//wP//wEA//+f/wMAAADw/w8AAPj//wEA4P9/4P8/AOD///N/AAAAAAAAAAAA//8/AAD4/wf4/wMA/P9//g8AAAAAAAAAAOD//wcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+B8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4H8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8DwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAIADAAAAAAAAAAAAAAAAAAAAAAB4AAADAAAAcAAAAAAAAAAAAAAAAAAAAAAAAA8AYAAAAAAOAAAAAAAAAAAAAAAAAAAAAADgAQAMAAAAwAEAAAAAAAAAAAAAAAAAAAAAADwAAAAAAAA4AAAAAAAAAAAADgAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAMABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAAAwAEAAAAAAAAAAAAAAAAAAAAAAAAA8A8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPj/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAADw/z8AAAAAAAAAAAAAAAAAAAAAAAAAAAAA8P//BwAAAAAAAAAAAAAAAAAAAAAAAAAAgP////8AAAAAAAAAAAAAAAAAAAAAwB8AwP//////HwAAAAAAAAAAAAD4//////////////////8DAAAAAAAAAP7/////////////////////fwAAAAAAAAD+//////////////////////8PAAAAAAAA/P///////////////////////wEAAAAAAPj///////////////////////8/AAAAAADw/////////////////////////wcAAAAAwP//////////////////////////AAAAAOD//////////////////////////99/AP7//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////w==";
+let LP_COL=null;
+(function(){ try{ const bin=atob(LP_COL_B64); LP_COL=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) LP_COL[i]=bin.charCodeAt(i); }catch(e){ LP_COL=new Uint8Array(((LP_COL_COLS*LP_COL_ROWS)+7)>>3); } })();
+// The tennis court stays WALKABLE (you play on it) — only its net line is solid, which the map's own
+// collision mask already carries. The court's fix is purely visual: it's a flat ground decal (see
+// LP_GROUND_FI) drawn UNDER entities, so the player never disappears behind it while standing on it.
+function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return true; const idx=r*LP_COL_COLS+c; return (LP_COL[idx>>3]>>(idx&7))&1; }
+function lpSolidAt(x,y){ return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL)); }
+// push a circle entity out of any solid grid cells it overlaps (2 passes for stability)
+function lpResolve(ent){
+  const r=ent.radius, C=LP_COL_CELL;
+  for(let pass=0; pass<2; pass++){
+    const cc=Math.floor(ent.x/C), cr=Math.floor(ent.y/C);
+    if(lpSolidCell(cc,cr)){   // centre buried in a wall: shove toward the nearest open cell
+      let bx=0,by=0,bd=1e9;
+      for(let rr=-3;rr<=3;rr++) for(let dcx=-3;dcx<=3;dcx++){ if(lpSolidCell(cc+dcx,cr+rr)) continue; const dd=dcx*dcx+rr*rr; if(dd<bd){bd=dd;bx=dcx;by=rr;} }
+      if(bd<1e9){ const l=Math.hypot(bx,by)||1; ent.x+=bx/l*r; ent.y+=by/l*r; }
+      continue;
+    }
+    const c0=Math.floor((ent.x-r)/C), c1=Math.floor((ent.x+r)/C), r0=Math.floor((ent.y-r)/C), r1=Math.floor((ent.y+r)/C);
+    for(let rr=r0; rr<=r1; rr++) for(let dcx=c0; dcx<=c1; dcx++){ if(!lpSolidCell(dcx,rr)) continue;
+      const rx=dcx*C, ry=rr*C, nx=clamp(ent.x,rx,rx+C), ny=clamp(ent.y,ry,ry+C);
+      let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
+      if(dd<r && dd>0.0001){ ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; }
+    }
+  }
+  ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
+}
+// survival run state
+let survival=false, survTime=0, survSpawnT=0, kills=0;
+let lpBestScore=0; try{ lpBestScore=(+localStorage.getItem('fm_laspalmas_best'))||0; }catch(e){}
+function stripPowers(p){   // death wipes every buff — you re-earn them from scratch
+  p.tierra=0; p.piedra=0; p.shields=0; p.special='none'; p.specialCharges=0; p.oro=0; p.oroCharge=0; p.rioGrabbed=false;
+  p.weapon='pistol'; p.ammo=0;   // death drops you back to the basic pistol
+}
+
+
 function circleRectCollide(cx, cy, r, rect) {
   const nx = clamp(cx, rect.x, rect.x+rect.w);
   const ny = clamp(cy, rect.y, rect.y+rect.h);
@@ -880,6 +988,11 @@ function circleRectCollide(cx, cy, r, rect) {
 // push a circle out of all obstacles + arena bounds
 function resolveCollision(ent) {
   const r = ent.radius;
+  if(currentMap==='laspalmas'){
+    ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
+    if(ent.phase>0) return;
+    lpResolve(ent); return;
+  }
   if(currentMap==='templo'){ ent.x=clamp(ent.x, 58+r, WORLD_W-58-r); ent.y=clamp(ent.y, 58+r, WORLD_H-58-r); }
   else if(currentMap==='machu'){ ent.x=clamp(ent.x, 38+r, WORLD_W-38-r); ent.y=clamp(ent.y, MACHU_SKY+8+r, WORLD_H-30-r-machuElev(ent.x)); }
   else { ent.x = clamp(ent.x, r+8, WORLD_W-r-8); if(currentMap==='stonebridge'){ ent.y = clamp(ent.y, 116+r, 572-r); } else { ent.y = clamp(ent.y, r+8, WORLD_H-r-8); } }
@@ -942,6 +1055,7 @@ function makePlayer(kind, x, y, controls){
     cooldown: 0, punchAnim: 0, hitFlash:0, shieldFlash:0,
     alive: true, reviveProgress:0, oro:0, oroCharge:0, wasPunch:false, rioGrabbed:false, fell:false, fallT:0,
     gear:'none', gearCount:0, wasGear:false,   // boss-drop gadget: 'dinamita' | 'muro' | 'torreta'
+    weapon:'pistol', ammo:0,   // Modo Infinito: 'pistol' (unlimited) | special weapons w/ limited ammo
     pending:false,   // online: joined mid-round → sits out until the next round begins (no full-HP mid-fight join)
   };
 }
@@ -1009,6 +1123,18 @@ function spawnEnemy(){
     const bz=BUSES[randi(0,BUSES.length-1)];
     x=clamp(bz.x+rand(-24,24), 42, WORLD_W-42);
     y=clamp(bz.y+rand(2,16), MACHU_SKY+16, WORLD_H-30-machuElev(x));
+  } else if(currentMap==='laspalmas'){
+    // spawn ONLY from the map's authored horde zones, and only on walkable ground: pick a random
+    // zone, sample a uniform random point, resample if it lands in a wall (~20 tries), else give up
+    // on this spawn rather than dropping an enemy inside geometry. No zones -> no horde enemies.
+    if(!LP_SPAWN_ZONES.length) return;
+    let placed=false;
+    for(let t=0;t<20;t++){
+      const z=LP_SPAWN_ZONES[randi(0,LP_SPAWN_ZONES.length-1)];
+      const sxp=z.x+Math.random()*z.w, syp=z.y+Math.random()*z.h;
+      if(!lpSolidAt(sxp,syp)){ x=sxp; y=syp; placed=true; break; }
+    }
+    if(!placed) return;
   } else {
     const edge = randi(0,3);
     if(edge===0){ x=rand(20,WORLD_W-20); y=20; }
@@ -1016,7 +1142,8 @@ function spawnEnemy(){
     else if(edge===2){ x=rand(20,WORLD_W-20); y=WORLD_H-20; }
     else { x=20; y=rand(20,WORLD_H-20); }
   }
-  const scale = 1 + Math.min(round-1,14)*0.05;
+  let scale = 1 + Math.min(round-1,14)*0.05;
+  if(survival) scale += Math.max(0,round-15)*0.02;   // endless: keep toughening past the round-15 cap
   let skin='chu', radius=t.radius, speed=t.speed, leafer=!!t.leafer, archer=false, supay=false, llama=false, ttype=null, tint=t.tint, baseHp=t.hp;
   if(currentMap==='stonebridge'){
     if(type==='normal'){ skin='knight'; }
@@ -1092,6 +1219,47 @@ function spawnApuPos(){
 function placeApu(type){
   const pos=spawnApuPos();
   apuchis.push({id:_entId++, type, x:pos.x, y:pos.y, r:18, bob:Math.random()*TAU, spawn:0});
+}
+// Las Palmas: enemies drop Apuchis (half size) on death — not every time, and the rare ones
+// (Morganita/Safiro) stay rare thanks to weightedApu's weights + late-game gating.
+// Modo Infinito ground pickups: 'shoe' = speed (reuses the Tierra speed multiplier). Weapons get
+// added here with the inventory system.
+const lpItems=[];
+function lpMaybeDrop(e){
+  const big=(e.type==='large');
+  // health hearts: uncommon from any enemy, much likelier from the big ones. Heal is partial
+  // (~25%, see updateHearts) so you're never fully safe.
+  if(Math.random() < (big?0.22:0.05)) hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16});
+  // speed shoe: rare, small permanent stack until you die
+  if(lpItems.length<24 && Math.random() < (big?0.06:0.03)) lpItems.push({id:_entId++, kind:'shoe', x:e.x+rand(-8,8), y:e.y+rand(-8,8), bob:Math.random()*TAU, spawn:0});
+}
+function updateLpItems(dt){
+  for(const it of lpItems){ it.bob+=dt*6; if(it.spawn<1) it.spawn=Math.min(1,it.spawn+dt*3); }
+  for(const p of players){ if(!p.alive) continue;
+    for(let i=lpItems.length-1;i>=0;i--){ const it=lpItems[i];
+      if(dist(p.x,p.y,it.x,it.y)<p.radius+15){
+        if(it.kind==='shoe'){ if(p.tierra>=3) continue; p.tierra=Math.min(3,p.tierra+1); floatText(p.x,p.y-26,'VELOCIDAD '+p.tierra+'/3','#eaf1ff'); playPickup(); }
+        lpItems.splice(i,1);
+      }
+    }
+  }
+}
+function drawShoe(x,y){   // little white sports shoe with a shine
+  ctx.fillStyle='#ffffff'; rrect(x-11,y-6,21,9,3); ctx.fill();
+  ctx.fillStyle='#e7edf7'; rrect(x-11,y+1,21,3,2); ctx.fill();
+  ctx.fillStyle='#ffffff'; rrect(x-9,y-10,12,7,3); ctx.fill();
+  ctx.strokeStyle='#c3d1ea'; ctx.lineWidth=1; rrect(x-11,y-10,21,14,3); ctx.stroke();
+  ctx.fillStyle='#bcd0ff'; ctx.fillRect(x-3,y-8,2,6); ctx.fillRect(x,y-8,2,6);
+  const s=0.6+0.4*Math.sin(time*6); ctx.globalAlpha=s; ctx.fillStyle='#ffffff';
+  ctx.beginPath(); ctx.moveTo(x+3,y-8); ctx.lineTo(x+6,y-11); ctx.lineTo(x+7,y-7); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
+}
+function drawLpItems(){
+  for(const it of lpItems){ const bob=Math.abs(Math.sin(it.bob))*6, cy=it.y-bob, pop=clamp(it.spawn,0,1);
+    ctx.save(); ctx.globalAlpha=pop;
+    ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(it.x,it.y+8,10,3.5,0,0,TAU); ctx.fill();
+    if(it.kind==='shoe'){ ctx.shadowColor='#dfeaff'; ctx.shadowBlur=8+4*Math.sin(time*5); drawShoe(it.x,cy); ctx.shadowBlur=0; }
+    ctx.restore();
+  }
 }
 function spawnBreakItems(){
   apuchis.length=0;
@@ -1171,6 +1339,70 @@ function drawLeaves(){
     ctx.fillStyle='#574e46'; ctx.fillRect(-7,2,3,2); ctx.fillRect(3,-5,2,2);
     ctx.restore();
   }
+}
+// ---------- Modo Infinito: Boxhead-style 8-way shooting ----------
+// The basic attack becomes a projectile fired in the direction the character faces (the last
+// direction it moved: N/NE/E/SE/S/SW/W/NW). Apuchi specials (Morganita/Safiro) still fire on the
+// same key. Only active on the survival map — Horda/PVP keep their melee punch.
+const bullets=[];
+const SHOOT_CD=0.16;                       // fast fire rate
+const BULLET_SPD=1250;                      // super-fast tracer
+// shots-to-kill by enemy type (independent of HP scaling): fast 2, normal 3, big 5
+function bulletShots(e){ return e.type==='fast'?2 : e.type==='large'?5 : 3; }
+// squared distance from point (px,py) to segment (ax,ay)-(bx,by) — for swept bullet/enemy hits
+function segPtDist2(ax,ay,bx,by,px,py){
+  const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+  let t = l2<1e-6 ? 0 : ((px-ax)*dx+(py-ay)*dy)/l2; t=t<0?0:t>1?1:t;
+  const cx=ax+t*dx-px, cy=ay+t*dy-py; return cx*cx+cy*cy;
+}
+function fireBullet(p){
+  let fx=p.facing.x, fy=p.facing.y;
+  if(!fx && !fy){ fy=1; }                                                // never moved yet -> shoot south
+  const ang=Math.round(Math.atan2(fy,fx)/(Math.PI/4))*(Math.PI/4);       // snap to the 8 compass directions
+  const cx=Math.cos(ang), cy=Math.sin(ang);
+  // spawn at the player centre so the swept segment also catches enemies pressed right up against you
+  bullets.push({ id:_entId++, x:p.x, y:p.y, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD,
+                 life:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra] });   // damage = maxhp/shots, boosted by Piedra
+  spark(p.x+cx*22, p.y+cy*22, '#fff2c0', 3, 130);
+}
+function tryShoot(p){
+  if(!p.alive || p.cooldown>0) return;
+  if(p.special==='morganita'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireBeam(p); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'MORGANITA agotada','#ff7ab0'); } return; }
+  if(p.special==='safiro'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireLightning(p,'#7ad0ff',215); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'SAFIRO agotado','#5aa0ff'); } return; }
+  p.cooldown=SHOOT_CD; p.punchAnim=CHARS[p.kind].pd;
+  fireBullet(p);
+}
+function updateBullets(dt){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    const ax=b.x, ay=b.y;                       // segment start (for swept collision — bullets are fast)
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+    // walls (check the segment's midpoint + end so a fast bullet can't tunnel a thin wall/net)
+    if(currentMap==='laspalmas' && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,'#fff2c0',3,70); bullets.splice(i,1); continue; }
+    let hit=false;
+    for(const e of enemies){ if(e.dead) continue;
+      const rr=(e.footR||e.radius)+6;
+      if(segPtDist2(ax,ay,b.x,b.y,e.x,e.y) < rr*rr){
+        e.hp -= (e.maxhp/bulletShots(e))*b.pmul;   // fixed shots-to-kill regardless of HP scaling
+        e.hitFlash=0.14; e.stagger=0.18;
+        const d=Math.hypot(b.vx,b.vy)||1, k=150;   // knockback punch
+        e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
+        spark(e.x,e.y,'#ffd0d0',5,90);
+        if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner); if(owner) playPunchSound(owner); }   // voice on KILL, throttled per character
+        hit=true; break;
+      }
+    }
+    if(hit || b.life<=0 || b.x<0||b.y<0||b.x>WORLD_W||b.y>WORLD_H){ bullets.splice(i,1); }
+  }
+}
+function drawBullets(){
+  ctx.save(); ctx.lineCap='round';
+  for(const b of bullets){
+    const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
+    ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  ctx.restore();
 }
 function updateEffects(dt){ for(let i=fx_effects.length-1;i>=0;i--){ fx_effects[i].life-=dt; if(fx_effects[i].life<=0) fx_effects.splice(i,1); } }
 function drawEffects(){
@@ -1261,8 +1493,9 @@ function playPunchSound(p){
   // punches (see tryPunch's hitAny) → voice every 2nd landed hit; PVP: voice every 3rd bomb placed.
   if(AUDIO_SRC[k+'_hit1']){
     p.punchSfx=(p.punchSfx||0)+1; const ch=p.punchSfx;
-    // Vannucci grunts too often in horda — space his hit voice out to every 3rd landed punch
-    const horStep=(k==='vannucci')?3:2;
+    // Vannucci grunts too often in horda — space his hit voice out to every 3rd landed punch;
+    // Sebas is even chattier, so his lands every 4th (applies to Horda + Modo Infinito, both non-PVP)
+    const horStep=(k==='vannucci')?3:(k==='sebas')?4:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
       playOne(AUDIO_SRC[k+'_hit'+n2], charVol(k,0.6));
@@ -1505,7 +1738,8 @@ function killEnemy(e,p){
   if(e.skin==='tourist' && !e.dead){ e.dead=true; e.deathT=0; e.hitFlash=0; e.vx=0; e.vy=0; score+=e.pts; if(e.type==='normal'||e.type==='fast') dropNugget(e.x,e.y); spark(e.x,e.y,e.color||'#fff',12,160); floatText(e.x,e.y-10,'+'+e.pts,'#ffe680'); return; }
   enemies.splice(idx,1);
   score += e.pts;
-  if(e.type==='large'){ hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16}); }
+  if(survival && !e.boss){ kills++; lpMaybeDrop(e); }
+  if(e.type==='large' && !survival){ hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16}); }   // Horda: big enemies always drop a heart. Modo Infinito governs hearts via lpMaybeDrop instead.
   if(e.boss){
     for(let k=0;k<80;k++) spark(e.x+rand(-40,40), e.y+rand(-54,20), ['#ffd24a','#ff7a3a','#ffffff','#ff5050','#ffe24a'][randi(0,4)], 1, 260);
     cameraShake=18;
@@ -1917,14 +2151,19 @@ function updatePlayers(dt){
         resolveCollision(p);
       }
     }
-    if(p.special==='oro'){
+    if(survival){ if(state===STATE.PLAY && ks[c.punch] && !p.wasPunch) tryShoot(p); p.wasPunch=!!ks[c.punch]; }   // Modo Infinito: tap-to-fire 8-way shot (one per press, no spam-holding; not during the intro countdown)
+    else if(p.special==='oro'){
       if(ks[c.punch]){ p.oroCharge=(p.oroCharge||0)+dt; if(p.oroCharge>=1.0){ fireLightning(p,'#ff9a2a',180); p.oroCharge=0; p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; p.oro=0; floatText(p.x,p.y-26,'ORO agotado','#ff9a2a'); } } }
       else { if(p.wasPunch && p.oroCharge>0 && p.oroCharge<0.28) tryPunch(p); p.oroCharge=0; }
       p.wasPunch = !!ks[c.punch];
     } else { if(ks[c.punch]) tryPunch(p); p.wasPunch=!!ks[c.punch]; }
-    // gear key (F for J1 / . for the rest): place or detonate the boss-drop gadget (edge-triggered)
+    // gear key (F for J1 / . for the rest): boss-drop gadget in Horda; in Modo Infinito it unleashes
+    // the gold ULTIMATE — a golden lightning nova once the ORO meter is full (50/50)
     const gkd=!!(c.gear && ks[c.gear]);
-    if(gkd && !p.wasGear) useGear(p);
+    if(gkd && !p.wasGear){
+      if(survival){ if(p.oro>=50){ fireLightning(p,'#ff9a2a',260); spark(p.x,p.y,'#ffe24a',30,220); cameraShake=12; floatText(p.x,p.y-30,'¡ORO DESATADO!','#ff9a2a'); playOroPower(); p.oro=0; p.special='none'; } }
+      else useGear(p);
+    }
     p.wasGear=gkd;
     if(p.alive && cliffs.length && inCliff(p.x,p.y)){ p.alive=false; p.fell=true; p.fallT=0.5; p.deathAnim=null; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,'#6a5a40',22,180); cameraShake=7; }
   }
@@ -1942,8 +2181,11 @@ function buildFlow(){
   const N=flowCols*flowRows; const blocked=new Uint8Array(N);
   for(let r=0;r<flowRows;r++) for(let c=0;c<flowCols;c++){
     const x=c*flowCell+flowCell/2, y=r*flowCell+flowCell/2; let bl=false;
-    for(const o of obstacles){ if(x>o.x-8&&x<o.x+o.w+8&&y>o.y-8&&y<o.y+o.h+8){bl=true;break;} }
-    if(!bl && cliffs.length){ for(const cf of cliffs){ const ex=(x-(cf.x+cf.w/2))/(cf.w*0.5), ey=(y-(cf.y+cf.h/2))/(cf.h*0.5); if(ex*ex+ey*ey<1){bl=true;break;} } }
+    if(currentMap==='laspalmas'){ bl=!!lpSolidAt(x,y); }
+    else {
+      for(const o of obstacles){ if(x>o.x-8&&x<o.x+o.w+8&&y>o.y-8&&y<o.y+o.h+8){bl=true;break;} }
+      if(!bl && cliffs.length){ for(const cf of cliffs){ const ex=(x-(cf.x+cf.w/2))/(cf.w*0.5), ey=(y-(cf.y+cf.h/2))/(cf.h*0.5); if(ex*ex+ey*ey<1){bl=true;break;} } }
+    }
     blocked[r*flowCols+c]=bl?1:0;
   }
   const dist=new Int32Array(N); dist.fill(-1); const q=[];
@@ -2032,10 +2274,10 @@ function updateEnemies(dt){
         if(turTgt){
           const td=dist(e.x,e.y,turTgt.x,turTgt.y)||1;
           dx=(turTgt.x-e.x)/td; dy=(turTgt.y-e.y)/td;
-        } else if(currentMap==='templo'||currentMap==='machu'){
+        } else if(currentMap==='templo'||currentMap==='machu'||currentMap==='laspalmas'){
           const fd=flowDir(e);
           let los=true; const stp=Math.min(40,Math.max(3,Math.floor(d/12)));
-          for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; let hit=false; for(const o of obstacles){ if(tx>o.x-6&&tx<o.x+o.w+6&&ty>o.y-6&&ty<o.y+o.h+6){hit=true;break;} } if(!hit && cliffs.length && inCliff(tx,ty)) hit=true; if(hit){los=false;break;} }
+          for(let s=1;s<stp;s++){ const tx=e.x+(tgt.x-e.x)*s/stp, ty=e.y+(tgt.y-e.y)*s/stp; let hit=false; if(currentMap==='laspalmas'){ hit=!!lpSolidAt(tx,ty); } else { for(const o of obstacles){ if(tx>o.x-6&&tx<o.x+o.w+6&&ty>o.y-6&&ty<o.y+o.h+6){hit=true;break;} } if(!hit && cliffs.length && inCliff(tx,ty)) hit=true; } if(hit){los=false;break;} }
           // hysteresis: once an enemy starts getting stuck, trust the flow field even if line of
           // sight flickers open at a corner — stops the straight-line/flow oscillation on stairs
           if(fd && (!los || (e._stuckT||0)>0.3)){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
@@ -2092,6 +2334,7 @@ function updateEnemies(dt){
         let px=-ay/al, py=ax/al;   // perpendicular to the chase direction
         const open=(sx,sy)=>{ const qx=e.x+sx*52, qy=e.y+sy*52;
           if(qx<20||qx>WORLD_W-20||qy<20||qy>WORLD_H-20) return false;
+          if(currentMap==='laspalmas') return !lpSolidAt(qx,qy);
           if(cliffs.length && inCliff(qx,qy)) return false;
           for(const o of obstacles){ if(qx>o.x-e.radius&&qx<o.x+o.w+e.radius&&qy>o.y-e.radius&&qy<o.y+o.h+e.radius) return false; }
           return true; };
@@ -2184,7 +2427,7 @@ function startRound(){
   else if(round===20){ spawnQueue=0; spawnGiantBoss(); }
   else if(round%5===0){ spawnQueue = Math.round(spawnQueue*0.45); spawnBoss(round); }
   playRoundStart(round);
-  apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
 }
 function startBreak(){
   state = STATE.BREAK;
@@ -2200,13 +2443,41 @@ function startBreak(){
   score += bonus;
 }
 
+// ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
+function startSurvival(){
+  state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
+  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0;
+}
+function updateSurvival(dt){
+  survTime+=dt;
+  updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
+  for(const p of players){
+    if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
+    else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
+  }
+  const nParty=activePlayerCount();
+  // more players -> the clock effectively runs faster, so difficulty ramps sooner; solo is chill early
+  const rf=1 + 0.35*(nParty-1);
+  const dtf=survTime*rf;
+  round = 1 + Math.floor(dtf/22);   // virtual round drives spawnEnemy's type pool + base scaling
+  const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
+  const cap = Math.min(70, Math.round(4 + 4*nParty + dtf*0.11));
+  survSpawnT-=dt;
+  if(aliveN<cap && survSpawnT<=0){
+    const burst=(dtf>60 && Math.random()<0.5)?2:1;
+    for(let i=0;i<burst;i++){ if(enemies.reduce((a,e)=>a+(e.dead?0:1),0)>=cap) break; spawnEnemy(); }
+    survSpawnT = Math.max(0.26, (nParty>=2?0.8:1.05) - dtf*0.004);
+  }
+}
+
 function updatePlay(dt){
   updatePlayers(dt);
-  if(currentMap==='templo'||currentMap==='machu'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; }
-    bossFlowTimer-=dt; if(bossFlowTimer<=0){ const _jb=enemies.find(en=>en.boss&&en.kind==='jarjacha'); if(_jb) buildBossFlow(_jb.radius); else bossFlowGrid=null; bossFlowTimer=0.2; } } else { flowGrid=null; bossFlowGrid=null; }
+  if(currentMap==='templo'||currentMap==='machu'||currentMap==='laspalmas'){ flowTimer-=dt; if(flowTimer<=0){ buildFlow(); flowTimer=0.2; }
+    if(currentMap!=='laspalmas'){ bossFlowTimer-=dt; if(bossFlowTimer<=0){ const _jb=enemies.find(en=>en.boss&&en.kind==='jarjacha'); if(_jb) buildBossFlow(_jb.radius); else bossFlowGrid=null; bossFlowTimer=0.2; } } else bossFlowGrid=null; } else { flowGrid=null; bossFlowGrid=null; }
   updateEnemies(dt);
   updateEffects(dt);
   updateLeaves(dt);
+  if(survival) updateBullets(dt);
   updateRays(dt);
   updateIceBeams(dt);
   updateHearts(dt);
@@ -2217,17 +2488,20 @@ function updatePlay(dt){
   updateWallets(dt);
   updateGear(dt);
   updateBossDrops(dt);
-  // spawn enemies gradually
-  if(spawnQueue>0){
-    spawnTimer-=dt;
-    if(spawnTimer<=0){
-      const burst=randi(1,2);
-      for(let i=0;i<burst && spawnQueue>0;i++){ spawnEnemy(); spawnQueue--; }
-      spawnTimer=rand(0.65,1.15)/spawnPace;
+  if(survival){ updateSurvival(dt); }
+  else {
+    // spawn enemies gradually
+    if(spawnQueue>0){
+      spawnTimer-=dt;
+      if(spawnTimer<=0){
+        const burst=randi(1,2);
+        for(let i=0;i<burst && spawnQueue>0;i++){ spawnEnemy(); spawnQueue--; }
+        spawnTimer=rand(0.65,1.15)/spawnPace;
+      }
     }
+    // round clear
+    if(state===STATE.PLAY && spawnQueue<=0 && enemies.filter(en=>!en.dead).length===0 && !amuleto && wallets.length===0){ startBreak(); }
   }
-  // round clear
-  if(state===STATE.PLAY && spawnQueue<=0 && enemies.filter(en=>!en.dead).length===0 && !amuleto && wallets.length===0){ startBreak(); }
   // all dead?
   if(players.every(p=>!p.alive) && !players.some(p=>p.fell&&p.fallT>0)) gameOver();
 }
@@ -2280,6 +2554,7 @@ function updateDying(dt){
 }
 function drawDying(){ drawDeathScene(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); }
 function gameOver(){
+  if(survival && kills>lpBestScore){ lpBestScore=kills; try{ localStorage.setItem('fm_laspalmas_best', lpBestScore); }catch(e){} }
   camX = clamp((lastDead?lastDead.x:W/2) - W/2, 0, Math.max(0,WORLD_W-W));
   camY = clamp((lastDead?lastDead.y:H/2) - H/2, 0, Math.max(0,WORLD_H-H));
   if(lastDead && lastDead.fell){ dying=null; state=STATE.OVER; menuSel=0; playDeathMusic(); return; }
@@ -2741,7 +3016,17 @@ function buildArenaBG(g){
   }
 }
 let arenaBG=null, arenaTrees=null, arenaTag='';
+// Las Palmas draws its pre-rendered composite straight from the image (only the visible slice),
+// so we never allocate a 3280x5880 offscreen canvas for it.
+function drawLpArena(){
+  const sx=Math.max(0,Math.floor(camX)), sy=Math.max(0,Math.floor(camY));
+  const sw=Math.min(W, WORLD_W-sx), sh=Math.min(H, WORLD_H-sy);
+  if(sw<=0||sh<=0) return;
+  if(LP_TERRAIN_IMG.naturalWidth){ ctx.drawImage(LP_TERRAIN_IMG, sx,sy,sw,sh, sx,sy,sw,sh); }
+  else { ctx.fillStyle='#4f8a3a'; ctx.fillRect(sx,sy,sw,sh); }
+}
 function drawArena(){
+  if(currentMap==='laspalmas'){ drawLpArena(); drawLpGround(); return; }
   const tag=currentMap+'|'+WORLD_W+'|'+WORLD_H;
   if(!arenaBG || arenaTag!==tag){
     arenaBG=document.createElement('canvas'); arenaBG.width=WORLD_W; arenaBG.height=WORLD_H; buildArenaBG(arenaBG.getContext('2d'));
@@ -2750,7 +3035,7 @@ function drawArena(){
   }
   ctx.drawImage(arenaBG,0,0);
 }
-function drawTreeBorder(){ if(arenaTrees) ctx.drawImage(arenaTrees,0,0); }
+function drawTreeBorder(){ if(currentMap==='laspalmas') return; if(arenaTrees) ctx.drawImage(arenaTrees,0,0); }
 
 function freddyFrame(p){
   const d=p.dir, S=SPRITES;
@@ -3520,20 +3805,21 @@ function drawEnemy(e){
 
 function drawApuchi(a){
   const img=APU_IMG[a.type], D=APU_DEF[a.type];
-  const bounce=Math.abs(Math.sin(a.bob))*9;          // lively hop
+  const half=(currentMap==='laspalmas');            // Las Palmas Apuchis are half size
+  const bounce=Math.abs(Math.sin(a.bob))*(half?4.5:9);          // lively hop
   const squash=1+0.12*Math.sin(a.bob*2+1.2);         // squash & stretch
   const pop=clamp(a.spawn,0,1);
   const cy=a.y-bounce;
   // shadow shrinks as it rises
   ctx.fillStyle='rgba(0,0,0,0.25)';
-  ctx.beginPath(); ctx.ellipse(a.x, a.y+16, 13-bounce*0.5, 4.5, 0,0,TAU); ctx.fill();
-  if(D.rare){ ctx.shadowColor=D.color; ctx.shadowBlur=14+6*Math.sin(time*6); }
+  ctx.beginPath(); ctx.ellipse(a.x, a.y+(half?8:16), (half?7:13)-bounce*0.5, half?2.6:4.5, 0,0,TAU); ctx.fill();
+  if(D.rare){ ctx.shadowColor=D.color; ctx.shadowBlur=(half?9:14)+6*Math.sin(time*6); }
   if(img && img.naturalWidth){
-    const H0=38*pop, asp=img.naturalWidth/img.naturalHeight;
+    const H0=(half?19:38)*pop, asp=img.naturalWidth/img.naturalHeight;
     const h=H0*squash, w=H0*asp/squash;
     ctx.drawImage(img, a.x-w/2, cy-h/2, w, h);
   } else {
-    ctx.fillStyle=D.color; ctx.beginPath(); ctx.arc(a.x,cy,14*pop,0,TAU); ctx.fill();
+    ctx.fillStyle=D.color; ctx.beginPath(); ctx.arc(a.x,cy,(half?7:14)*pop,0,TAU); ctx.fill();
   }
   ctx.shadowBlur=0;
   if(D.rare && Math.random()<0.25){ spark(a.x+rand(-14,14), cy+rand(-14,14), '#ffffff', 1, 25); }
@@ -3572,7 +3858,23 @@ function drawApuStatus(p,x,y){
 function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,52);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 18px Courier New'; ctx.textAlign='center';
-  if(state===STATE.PLAY){
+  if(state===STATE.PLAY && survival){
+    const cnt='Enemigos: '+enemies.filter(en=>!en.dead).length;
+    if(players.length>=3){
+      const label='ELIMINADOS '+kills;
+      ctx.font='bold 16px Courier New';
+      const bw=Math.max(ctx.measureText(label).width, ctx.measureText(cnt).width)+24, by=56, bx=W-8-bw;
+      ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(bx,by,bw,40);
+      ctx.strokeStyle='rgba(255,225,74,0.45)'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,40);
+      ctx.textAlign='right';
+      ctx.fillStyle='#ffe9b0'; ctx.font='bold 16px Courier New'; ctx.fillText(label, W-20, by+18);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W-20, by+33);
+      ctx.textAlign='center';
+    } else {
+      ctx.fillText('ELIMINADOS: '+kills, W/2, 22);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 40);
+    }
+  } else if(state===STATE.PLAY){
     const cnt='Enemigos: '+(enemies.filter(en=>!en.dead).length+spawnQueue);
     if(players.length>=3){
       // 3-4 players (online): the health bars fill the whole top strip and boss bars fill the
@@ -3625,7 +3927,10 @@ function drawHUD(){
       }
     }
     ctx.font='bold 11px Courier New'; ctx.textAlign='right';
-    if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO 50/50 \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); }
+    if(survival){ const gk=(players.indexOf(p)===0?'F':'.');
+      if(p.oro>=50){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('\u00a1ORO LISTO ['+gk+']!', px+w, 14); } }
+      else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); } }
+    else if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO 50/50 \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); }
     ctx.textAlign='left';
     drawApuStatus(p, px, 48);
     px += w+40;
@@ -3650,7 +3955,7 @@ function drawBreakUI(){
 
 // ---------- New menu system (main menu / mapas / como jugar) ----------
 function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY||state===STATE.MODOS||state===STATE.NETSELECT; }
-function playMenuMusic(){ try{ if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(pvpMusic){ pvpMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
+function playMenuMusic(){ try{ lpMusicStop(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(pvpMusic){ pvpMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
 function stopMenuMusic(){ try{ if(menuMusic) menuMusic.pause(); }catch(e){} }
 function gotoMainMenu(){ stopVoices(); state=STATE.MAINMENU; mainSel=0; mainMenuT=99; playMenuMusic(); }
 
@@ -3715,7 +4020,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-15.7';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.9';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -3749,9 +4054,8 @@ function drawMapas(){
     ctx.save(); ctx.translate(cx,cy);
     ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
     ctx.save(); rrect(12,12,cw-24,184,6); ctx.clip();
-    const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:((i===3)?mapThumb4:null)));
-    if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,184); }
-    else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,184); }
+    const thumb = (i===0)?mapThumb : ((i===1)?mapThumb2 : ((i===2)?mapThumb3:mapThumb4));
+    if(thumb){ ctx.drawImage(thumb,0,0,W,H,12,12,cw-24,184); } else { ctx.fillStyle='#241a12'; ctx.fillRect(12,12,cw-24,184); }
     if(locked){ ctx.fillStyle='rgba(0,0,0,0.64)'; ctx.fillRect(12,12,cw-24,184); }
     ctx.restore();
     if(locked){ drawLock(cw/2,96,1.05); ctx.fillStyle='#e8c98a'; ctx.font='bold 17px Courier New'; ctx.textAlign='center'; ctx.fillText('BLOQUEADO', cw/2, 172); }
@@ -3784,25 +4088,26 @@ function drawModos(){
   ctx.fillStyle='#3a1606'; ctx.font='bold 15px Courier New';
   ctx.fillText('Elige el modo de juego', W/2, 130);
   const cards=[
-    {t:'HORDA', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe', d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', locked:false},
-    {t:'PVP',   d1:'Duelo explosivo: bombas, Apuchis',  d2:'y un solo golpe', d3:NET.hosting?'2-4 jugadores':'2 jugadores', locked:false},
+    {t:'HORDA',         c:'#8cc24a', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe',        d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Disponible', fc:'#aef7c2'},
+    {t:'MODO INFINITO', c:'#ff9a4a', d1:'Supervivencia sin fin: enemigos', d2:'que no paran de venir',    d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Mejor: '+lpBestScore, fc:'#ffd24a'},
+    {t:'PVP',           c:'#ff8a5a', d1:'Duelo explosivo: bombas, Apuchis', d2:'y un solo golpe',          d3:NET.hosting?'2-4 jugadores':'2 jugadores',   foot:'Disponible', fc:'#aef7c2'},
   ];
-  const cw=330, chh=280, gap=60, x0=(W-2*cw-gap)/2, cy=190;
+  const cw=300, chh=280, gap=34, x0=(W-3*cw-2*gap)/2, cy=180;
   cards.forEach((m,i)=>{
-    let ox=(i===modeSel && m.locked && mapLockShake>0)?Math.sin(time*45)*5:0;
-    const cx=x0+i*(cw+gap)+ox;
+    const cx=x0+i*(cw+gap);
     ctx.save(); ctx.translate(cx,cy);
     ctx.fillStyle='rgba(28,16,8,0.88)'; rrect(0,0,cw,chh,10); ctx.fill();
-    ctx.fillStyle=m.locked?'#9a8f75':(i===0?'#8cc24a':'#ff8a5a'); ctx.font='bold 30px Courier New';
-    ctx.fillText(m.t, cw/2, 64);
-    ctx.fillStyle=m.locked?'#8a7f68':'#e8e0cc'; ctx.font='14px Courier New';
-    ctx.fillText(m.d1, cw/2, 118);
-    ctx.fillText(m.d2, cw/2, 140);
-    ctx.fillStyle=m.locked?'#8a7f68':'#aef7c2'; ctx.font='bold 13px Courier New';
-    ctx.fillText(m.d3, cw/2, 186);
-    if(m.locked){ ctx.fillStyle='#e8c98a'; ctx.font='bold 16px Courier New'; ctx.fillText('PRÓXIMAMENTE', cw/2, 236); }
-    else if(i===1){ const img=APU_IMG.piedra; if(img&&img.naturalWidth){ drawIconFit(img, cw/2, 226, 44); } }
-    else { ctx.fillStyle='#aef7c2'; ctx.font='13px Courier New'; ctx.fillText('Disponible', cw/2, 236); }
+    ctx.fillStyle=m.c; ctx.font='bold 27px Courier New';
+    ctx.fillText(m.t, cw/2, 60);
+    ctx.fillStyle='#e8e0cc'; ctx.font='14px Courier New';
+    ctx.fillText(m.d1, cw/2, 112);
+    ctx.fillText(m.d2, cw/2, 134);
+    ctx.fillStyle='#aef7c2'; ctx.font='bold 13px Courier New';
+    ctx.fillText(m.d3, cw/2, 180);
+    if(i===2){ const img=APU_IMG.piedra; if(img&&img.naturalWidth){ drawIconFit(img, cw/2, 222, 42); } }
+    else if(i===1){ ctx.fillStyle='#ff9a4a'; ctx.font='bold 30px Courier New'; ctx.fillText('∞', cw/2, 232); }
+    else { ctx.fillStyle='#8cc24a'; ctx.font='bold 22px Courier New'; ctx.fillText('★20', cw/2, 230); }
+    ctx.fillStyle=m.fc; ctx.font='12px Courier New'; ctx.fillText(m.foot, cw/2, 258);
     if(i===modeSel){ ctx.strokeStyle='#ffd24a'; ctx.lineWidth=4; rrect(2,2,cw-4,chh-4,10); ctx.stroke(); }
     ctx.restore();
   });
@@ -3921,8 +4226,14 @@ function drawOver(){
   ctx.fillStyle='#ff5a4a'; ctx.font='bold 46px Courier New';
   ctx.fillText('FIN DEL JUEGO', W/2, 150);
   ctx.fillStyle='#ffe9b0'; ctx.font='20px Courier New';
-  ctx.fillText('Ronda alcanzada: '+round, W/2, 210);
-  ctx.fillText('Puntos totales: '+score, W/2, 244);
+  if(survival){
+    ctx.fillText('Enemigos eliminados: '+kills, W/2, 210);
+    ctx.fillStyle=(kills>=lpBestScore&&kills>0)?'#ffd24a':'#aef7c2'; ctx.font='18px Courier New';
+    ctx.fillText((kills>=lpBestScore&&kills>0)?('¡NUEVO RÉCORD!  '+lpBestScore):('Mejor: '+lpBestScore), W/2, 240);
+  } else {
+    ctx.fillText('Ronda alcanzada: '+round, W/2, 210);
+    ctx.fillText('Puntos totales: '+score, W/2, 244);
+  }
   // per player summary
   let yy=300;
   ctx.font='15px Courier New';
@@ -4053,9 +4364,15 @@ function handleMenuKey(code){
     if(code==='Enter'||code==='Space'){ if(mainSel===0){ NET.hosting=false; state=STATE.MODOS; modeSel=0; } else if(mainSel===1){ NET.hosting=true; state=STATE.MODOS; modeSel=0; } else { state=STATE.HELP; } }
   } else if(state===STATE.MODOS){
     if(code==='Escape'){ state=STATE.MAINMENU; mainSel=0; return; }
-    if(code==='ArrowLeft'||code==='KeyA'||code==='ArrowRight'||code==='KeyD'||code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') modeSel=(modeSel+1)%2;
+    // three modes: 0 HORDA · 1 MODO INFINITO · 2 PVP
+    if(code==='ArrowLeft'||code==='KeyA') modeSel=(modeSel+2)%3;
+    else if(code==='ArrowRight'||code==='KeyD'||code==='ArrowUp'||code==='KeyW'||code==='ArrowDown'||code==='KeyS') modeSel=(modeSel+1)%3;
     if(code==='Enter'||code==='Space'){
       if(modeSel===0){ lobbyMode='horda'; state=STATE.MAPAS; mapSel=0; }
+      else if(modeSel===1){ // MODO INFINITO — survival on Las Palmas (co-op / online / solo, like Horda)
+        lobbyMode='horda'; currentMap='laspalmas'; WORLD_W=W; camX=0;
+        if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); }
+      }
       else if(NET.hosting){ lobbyMode='pvp'; currentMap='pvp'; enterLobby(); }
       else { enterPvpSelect(); }
     }
@@ -4070,7 +4387,7 @@ function handleMenuKey(code){
   } else if(state===STATE.HELP){
     if(code==='Escape'||code==='Enter'||code==='Space'){ state=STATE.MAINMENU; mainSel=0; }
   } else if(state===STATE.MENU){
-    if(code==='Escape'){ state=STATE.MAPAS; mapSel=0; playMenuMusic(); return; }
+    if(code==='Escape'){ if(currentMap==='laspalmas'){ state=STATE.MODOS; modeSel=1; } else { state=STATE.MAPAS; mapSel=0; } playMenuMusic(); return; }
     if(code==='ArrowUp'||code==='KeyW') menuSel=(menuSel+1)%2;
     if(code==='ArrowDown'||code==='KeyS') menuSel=(menuSel+1)%2;
     if(code==='Enter'||code==='Space'){ modTest=false; mode=(menuSel===1)?2:1; selMode=mode; enterSelect(); }
@@ -4107,7 +4424,9 @@ let condor=null, introTimer=0;
 function magicDust(x,y){ for(let i=0;i<3;i++) spark(x+rand(-24,24), y+rand(-30,18), ['#ffe9a0','#ffffff','#ffd24a','#aef7c2','#9adcff'][randi(0,4)], 1, 70); }
 function startIntro(){
   state=STATE.INTRO; introTimer=15;
-  condor={ x:WORLD_W/2, y:(WORLD_H>H?WORLD_H*0.42:H*0.40), scale:0, spin:0, animTime:0, pose:3, apSnd:false, lvSnd:false, msg:false };
+  const cxx = survival?LP_SPAWN.x : WORLD_W/2;
+  const cyy = survival?(LP_SPAWN.y-120) : (WORLD_H>H?WORLD_H*0.42:H*0.40);
+  condor={ x:cxx, y:cyy, scale:0, spin:0, animTime:0, pose:3, apSnd:false, lvSnd:false, msg:false };
 }
 function updateCondor(dt){
   const c=condor; if(!c) return;
@@ -4128,7 +4447,7 @@ function updateIntro(dt){
   updateCondor(dt);
   if(players.length && players.every(p=>!p.alive) && !players.some(p=>p.fell&&p.fallT>0)) gameOver();
   introTimer-=dt;
-  if(introTimer<=0){ condor=null; startRound(); }
+  if(introTimer<=0){ condor=null; if(survival) startSurvival(); else startRound(); }
 }
 function drawCondor(){
   const c=condor; if(!c||c.scale<=0.01) return;
@@ -4142,9 +4461,10 @@ function drawCondor(){
   ctx.restore();
 }
 function drawIntroUI(){
-  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(W/2-110,58,220,30);
+  const bw=survival?300:220;
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(W/2-bw/2,58,bw,30);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 20px Courier New'; ctx.textAlign='center';
-  ctx.fillText('RONDA 1 EN '+Math.ceil(introTimer)+'s', W/2, 79);
+  ctx.fillText(survival?('¡A SOBREVIVIR EN '+Math.ceil(introTimer)+'s!'):('RONDA 1 EN '+Math.ceil(introTimer)+'s'), W/2, 79);
   if(condor && condor.scale>0.3){ ctx.fillStyle='#ffe14a'; ctx.font='bold 14px Courier New'; ctx.fillText('C\u00f3ndor Ganso', condor.x-camX, condor.y-camY-44*condor.scale-8); }
   ctx.textAlign='left';
 }
@@ -4263,31 +4583,34 @@ function startGame(){
   resumeCumbia();
   // copy the map's obstacle list — Inca wall blocks get pushed/spliced into `obstacles` at runtime,
   // so the pristine per-map arrays must never be mutated
-  obstacles = ((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
-  WORLD_W = (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
-  WORLD_H = (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H; camX=0; camY=0;
+  obstacles = ((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS).slice(); arenaBG=null; arenaTrees=null;
+  WORLD_W = (currentMap==='laspalmas')?LP_W : (currentMap==='stonebridge')?2*W : (currentMap==='machu')?Math.round(2.6*W) : (currentMap==='templo')?Math.round(2.0*W) : W;
+  WORLD_H = (currentMap==='laspalmas')?LP_H : (currentMap==='templo')?Math.round(1.6*H) : (currentMap==='machu')?Math.round(2.236*H) : H;
   cliffs = (currentMap==='templo')?CLIFFS_TEMPLO:[];
+  survival=(currentMap==='laspalmas'); survTime=0; survSpawnT=0; kills=0;
+  const sx0 = survival?LP_SPAWN.x : WORLD_W/2;
+  const sy0base = survival?LP_SPAWN.y : (currentMap==='stonebridge')?344:WORLD_H/2;
+  camX=clamp(sx0-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(sy0base-H/2,0,Math.max(0,WORLD_H-H));
   round=0; score=0; particles.length=0; enemies.length=0;
-  apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
   bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
   players=[];
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   if(NET.hosting){
-    const sy0=(currentMap==='stonebridge')?344:WORLD_H/2;
+    const sy0=sy0base;
     const total=Math.min(4, Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-    for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', WORLD_W/2 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
+    for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
     if(netSelPicks){ for(let i=0;i<players.length && i<netSelPicks.length;i++){ if(netSelPicks[i]) reassignKind(players[i], netSelPicks[i]); } netSelPicks=null; }
     else randomizeOnlineChars();   // fallback only — the lobby now goes through the NETSELECT pick screen
   } else if(mode===1){
-    players.push(makePlayer(selChar1||'freddy', WORLD_W/2, (currentMap==='stonebridge')?344:WORLD_H/2, P1));
+    players.push(makePlayer(selChar1||'freddy', sx0, sy0base, P1));
   } else {
-    const sy=(currentMap==='stonebridge')?344:WORLD_H/2;
-    players.push(makePlayer(selChar1||'freddy', WORLD_W/2-40, sy, P1));
-    players.push(makePlayer(selChar2||'michi', WORLD_W/2+40, sy, P2));
+    players.push(makePlayer(selChar1||'freddy', sx0-40, sy0base, P1));
+    players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
   else startIntro();
@@ -5248,6 +5571,7 @@ function _frameBody(now){
   if(mapLockShake>0) mapLockShake-=dt;
   safe('particles-upd',()=>updateParticles(dt));
   if(cameraShake>0) cameraShake-=dt*30;
+  if(currentMap==='laspalmas') safe('lpmusic',()=>lpMusicUpdate(dt));
   if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE) safe('camera',updateCamera);
   else if(state!==STATE.DYING && state!==STATE.OVER && state!==STATE.VICTORY){ camX=0; camY=0; }
 
@@ -5277,18 +5601,24 @@ function _frameBody(now){
   safe('arena',drawArena);
   if(currentMap==='machu'){ safe('buses',drawBuses); }
   safe('wallgrid',drawWallGrid);
-  // sort drawables by y for depth
-  const _MO=(currentMap==='machu');
-  const drawables=[...enemies.map(e=>({y:e.y,x:e.x,f:()=>drawEnemy(e)})),
-                   ...players.map(p=>({y:p.y,x:p.x,f:()=>drawPlayer(p)})),
-                   ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,f:()=>drawIncaBlock(w)})),
-                   ...turrets.map(t=>({y:t.y+4,x:t.x,f:()=>drawTurret(t)}))];
-  if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, f:()=>drawProp(o)}); } } }
-  if(state===STATE.BREAK){
-    for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
+  // sort drawables by feet position for depth. sy = the entity's feet Y (bottom of sprite); on
+  // Las Palmas the map's background props join this same list so the player passes BEHIND a tree
+  // whose feet are lower on screen and IN FRONT of one whose feet are higher. zt breaks ties.
+  const _MO=(currentMap==='machu'), _LP=(currentMap==='laspalmas');
+  const drawables=[...enemies.map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
+                   ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
+                   ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
+                   ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
+  if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
+  if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
+  if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
+    if(_LP) safe('lpitems',drawLpItems);   // shoe / power-up pickups
+    else for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
   }
-  drawables.sort((a,b)=>a.y-b.y);
+  drawables.forEach((d,i)=>d._i=i);   // stable-sort tiebreak
+  drawables.sort((a,b)=>(a.sy-b.sy)||(a.zt-b.zt)||(a._i-b._i));
   for(const d of drawables){ const _m=ctx.getTransform(); if(_MO) ctx.translate(0,machuElev(d.x)); try{ d.f(); }catch(_e){ if(!_drawErr){ _drawErr=1; console.error('DRAW[drawable]', (_e&&_e.stack)||_e); } } ctx.setTransform(_m); }
+  if(_LP){ for(const pr of LP_PROPS){ if(pr.fg){ try{ drawLpProp(pr); }catch(_e){} } } }   // foreground-plane props (e.g. water tower) draw on top
   for(const p of players){ if(!p.alive || !(p.oroCharge>0)) continue;
     const f=clamp(p.oroCharge/1.0,0,1), bw=72, bx=p.x-bw/2, by=p.y-p.radius-34+(_MO?machuElev(p.x):0);
     ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(bx-2,by-2,bw+4,13);
@@ -5300,6 +5630,7 @@ function _frameBody(now){
   safe('amuleto',()=>{ if(_MO && amuleto){ ctx.save(); ctx.translate(0,machuElev(amuleto.x)); try{drawAmuleto();}finally{ctx.restore();} } else drawAmuleto(); });
   safe('effects',drawEffects);
   safe('leaves',drawLeaves);
+  if(survival) safe('bullets',drawBullets);
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
   safe('hearts',drawHearts);
@@ -5442,13 +5773,15 @@ function netSerializeSnapshot(){
   while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();   // drop SFX/text events already resent ~4 times
   return { _snap:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
     state, round, score, spawnQueue, breakTimer, introTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
+    survival, kills,
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
+    lpItems: lpItems.map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
     fx:      fx_effects.map(netSerEnt),
-    leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),
+    leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),   bullets: bullets.map(netSerEnt),
     nuggets: nuggets.map(netSerEnt),  wallets: wallets.map(netSerEnt),
     bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
     drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) };
@@ -5519,9 +5852,10 @@ function netApplyMeta(s){
   }
   if(s.state===STATE.PAUSE && state!==STATE.PAUSE){ pauseView='main'; pauseSel=0; }   // fresh local menu each time the host pauses
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
+  survival=!!s.survival; kills=s.kills||0;
   if(currentMap!==s.currentMap){
     currentMap=s.currentMap;
-    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS).slice();
+    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS).slice();
     cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
     gWallSig=null;   // force the wall/obstacle rebuild on the fresh map
   }
@@ -5695,7 +6029,7 @@ function netApplyGuest(dt){
     if(gIntroSeq!==cur.seq){ gIntroSeq=cur.seq; introTimer=cur.introTimer||0; }
     else introTimer=Math.max(0, introTimer-dt);          // smooth the countdown between ~18Hz snapshots
     if(!condor && (15-introTimer)<14){
-      condor={ x:WORLD_W/2, y:(WORLD_H>H?WORLD_H*0.42:H*0.40), scale:0, spin:0, animTime:0, pose:3,
+      condor={ x:(survival?LP_SPAWN.x:WORLD_W/2), y:(survival?(LP_SPAWN.y-120):(WORLD_H>H?WORLD_H*0.42:H*0.40)), scale:0, spin:0, animTime:0, pose:3,
                apSnd:true, lvSnd:true,   // the host relays its playMagic() cues via net events — don't double them
                msg:false };              // the condor voice line is NOT relayed → play it locally
     }
@@ -5744,6 +6078,7 @@ function netApplyGuest(dt){
     seenA[sa.id]=1; apuchis.push(o);
   }
   for(const id in gApuMap){ if(!seenA[id]) delete gApuMap[id]; }
+  lpItems.length=0; for(const it of (cur.lpItems||[])) lpItems.push({id:it.id, kind:it.kind, x:it.x, y:it.y, bob:time*6, spawn:1});
   hearts.length=0; for(const h of cur.hearts) hearts.push({x:h.x, y:h.y, bob:time*4, spin:time*3, life:16});
   if(cur.amuleto){ if(!amuleto) amuleto={bob:0, spin:0}; amuleto.x=cur.amuleto.x; amuleto.y=cur.amuleto.y; amuleto.item=cur.amuleto.item; amuleto.bob+=dt*4; amuleto.spin+=dt*2; }
   else amuleto=null;
@@ -5754,6 +6089,7 @@ function netApplyGuest(dt){
   if(gProjSeq!==cur.seq){
     gProjSeq=cur.seq;
     leaves.length=0;   for(const l of cur.leaves||[])  leaves.push({...l});
+    bullets.length=0;  for(const bu of cur.bullets||[]) bullets.push({...bu});
     rays.length=0;     for(const r of cur.rays||[])    rays.push({...r});
     iceBeams.length=0; for(const b2 of cur.ice||[])    iceBeams.push({...b2});
     nuggets.length=0;  for(const g of cur.nuggets||[]) nuggets.push({...g});
@@ -5771,10 +6107,11 @@ function netApplyGuest(dt){
       gWallSig=sig;
       incaWalls.length=0;
       for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:WALL_HP, id:w2.id});
-      const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:OBST_AMAZONAS;
+      const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS;
       obstacles=base.concat(incaWalls);
     } }
   for(const l of leaves){  l.x+=(l.vx||0)*dt; l.y+=(l.vy||0)*dt; }
+  for(const bu of bullets){ bu.x+=(bu.vx||0)*dt; bu.y+=(bu.vy||0)*dt; }
   for(const r of rays){    r.x+=(r.vx||0)*dt; r.y+=(r.vy||0)*dt; }
   for(const r2 of turretArrows){ r2.x+=(r2.vx||0)*dt; r2.y+=(r2.vy||0)*dt; }
   for(const g of nuggets){ g.x+=(g.vx||0)*dt; g.y+=(g.vy||0)*dt; g.bob=(g.bob||0)+dt*8; }
@@ -5783,7 +6120,7 @@ function netApplyGuest(dt){
 
   // local audio cues driven off snapshot deltas
   if(gPrevRound===-999) gPrevRound=cur.round;
-  try{ if(cur.state===STATE.PLAY && cur.round!==gPrevRound) playRoundStart(cur.round); }catch(e){}
+  try{ if(!survival && cur.state===STATE.PLAY && cur.round!==gPrevRound) playRoundStart(cur.round); }catch(e){}
   try{ netGuestMusic(cur.state); }catch(e){}
   gPrevRound=cur.round;
 }
