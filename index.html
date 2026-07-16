@@ -218,13 +218,8 @@ let voices=[];
 function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
 function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
 function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); }
-// Alfredo & Mati recorded their voice takes much quieter than the rest of the roster. The decoded
-// Web Audio buffer path (the one their voices actually run through) amplifies past 1.0, so push
-// their gain well above unity; the <audio> element fallback caps volume at 1 on its own.
-const CHAR_VOL_BOOST={ alfredo:2.4, mati:2.4 };
-function charVol(kind, base){ return base*(CHAR_VOL_BOOST[kind]||1); }
-function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], charVol(kind,0.95)); }
-function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], charVol(kind,0.95)); }
+function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], 0.95); }
+function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], 0.95); }
 function playRoundStart(r){
   const boss=(r%5===0);
   if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
@@ -1266,7 +1261,7 @@ function playPunchSound(p){
     const horStep=(k==='vannucci')?3:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
-      playOne(AUDIO_SRC[k+'_hit'+n2], charVol(k,0.6));
+      playOne(AUDIO_SRC[k+'_hit'+n2], 0.6);
     }
     return;
   }
