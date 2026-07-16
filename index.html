@@ -260,7 +260,17 @@ function lpMusicStart(){
   try{ const t0=lpMx[0]; t0.currentTime=0; t0.volume=LP_MX_VOL*musicVol; t0.play().catch(()=>{}); }catch(e){}
 }
 function lpMusicUpdate(dt){
-  if(!lpMx.length) return; const cur=lpMx[lpMxIdx]; if(!cur || cur.paused) return;
+  if(!lpMx.length) return; const cur=lpMx[lpMxIdx]; if(!cur) return;
+  // Safety net / loop: if the active track played to its END with no crossfade queued (e.g. the last
+  // track), jump straight to the next one (wrapping 3→1). `ended` distinguishes a natural finish from
+  // an intentional pause (menu/stop), which leaves ended=false.
+  if(cur.ended && lpMxNext<0){
+    try{ cur.currentTime=0; }catch(e){}
+    lpMxIdx=(lpMxIdx+1)%lpMx.length; const nx=lpMx[lpMxIdx];
+    try{ nx.currentTime=0; nx.volume=LP_MX_VOL*musicVol; nx.play().catch(()=>{}); }catch(e){}
+    return;
+  }
+  if(cur.paused) return;   // intentionally stopped (menu/death) — don't resurrect it here
   const dur=cur.duration||0, ct=cur.currentTime||0;
   if(lpMxNext<0 && dur>0 && ct>dur-LP_MX_FADE){    // near the end → start the next track fading in
     lpMxNext=(lpMxIdx+1)%lpMx.length; const nx=lpMx[lpMxNext];
@@ -1212,12 +1222,44 @@ function placeApu(type){
 }
 // Las Palmas: enemies drop Apuchis (half size) on death — not every time, and the rare ones
 // (Morganita/Safiro) stay rare thanks to weightedApu's weights + late-game gating.
-function lpMaybeDropApu(e){
-  if(apuchis.length>=42) return;                       // don't carpet the map
-  const ch = e.type==='large' ? 0.24 : (e.type==='fast' ? 0.07 : 0.10);
-  if(Math.random()>=ch) return;
-  const type=weightedApu(true,true);
-  apuchis.push({id:_entId++, type, x:e.x+rand(-8,8), y:e.y+rand(-8,8), r:9, bob:Math.random()*TAU, spawn:0});
+// Modo Infinito ground pickups: 'shoe' = speed (reuses the Tierra speed multiplier). Weapons get
+// added here with the inventory system.
+const lpItems=[];
+function lpMaybeDrop(e){
+  const big=(e.type==='large');
+  // health hearts: uncommon from any enemy, much likelier from the big ones. Heal is partial
+  // (~25%, see updateHearts) so you're never fully safe.
+  if(Math.random() < (big?0.22:0.05)) hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16});
+  // speed shoe: rare, small permanent stack until you die
+  if(lpItems.length<24 && Math.random() < (big?0.06:0.03)) lpItems.push({id:_entId++, kind:'shoe', x:e.x+rand(-8,8), y:e.y+rand(-8,8), bob:Math.random()*TAU, spawn:0});
+}
+function updateLpItems(dt){
+  for(const it of lpItems){ it.bob+=dt*6; if(it.spawn<1) it.spawn=Math.min(1,it.spawn+dt*3); }
+  for(const p of players){ if(!p.alive) continue;
+    for(let i=lpItems.length-1;i>=0;i--){ const it=lpItems[i];
+      if(dist(p.x,p.y,it.x,it.y)<p.radius+15){
+        if(it.kind==='shoe'){ if(p.tierra>=3) continue; p.tierra=Math.min(3,p.tierra+1); floatText(p.x,p.y-26,'VELOCIDAD '+p.tierra+'/3','#eaf1ff'); playPickup(); }
+        lpItems.splice(i,1);
+      }
+    }
+  }
+}
+function drawShoe(x,y){   // little white sports shoe with a shine
+  ctx.fillStyle='#ffffff'; rrect(x-11,y-6,21,9,3); ctx.fill();
+  ctx.fillStyle='#e7edf7'; rrect(x-11,y+1,21,3,2); ctx.fill();
+  ctx.fillStyle='#ffffff'; rrect(x-9,y-10,12,7,3); ctx.fill();
+  ctx.strokeStyle='#c3d1ea'; ctx.lineWidth=1; rrect(x-11,y-10,21,14,3); ctx.stroke();
+  ctx.fillStyle='#bcd0ff'; ctx.fillRect(x-3,y-8,2,6); ctx.fillRect(x,y-8,2,6);
+  const s=0.6+0.4*Math.sin(time*6); ctx.globalAlpha=s; ctx.fillStyle='#ffffff';
+  ctx.beginPath(); ctx.moveTo(x+3,y-8); ctx.lineTo(x+6,y-11); ctx.lineTo(x+7,y-7); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
+}
+function drawLpItems(){
+  for(const it of lpItems){ const bob=Math.abs(Math.sin(it.bob))*6, cy=it.y-bob, pop=clamp(it.spawn,0,1);
+    ctx.save(); ctx.globalAlpha=pop;
+    ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(it.x,it.y+8,10,3.5,0,0,TAU); ctx.fill();
+    if(it.kind==='shoe'){ ctx.shadowColor='#dfeaff'; ctx.shadowBlur=8+4*Math.sin(time*5); drawShoe(it.x,cy); ctx.shadowBlur=0; }
+    ctx.restore();
+  }
 }
 function spawnBreakItems(){
   apuchis.length=0;
@@ -1696,8 +1738,8 @@ function killEnemy(e,p){
   if(e.skin==='tourist' && !e.dead){ e.dead=true; e.deathT=0; e.hitFlash=0; e.vx=0; e.vy=0; score+=e.pts; if(e.type==='normal'||e.type==='fast') dropNugget(e.x,e.y); spark(e.x,e.y,e.color||'#fff',12,160); floatText(e.x,e.y-10,'+'+e.pts,'#ffe680'); return; }
   enemies.splice(idx,1);
   score += e.pts;
-  if(survival && !e.boss){ kills++; lpMaybeDropApu(e); }
-  if(e.type==='large'){ hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16}); }
+  if(survival && !e.boss){ kills++; lpMaybeDrop(e); }
+  if(e.type==='large' && !survival){ hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16}); }   // Horda: big enemies always drop a heart. Modo Infinito governs hearts via lpMaybeDrop instead.
   if(e.boss){
     for(let k=0;k<80;k++) spark(e.x+rand(-40,40), e.y+rand(-54,20), ['#ffd24a','#ff7a3a','#ffffff','#ff5050','#ffe24a'][randi(0,4)], 1, 260);
     cameraShake=18;
@@ -2385,7 +2427,7 @@ function startRound(){
   else if(round===20){ spawnQueue=0; spawnGiantBoss(); }
   else if(round%5===0){ spawnQueue = Math.round(spawnQueue*0.45); spawnBoss(round); }
   playRoundStart(round);
-  apuchis.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
 }
 function startBreak(){
   state = STATE.BREAK;
@@ -2404,11 +2446,11 @@ function startBreak(){
 // ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
-  apuchis.length=0; leaves.length=0; bullets.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0;
+  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0;
 }
 function updateSurvival(dt){
   survTime+=dt;
-  updateBreakItems(dt);   // Apuchis bob + get picked up DURING play (there is no shop break)
+  updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
@@ -3978,7 +4020,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-16.8';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.9';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4550,7 +4592,7 @@ function startGame(){
   const sy0base = survival?LP_SPAWN.y : (currentMap==='stonebridge')?344:WORLD_H/2;
   camX=clamp(sx0-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(sy0base-H/2,0,Math.max(0,WORLD_H-H));
   round=0; score=0; particles.length=0; enemies.length=0;
-  apuchis.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
   bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
   players=[];
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
@@ -5570,7 +5612,8 @@ function _frameBody(now){
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
   if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
   if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
-    for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
+    if(_LP) safe('lpitems',drawLpItems);   // shoe / power-up pickups
+    else for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
   }
   drawables.forEach((d,i)=>d._i=i);   // stable-sort tiebreak
   drawables.sort((a,b)=>(a.sy-b.sy)||(a.zt-b.zt)||(a._i-b._i));
@@ -5734,6 +5777,7 @@ function netSerializeSnapshot(){
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
+    lpItems: lpItems.map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
     fx:      fx_effects.map(netSerEnt),
@@ -6034,6 +6078,7 @@ function netApplyGuest(dt){
     seenA[sa.id]=1; apuchis.push(o);
   }
   for(const id in gApuMap){ if(!seenA[id]) delete gApuMap[id]; }
+  lpItems.length=0; for(const it of (cur.lpItems||[])) lpItems.push({id:it.id, kind:it.kind, x:it.x, y:it.y, bob:time*6, spawn:1});
   hearts.length=0; for(const h of cur.hearts) hearts.push({x:h.x, y:h.y, bob:time*4, spin:time*3, life:16});
   if(cur.amuleto){ if(!amuleto) amuleto={bob:0, spin:0}; amuleto.x=cur.amuleto.x; amuleto.y=cur.amuleto.y; amuleto.item=cur.amuleto.item; amuleto.bob+=dt*4; amuleto.spin+=dt*2; }
   else amuleto=null;
