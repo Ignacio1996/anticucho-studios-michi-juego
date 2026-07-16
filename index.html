@@ -61,7 +61,7 @@ let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deat
 let lpMx=[], lpMxIdx=0, lpMxNext=-1;   // Las Palmas Modo Infinito playlist (3 tracks, crossfaded in order)
 const LP_MX_VOL=0.42, LP_MX_FADE=3.2;
 // (the old masterGain/streamDest WebRTC audio tap is gone — guests play their own audio locally)
-let musicVol=1, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}
+let musicVol=0.55, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}   // start music quieter by default (raise it in AJUSTES)
 let pauseView='main', pauseSel=0, setSel=0;
 function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.4*musicVol; }
 function adjustVol(sel,delta){ if(sel===0){ musicVol=clamp(musicVol+delta,0,1); applyMusicVol(); } else { sfxVol=clamp(sfxVol+delta,0,1); if(sfxGain) sfxGain.gain.value=sfxVol; } try{ localStorage.setItem('fm_musicVol',musicVol); localStorage.setItem('fm_sfxVol',sfxVol); }catch(e){} } let lastWow=0, plinCount=0;
@@ -245,7 +245,8 @@ function playHeeGiant(){ playSfx(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 
 function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
 function playDeathMusic(){ try{ lpMusicStop(); if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
 function playLosAndes(){ try{ lpMusicStop(); if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
-function gameTrack(){ return currentMap==='pvp'?pvpMusic:currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
+function gameTrack(){ if(currentMap==='laspalmas') return lpMx[lpMxIdx]||null;   // Las Palmas uses its own crossfading playlist, not a single looping track
+  return currentMap==='pvp'?pvpMusic:currentMap==='stonebridge'?sbMusic:currentMap==='templo'?tpMusic:currentMap==='machu'?evMusic:bgMusic; }
 function otherTrack(){ return currentMap==='stonebridge'?bgMusic:sbMusic; }
 function resumeCumbia(){ try{ if(currentMap==='laspalmas'){ lpMusicStart(); return; } lpMusicStop(); if(menuMusic){ menuMusic.pause(); } if(deathMusic){ deathMusic.pause(); deathMusic.currentTime=0; } if(losAndesMusic){ losAndesMusic.pause(); losAndesMusic.currentTime=0; } const g=gameTrack(); if(bgMusic&&bgMusic!==g)bgMusic.pause(); if(sbMusic&&sbMusic!==g)sbMusic.pause(); if(tpMusic&&tpMusic!==g)tpMusic.pause(); if(evMusic&&evMusic!==g)evMusic.pause(); if(pvpMusic&&pvpMusic!==g)pvpMusic.pause(); if(g && g.paused){ g.currentTime=0; g.play().catch(()=>{}); } }catch(e){} }   // already playing (e.g. since map select) → keep it going, don't restart
 // ---- Las Palmas (Modo Infinito) playlist: 3 tracks in order, crossfading one into the next ----
@@ -3977,7 +3978,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-16.7';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.8';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
