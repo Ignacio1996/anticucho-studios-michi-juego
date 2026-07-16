@@ -218,8 +218,12 @@ let voices=[];
 function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
 function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
 function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); }
-function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], 0.95); }
-function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], 0.95); }
+// Alfredo & Mati recorded their voice takes quieter than the rest of the roster — lift their
+// select/death/hit volume a notch. Clamped to 1 so the <audio> element fallback never throws.
+const CHAR_VOL_BOOST={ alfredo:1.35, mati:1.35 };
+function charVol(kind, base){ return Math.min(1, base*(CHAR_VOL_BOOST[kind]||1)); }
+function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], charVol(kind,0.95)); }
+function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], charVol(kind,0.95)); }
 function playRoundStart(r){
   const boss=(r%5===0);
   if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
@@ -562,11 +566,16 @@ function charFrame(p){
     // Cóndor: wings never stop — the cycle runs off the global clock, moving or not, and there is
     // no punch pose. Front view ping-pongs 1-2-3-2; east/west and north alternate their two frames
     // (west = east flipped). Missing side/back files fall back to the front cycle.
+    // On death the wings must stop mid-flap and hold the pose he died in, so freeze the clock at
+    // the moment of death (captured once); coming back alive clears the freeze.
     const ok=im=>im&&im.naturalWidth>0;
-    const f2=Math.floor(time/0.16)%2;
+    let clk=time;
+    if(!p.alive){ if(p.flapFreeze==null) p.flapFreeze=time; clk=p.flapFreeze; }
+    else if(p.flapFreeze!=null) p.flapFreeze=null;
+    const f2=Math.floor(clk/0.16)%2;
     if(d==='n' && ok(S.n1) && ok(S.n2)) return {img:[S.n1,S.n2][f2], flip:false};
     if((d==='e'||d==='w') && ok(S.e1) && ok(S.e2)) return {img:[S.e1,S.e2][f2], flip:(d==='w')};
-    return {img:[S.c1,S.c2,S.c3][[0,1,2,1][Math.floor(time/0.16)%4]], flip:false};
+    return {img:[S.c1,S.c2,S.c3][[0,1,2,1][Math.floor(clk/0.16)%4]], flip:false};
   }
   if(p.punchAnim>0 && !C.noPunch){   // noPunch (Teddington): bombs place with walk/idle poses only
     const ph=clamp(1-(p.punchAnim/C.pd),0,0.999), i3=Math.floor(ph*3);
@@ -1252,9 +1261,11 @@ function playPunchSound(p){
   // punches (see tryPunch's hitAny) → voice every 2nd landed hit; PVP: voice every 3rd bomb placed.
   if(AUDIO_SRC[k+'_hit1']){
     p.punchSfx=(p.punchSfx||0)+1; const ch=p.punchSfx;
-    if((state===STATE.PVP) ? (ch%3===1) : (ch%2===0)){
+    // Vannucci grunts too often in horda — space his hit voice out to every 3rd landed punch
+    const horStep=(k==='vannucci')?3:2;
+    if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
-      playOne(AUDIO_SRC[k+'_hit'+n2], 0.6);
+      playOne(AUDIO_SRC[k+'_hit'+n2], charVol(k,0.6));
     }
     return;
   }
