@@ -1266,6 +1266,71 @@ function drawLeaves(){
     ctx.restore();
   }
 }
+// ---------- Modo Infinito: Boxhead-style 8-way shooting ----------
+// The basic attack becomes a projectile fired in the direction the character faces (the last
+// direction it moved: N/NE/E/SE/S/SW/W/NW). Apuchi specials (Morganita/Safiro) still fire on the
+// same key. Only active on the survival map — Horda/PVP keep their melee punch.
+const bullets=[];
+const SHOOT_CD=0.16;                       // fast fire rate
+const BULLET_SPD=1250;                      // super-fast tracer
+// shots-to-kill by enemy type (independent of HP scaling): fast 2, normal 3, big 5
+function bulletShots(e){ return e.type==='fast'?2 : e.type==='large'?5 : 3; }
+// squared distance from point (px,py) to segment (ax,ay)-(bx,by) — for swept bullet/enemy hits
+function segPtDist2(ax,ay,bx,by,px,py){
+  const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+  let t = l2<1e-6 ? 0 : ((px-ax)*dx+(py-ay)*dy)/l2; t=t<0?0:t>1?1:t;
+  const cx=ax+t*dx-px, cy=ay+t*dy-py; return cx*cx+cy*cy;
+}
+function fireBullet(p){
+  let fx=p.facing.x, fy=p.facing.y;
+  if(!fx && !fy){ fy=1; }                                                // never moved yet -> shoot south
+  const ang=Math.round(Math.atan2(fy,fx)/(Math.PI/4))*(Math.PI/4);       // snap to the 8 compass directions
+  const cx=Math.cos(ang), cy=Math.sin(ang);
+  // spawn at the player centre so the swept segment also catches enemies pressed right up against you
+  bullets.push({ id:_entId++, x:p.x, y:p.y, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD,
+                 life:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra] });   // damage = maxhp/shots, boosted by Piedra
+  spark(p.x+cx*22, p.y+cy*22, '#fff2c0', 3, 130);
+  playPunchSound(p);
+}
+function tryShoot(p){
+  if(!p.alive || p.cooldown>0) return;
+  if(p.special==='morganita'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireBeam(p); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'MORGANITA agotada','#ff7ab0'); } return; }
+  if(p.special==='safiro'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireLightning(p,'#7ad0ff',215); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'SAFIRO agotado','#5aa0ff'); } return; }
+  p.cooldown=SHOOT_CD; p.punchAnim=CHARS[p.kind].pd;
+  fireBullet(p);
+}
+function updateBullets(dt){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    const ax=b.x, ay=b.y;                       // segment start (for swept collision — bullets are fast)
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+    // walls (check the segment's midpoint + end so a fast bullet can't tunnel a thin wall/net)
+    if(currentMap==='laspalmas' && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,'#fff2c0',3,70); bullets.splice(i,1); continue; }
+    let hit=false;
+    for(const e of enemies){ if(e.dead) continue;
+      const rr=(e.footR||e.radius)+6;
+      if(segPtDist2(ax,ay,b.x,b.y,e.x,e.y) < rr*rr){
+        e.hp -= (e.maxhp/bulletShots(e))*b.pmul;   // fixed shots-to-kill regardless of HP scaling
+        e.hitFlash=0.14; e.stagger=0.18;
+        const d=Math.hypot(b.vx,b.vy)||1, k=150;   // knockback punch
+        e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
+        spark(e.x,e.y,'#ffd0d0',5,90);
+        if(e.hp<=0) killEnemy(e, players[b.owner]);
+        hit=true; break;
+      }
+    }
+    if(hit || b.life<=0 || b.x<0||b.y<0||b.x>WORLD_W||b.y>WORLD_H){ bullets.splice(i,1); }
+  }
+}
+function drawBullets(){
+  ctx.save(); ctx.lineCap='round';
+  for(const b of bullets){
+    const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
+    ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  ctx.restore();
+}
 function updateEffects(dt){ for(let i=fx_effects.length-1;i>=0;i--){ fx_effects[i].life-=dt; if(fx_effects[i].life<=0) fx_effects.splice(i,1); } }
 function drawEffects(){
   for(const e of fx_effects){
@@ -1355,8 +1420,9 @@ function playPunchSound(p){
   // punches (see tryPunch's hitAny) → voice every 2nd landed hit; PVP: voice every 3rd bomb placed.
   if(AUDIO_SRC[k+'_hit1']){
     p.punchSfx=(p.punchSfx||0)+1; const ch=p.punchSfx;
-    // Vannucci grunts too often in horda — space his hit voice out to every 3rd landed punch
-    const horStep=(k==='vannucci')?3:2;
+    // Vannucci grunts too often in horda — space his hit voice out to every 3rd landed punch;
+    // Sebas is even chattier, so his lands every 4th (applies to Horda + Modo Infinito, both non-PVP)
+    const horStep=(k==='vannucci')?3:(k==='sebas')?4:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
       playOne(AUDIO_SRC[k+'_hit'+n2], charVol(k,0.6));
@@ -2012,7 +2078,8 @@ function updatePlayers(dt){
         resolveCollision(p);
       }
     }
-    if(p.special==='oro'){
+    if(survival){ if(ks[c.punch]) tryShoot(p); p.wasPunch=!!ks[c.punch]; }   // Modo Infinito: 8-way shooting
+    else if(p.special==='oro'){
       if(ks[c.punch]){ p.oroCharge=(p.oroCharge||0)+dt; if(p.oroCharge>=1.0){ fireLightning(p,'#ff9a2a',180); p.oroCharge=0; p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; p.oro=0; floatText(p.x,p.y-26,'ORO agotado','#ff9a2a'); } } }
       else { if(p.wasPunch && p.oroCharge>0 && p.oroCharge<0.28) tryPunch(p); p.oroCharge=0; }
       p.wasPunch = !!ks[c.punch];
@@ -2283,7 +2350,7 @@ function startRound(){
   else if(round===20){ spawnQueue=0; spawnGiantBoss(); }
   else if(round%5===0){ spawnQueue = Math.round(spawnQueue*0.45); spawnBoss(round); }
   playRoundStart(round);
-  apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
 }
 function startBreak(){
   state = STATE.BREAK;
@@ -2302,7 +2369,7 @@ function startBreak(){
 // ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
-  apuchis.length=0; leaves.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0;
+  apuchis.length=0; leaves.length=0; bullets.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0;
 }
 function updateSurvival(dt){
   survTime+=dt;
@@ -2333,6 +2400,7 @@ function updatePlay(dt){
   updateEnemies(dt);
   updateEffects(dt);
   updateLeaves(dt);
+  if(survival) updateBullets(dt);
   updateRays(dt);
   updateIceBeams(dt);
   updateHearts(dt);
@@ -3872,7 +3940,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-16.3';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.4';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
@@ -4444,7 +4512,7 @@ function startGame(){
   const sy0base = survival?LP_SPAWN.y : (currentMap==='stonebridge')?344:WORLD_H/2;
   camX=clamp(sx0-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(sy0base-H/2,0,Math.max(0,WORLD_H-H));
   round=0; score=0; particles.length=0; enemies.length=0;
-  apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
   bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
   players=[];
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
@@ -5480,6 +5548,7 @@ function _frameBody(now){
   safe('amuleto',()=>{ if(_MO && amuleto){ ctx.save(); ctx.translate(0,machuElev(amuleto.x)); try{drawAmuleto();}finally{ctx.restore();} } else drawAmuleto(); });
   safe('effects',drawEffects);
   safe('leaves',drawLeaves);
+  if(survival) safe('bullets',drawBullets);
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
   safe('hearts',drawHearts);
@@ -5629,7 +5698,7 @@ function netSerializeSnapshot(){
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
     fx:      fx_effects.map(netSerEnt),
-    leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),
+    leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),   bullets: bullets.map(netSerEnt),
     nuggets: nuggets.map(netSerEnt),  wallets: wallets.map(netSerEnt),
     bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
     drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) };
@@ -5936,6 +6005,7 @@ function netApplyGuest(dt){
   if(gProjSeq!==cur.seq){
     gProjSeq=cur.seq;
     leaves.length=0;   for(const l of cur.leaves||[])  leaves.push({...l});
+    bullets.length=0;  for(const bu of cur.bullets||[]) bullets.push({...bu});
     rays.length=0;     for(const r of cur.rays||[])    rays.push({...r});
     iceBeams.length=0; for(const b2 of cur.ice||[])    iceBeams.push({...b2});
     nuggets.length=0;  for(const g of cur.nuggets||[]) nuggets.push({...g});
@@ -5957,6 +6027,7 @@ function netApplyGuest(dt){
       obstacles=base.concat(incaWalls);
     } }
   for(const l of leaves){  l.x+=(l.vx||0)*dt; l.y+=(l.vy||0)*dt; }
+  for(const bu of bullets){ bu.x+=(bu.vx||0)*dt; bu.y+=(bu.vy||0)*dt; }
   for(const r of rays){    r.x+=(r.vx||0)*dt; r.y+=(r.vy||0)*dt; }
   for(const r2 of turretArrows){ r2.x+=(r2.vx||0)*dt; r2.y+=(r2.vy||0)*dt; }
   for(const g of nuggets){ g.x+=(g.vx||0)*dt; g.y+=(g.vy||0)*dt; g.bob=(g.bob||0)+dt*8; }
