@@ -1201,8 +1201,13 @@ function updateParticles(dt){
 }
 
 // ---------- Players ----------
+// Modo Infinito: everyone uses GUNS, so strength/weight is irrelevant and every character shares the
+// exact same agile stats — the only difference between characters is cosmetic. (Horda keeps each
+// character's own archetype.)
+const SURV_BASE={maxhp:170, dmg:20, knock:150, speed:156, cd:0.26, radius:15};
+function charBase(kind){ return currentMap==='laspalmas' ? {...SURV_BASE} : {...CHARS[kind].base}; }
 function makePlayer(kind, x, y, controls){
-  const C=CHARS[kind]; const base={...C.base};
+  const C=CHARS[kind]; const base=charBase(kind);
   return {
     kind, name: C.name,
     x, y, controls, color:C.color,
@@ -1229,7 +1234,7 @@ let players = [];
 // anyone can end up as any character. Swap the character identity + base combat stats but keep the
 // player's earned progress (shields / special / oro) and their current health as a fraction.
 function reassignKind(p, kind){
-  const C=CHARS[kind]; const base={...C.base};
+  const C=CHARS[kind]; const base=charBase(kind);
   const frac = (p.maxhp>0) ? clamp(p.hp/p.maxhp,0,1) : 1;
   p.kind=kind; p.name=C.name; p.color=C.color; p.radius=base.radius; p.base=base;
   p.maxhp=base.maxhp; p.hp=Math.max(1, Math.round(base.maxhp*frac));
@@ -1751,7 +1756,7 @@ function updateBullets(dt){
         const d=Math.hypot(b.vx,b.vy)||1, k=b.fire?90:150;   // knockback punch
         e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
         if(b.fire){ igniteEnemy(e, b.owner); spark(e.x,e.y,'#ff9a2a',6,120); } else spark(e.x,e.y,'#ffd0d0',5,90);
-        if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner); if(owner) playPunchSound(owner); }   // voice on KILL, throttled per character
+        if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner); const vo=b.npc||owner; if(vo) playPunchSound(vo); }   // voice on KILL (NPC ally uses its own voice), throttled per character
         hit=true; break;
       }
     }
@@ -3015,6 +3020,43 @@ function playLasPalmasIntro(onDone){
   try{ v.currentTime=0; }catch(e){}
   const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>finish());   // autoplay blocked → start the round
 }
+// ---- Online Modo Infinito intro: everyone watches, only the host can skip ----
+// The data channel is UNRELIABLE, so we don't fire one-shot start/stop messages: the host
+// heartbeats {_introNet:1} every frame while its clip plays, and each guest ends its own clip
+// the instant the first real gameplay snapshot arrives (the host resumes broadcasting those the
+// moment its intro finishes or is skipped). That survives dropped packets in both directions.
+let netIntroAccum=0;
+function netBroadcastIntro(dt){
+  if(NET.role!=='host' || !NET.conns.length) return;
+  netIntroAccum+=dt; if(netIntroAccum<0.08) return; netIntroAccum=0;   // ~12×/s is plenty for a start cue
+  for(const g of NET.conns){ try{ if(g.conn && g.conn.open) g.conn.send({_introNet:1}); }catch(e){} }
+}
+function playIntroGuest(){
+  if(introPlaying) return;   // idempotent — repeated heartbeats mustn't restart the clip
+  const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
+  if(!v) return;
+  NET.nsel=null; NET.snap=null; NET.guestReady=false;   // leave the pick screen; wait for gameplay after
+  introPlaying=true; introSkip=null;                    // guests can't skip — the host controls the clip
+  try{ silenceAllMusic(); }catch(e){}
+  boostIntroAudio(v);
+  v.muted=false; v.volume=1;
+  v.style.display='block'; if(skip) skip.style.display='none';   // no SALTAR button for guests
+  v.onended=endIntroGuest; v.onerror=endIntroGuest;
+  try{ v.load(); v.currentTime=0; }catch(e){}
+  const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>{});   // blocked → just hold on the first frame until snapshots arrive
+}
+function endIntroGuest(){
+  const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
+  introPlaying=false; introSkip=null;
+  try{ if(v){ v.pause(); v.onended=v.onerror=null; v.style.display='none'; } }catch(e){}
+  if(skip) skip.style.display='none';
+}
+// Host path from startGame(): roll the intro (with a working SALTAR), telling guests to roll theirs,
+// then drop into the survival round once the clip ends or the host skips.
+function hostIntroThenSurvival(){
+  netIntroAccum=0;
+  playLasPalmasIntro(()=>{ startSurvival(); });   // netBroadcastIntro (host frame) cues guests while introPlaying
+}
 // Las Palmas apocalyptic atmosphere: a subtle warm-red multiply + faint red mist + soft dark-red
 // vignette, matching the alien-invasion intro. Kept light so the map stays readable.
 function drawLasPalmasTint(){
@@ -3037,14 +3079,101 @@ function drawLasPalmasTint(){
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   ctx.restore();
 }
+// ---------- Modo Infinito NPC helpers ----------
+// The roster characters nobody is playing wander the map IDLE + hidden; walk into one to TAG it and
+// it joins as an AI ally that hunts enemies until it dies. Max 2 active at once; random order; a delay
+// before the next appears; the pool loops once everyone has fallen. Host-authoritative + replicated.
+const npcs=[];
+let npcQueue=[], npcSpawnT=14, npcDeadWait=0;
+function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k && !p.departed)); }   // chars no player picked
+function refillNpcQueue(){ npcQueue=npcRoster(); for(let i=npcQueue.length-1;i>0;i--){ const j=randi(0,i); const t=npcQueue[i]; npcQueue[i]=npcQueue[j]; npcQueue[j]=t; } }
+function makeNpc(kind,x,y){
+  const n=makePlayer(kind,x,y,null);   // reuse the player shape so drawPlayer/charFrame just work
+  n.isNpc=true; n.npcState='idle'; n.tagBob=Math.random()*TAU;
+  n.maxhp*=2; n.hp=n.maxhp; n.weapon='pistol';   // double HP, always a pistol
+  n.aiShootCd=0; n.aiRepathT=0; n.aiWX=x; n.aiWY=y;
+  return n;
+}
+function spawnIdleNpc(){
+  if(npcs.length>=2 || !npcQueue.length) return;
+  const kind=npcQueue.pop();
+  for(let t=0;t<60;t++){                     // a walkable spot FAR from every player, so you must explore
+    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);
+    if(lpSolidAt(x,y)) continue;
+    let far=true; for(const p of players){ if(p.alive && dist(x,y,p.x,p.y)<950){ far=false; break; } }
+    if(far){ npcs.push(makeNpc(kind,Math.round(x),Math.round(y))); return; }
+  }
+  npcQueue.push(kind);                       // no spot found — retry next tick
+}
+function tagNpc(n){ n.npcState='active'; n.hp=n.maxhp; try{ playCharSelect(n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
+function fireNpcBullet(n, tx, ty){
+  const dx=tx-n.x, dy=ty-n.y, ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4), cx=Math.cos(ang), cy=Math.sin(ang);
+  n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
+  const mz=18, bx=n.x+cx*mz, by=n.y+cy*mz;
+  bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, npc:n});
+  spark(bx,by,'#fff2c0',3,130); try{ sfxGun(false); }catch(e){}
+}
+function updateNpcs(dt){
+  if(npcDeadWait>0) npcDeadWait-=dt;
+  npcSpawnT-=dt;
+  if(npcSpawnT<=0){
+    npcSpawnT=rand(8,14);
+    if(!npcQueue.length && npcs.length===0 && npcDeadWait<=0) refillNpcQueue();   // loop restart once everyone's gone
+    if(npcDeadWait<=0 && npcs.length<2 && npcQueue.length) spawnIdleNpc();
+  }
+  for(const e of enemies){ if(e.atkNpcCd>0) e.atkNpcCd-=dt; }
+  const alive=players.filter(p=>p.alive), host=alive[0]||players[0];
+  for(let i=npcs.length-1;i>=0;i--){
+    const n=npcs[i]; n.animTime+=dt; if(n.hitFlash>0) n.hitFlash-=dt; if(n.punchAnim>0) n.punchAnim-=dt;
+    n.tierra = host ? host.tierra : 0;   // match the host's speed boosts (shoes)
+    if(n.npcState==='idle'){
+      n.tagBob+=dt*3; n.moving=false;
+      for(const p of players){ if(p.alive && dist(p.x,p.y,n.x,n.y) < p.radius+n.radius+6){ tagNpc(n); break; } }
+      continue;   // idle NPCs are invulnerable until tagged
+    }
+    // ---- active: roam the player's VISIBLE area, hunt the nearest enemy, shoot it ----
+    let te=null, td=1e9; for(const e of enemies){ if(e.dead) continue; const d=dist(n.x,n.y,e.x,e.y); if(d<td){td=d;te=e;} }
+    const off = host && (n.x<camX+50||n.x>camX+W-50||n.y<camY+50||n.y>camY+H-50);
+    let mx=0,my=0;
+    if(off){ const a=Math.atan2(host.y-n.y, host.x-n.x); mx=Math.cos(a); my=Math.sin(a); }   // drifted off-screen → run back to the player
+    else if(te){
+      const a=Math.atan2(te.y-n.y, te.x-n.x);
+      if(td>160){ mx=Math.cos(a); my=Math.sin(a); } else if(td<95){ mx=-Math.cos(a); my=-Math.sin(a); }
+      n.aiShootCd-=dt;
+      if(n.aiShootCd<=0 && td<560){ fireNpcBullet(n, te.x, te.y); n.aiShootCd=rand(0.3,0.55); }
+      else { n.facing.x=Math.cos(a); n.facing.y=Math.sin(a); n.dir=Math.abs(n.facing.x)>Math.abs(n.facing.y)?(n.facing.x<0?'w':'e'):(n.facing.y<0?'n':'s'); }
+    } else if(host){
+      n.aiRepathT-=dt; if(n.aiRepathT<=0){ n.aiRepathT=rand(0.8,1.8); const a=Math.random()*TAU, r=rand(60,190); n.aiWX=host.x+Math.cos(a)*r; n.aiWY=host.y+Math.sin(a)*r; }
+      if(dist(n.x,n.y,n.aiWX,n.aiWY)>20){ const a=Math.atan2(n.aiWY-n.y, n.aiWX-n.x); mx=Math.cos(a); my=Math.sin(a); }
+    }
+    if(mx||my){ const l=Math.hypot(mx,my); mx/=l; my/=l; const sp=effSpeed(n); n.x+=mx*sp*dt; n.y+=my*sp*dt; resolveCollision(n); n.moving=true; n.facing.x=mx; n.facing.y=my; n.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); }
+    else n.moving=false;
+    // adjacent enemies claw the ally down (idle ones are ignored above), so it dies eventually
+    for(const e of enemies){ if(e.dead) continue; if(dist(n.x,n.y,e.x,e.y) < e.radius+n.radius+2 && (e.atkNpcCd||0)<=0){ e.atkNpcCd=0.6; n.hp-=e.dmg; n.hitFlash=1.0; spark(n.x,n.y,'#ff5050',5,90); break; } }
+    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcDeadWait=rand(11,18); }
+  }
+}
+function drawNpc(n){
+  drawPlayer(n);
+  if(n.npcState==='idle'){
+    // hidden from afar, but a soft '?' fades in as a player gets close so you can find + tag it
+    let nd=1e9; for(const p of players){ if(p.alive){ const d=dist(p.x,p.y,n.x,n.y); if(d<nd)nd=d; } }
+    const vis=clamp(1-(nd-90)/300,0,1);
+    if(vis>0.02){ ctx.save(); ctx.globalAlpha=vis*(0.55+0.35*Math.sin(n.tagBob*1.5));
+      ctx.fillStyle=n.color; ctx.font='bold 17px Courier New'; ctx.textAlign='center';
+      ctx.fillText('?', n.x, n.y-n.radius-20+Math.sin(n.tagBob)*3); ctx.textAlign='left'; ctx.restore(); }
+  }
+}
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
+  npcs.length=0; refillNpcQueue(); npcSpawnT=14; npcDeadWait=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
 }
 function updateSurvival(dt){
   survTime+=dt;
   if(vendFlash>0) vendFlash-=dt;
+  updateNpcs(dt);      // AI ally helpers (tag-to-recruit)
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
@@ -5325,7 +5454,7 @@ function drawSelect(){
     drawCardArt(k, cx+12, cyR+14, cw-24, ch-112);
     ctx.restore();
     ctx.fillStyle=CHARS[k].color; ctx.font=(rows>1)?'bold 16px Courier New':'bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cyR+ch-58);
-    ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido'), cx+cw/2, cyR+ch-38);
+    if(currentMap!=='laspalmas'){ ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido'), cx+cw/2, cyR+ch-38); }   // Modo Infinito: all identical, no archetype tag
     if(takenBy1){ ctx.fillStyle='#ffd24a'; ctx.font='bold 15px Courier New'; ctx.fillText(selMode===2?'JUGADOR 1':'ELEGIDO', cx+cw/2, cyR+ch-14); }
     if(takenBy2){ ctx.fillStyle='#5ad0ff'; ctx.font='bold 15px Courier New'; ctx.fillText('JUGADOR 2', cx+cw/2, cyR+ch-14); }
     if(taken){ ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(cx,cyR,cw,ch); }
@@ -5399,7 +5528,10 @@ function startGame(){
     players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
-  else if(survival){ startSurvival(); }    // Modo Infinito — no Cóndor / countdown (intro video already played at map select)
+  // Online host: the intro didn't play at map-select (that path went straight to the lobby), so play it
+  // here for everyone — the host watches + can skip, and guests mirror it (netBroadcastIntro / netOnSnapshot).
+  else if(survival && NET.hosting){ hostIntroThenSurvival(); }
+  else if(survival){ startSurvival(); }    // offline Modo Infinito — intro already played at map select
   else startIntro();
 }
 
@@ -6131,7 +6263,7 @@ function drawCharsPick(roster, entries, mySlot, overlay, opts){
     ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cyR,cw,chh);
     drawCardArt(k, cx+10, cyR+12, cw-20, chh-112);
     ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cyR+chh-64);
-    ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido'), cx+cw/2, cyR+chh-46);
+    if(currentMap!=='laspalmas'){ ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido'), cx+cw/2, cyR+chh-46); }
     if(takenBy>=0){   // first come, first served — grey it out for everyone else
       ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(cx,cyR,cw,chh);
       ctx.fillStyle=PVP_SEL_COLS[takenBy%4]; ctx.font='bold 15px Courier New';
@@ -6333,8 +6465,9 @@ function _frameBody(now){
   for(let _i=0;_i<40;_i++) ctx.restore();
   ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
 
-  // Las Palmas cinematic intro is on top of the canvas — freeze the sim (no spawning/dying behind it)
-  if(introPlaying){ requestAnimationFrame(frame); return; }
+  // Las Palmas cinematic intro is on top of the canvas — freeze the sim (no spawning/dying behind it).
+  // Online: the host keeps cueing guests to roll their own copy while its clip plays.
+  if(introPlaying){ if(NET.role==='host') safe('introcast',()=>netBroadcastIntro(dt)); requestAnimationFrame(frame); return; }
 
   // online guest: replicate the host's world from snapshots instead of simulating locally
   if(NET.role==='guest'){
@@ -6398,6 +6531,7 @@ function _frameBody(now){
   const _MO=(currentMap==='machu'), _LP=(currentMap==='laspalmas');
   const drawables=[...enemies.map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
+                   ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
   if(_LP && survival) drawables.push({y:LP_VENDING.y+LP_VENDING.h, x:LP_VENDING.x, sy:LP_VENDING.y+LP_VENDING.h, zt:0, f:drawVending});   // vending machine z-sorts like a prop
@@ -6629,6 +6763,10 @@ let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
 function netOnSnapshot(d){
+  if(d._introNet){ playIntroGuest(); return; }                 // host is rolling the Modo Infinito intro — mirror it
+  // while our clip is up, ONLY the first real gameplay snapshot ends it (a late/out-of-order pick-screen
+  // or wait packet from just before the intro must NOT cut it short on the unreliable channel)
+  if(introPlaying){ if(d._snap) endIntroGuest(); else return; }
   if(d._wait){ NET.snap=null; NET.nsel=null; NET.guestReady=false; NET.waitState=d.state; pvpInfo=false; return; }
   if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; if(typeof d.you==='number') NET.slot=d.you; netPlayEvts(d); return; }
   if(!d._snap) return;
@@ -7165,7 +7303,10 @@ requestAnimationFrame(frame);
       if(inGame()){
         guest.grace=0.6;   // hold host-authoritative pos briefly until the guest's pose stream catches up
         if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc = guest.keys; rp.netRemote = guest; }   // returning guest counts (and revives at break) again
-        else if(players.length<lobbyCap()){
+        // Modo Infinito: NO new players mid-run (join only at the start) — this also prevents a late
+        // joiner picking a character that's currently walking around as an NPC helper. Returning
+        // guests (above) still reconnect to their own slot.
+        else if(!survival && players.length<lobbyCap()){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
           // mid-game joiner: random character, but NEVER one already taken by another player
           const taken=new Set(players.map(pp=>pp.kind));
