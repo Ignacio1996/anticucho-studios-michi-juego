@@ -1787,21 +1787,20 @@ function updateBurns(dt){
     }
   }
 }
-function drawBullets(){
+function drawBullet(b){   // one tracer — depth-sorted with the world so trees/houses cover shots
   ctx.save(); ctx.lineCap='round';
-  for(const b of bullets){
-    const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
-    if(b.fire){   // incendiary rounds keep their fiery look
-      ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-      ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-    } else {      // water-gun squirt: translucent blue jet with a paler core (saturated enough to
-                  // stay clearly blue under the map's red apocalyptic tint)
-      ctx.strokeStyle='rgba(30,140,255,0.6)'; ctx.lineWidth=6.5; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-      ctx.strokeStyle='rgba(140,210,255,0.95)'; ctx.lineWidth=2.8; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-    }
+  const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
+  if(b.fire){   // incendiary rounds keep their fiery look
+    ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+  } else {      // water-gun squirt: translucent blue jet with a paler core (saturated enough to
+                // stay clearly blue under the map's red apocalyptic tint)
+    ctx.strokeStyle='rgba(30,140,255,0.6)'; ctx.lineWidth=6.5; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='rgba(140,210,255,0.95)'; ctx.lineWidth=2.8; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
   }
   ctx.restore();
 }
+function drawBullets(){ for(const b of bullets) drawBullet(b); }
 function updateEffects(dt){ for(let i=fx_effects.length-1;i>=0;i--){ fx_effects[i].life-=dt; if(fx_effects[i].life<=0) fx_effects.splice(i,1); } }
 function drawEffects(){
   for(const e of fx_effects){
@@ -3108,7 +3107,7 @@ function drawLasPalmasTint(){
 }
 // ---------- Modo Infinito NPC helpers ----------
 // The roster characters nobody is playing wander the map IDLE + hidden; walk into one to TAG it and
-// it joins as an AI ally that hunts enemies until it dies. Max 2 active at once; random order; a delay
+// it joins as an AI ally that hunts enemies until it dies. ONE ally at a time; random order; a delay
 // before the next appears; the pool loops once everyone has fallen. Host-authoritative + replicated.
 const npcs=[];
 let npcQueue=[], npcSpawnT=14, npcDeadWait=0;
@@ -3145,13 +3144,13 @@ function npcSteer(n,tx,ty){
   return base+Math.PI;   // fully boxed in — back straight out
 }
 function spawnIdleNpc(){
-  if(npcs.length>=2 || !npcQueue.length) return;
+  if(npcs.length>=1 || !npcQueue.length) return;   // ONE ally at a time — the next appears after this one falls
   const kind=npcQueue.pop();
-  for(let t=0;t<60;t++){                     // a walkable spot FAR from every player, so you must explore
-    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);
+  for(let t=0;t<60;t++){                     // anywhere walkable on the map (a corner, behind a house…),
+    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);   // just never inside the current view (no pop-in)
     if(lpSolidAt(x,y)) continue;
-    let far=true; for(const p of players){ if(p.alive && dist(x,y,p.x,p.y)<950){ far=false; break; } }
-    if(far){ npcs.push(makeNpc(kind,Math.round(x),Math.round(y))); return; }
+    if(x>camX-60 && x<camX+W+60 && y>camY-60 && y<camY+H+60) continue;
+    npcs.push(makeNpc(kind,Math.round(x),Math.round(y))); return;
   }
   npcQueue.push(kind);                       // no spot found — retry next tick
 }
@@ -3169,7 +3168,7 @@ function updateNpcs(dt){
   if(npcSpawnT<=0){
     npcSpawnT=rand(8,14);
     if(!npcQueue.length && npcs.length===0 && npcDeadWait<=0) refillNpcQueue();   // loop restart once everyone's gone
-    if(npcDeadWait<=0 && npcs.length<2 && npcQueue.length) spawnIdleNpc();
+    if(npcDeadWait<=0 && npcs.length<1 && npcQueue.length) spawnIdleNpc();
   }
   const alive=players.filter(p=>p.alive), host=alive[0]||players[0];
   for(let i=npcs.length-1;i>=0;i--){
@@ -3280,7 +3279,7 @@ function updateSurvival(dt){
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(30,55); spawnWeaponCrate(); }
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(18,34); spawnWeaponCrate(); }
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
@@ -6651,6 +6650,7 @@ function _frameBody(now){
   const drawables=[...enemies.map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
+                   ...(survival?bullets:[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
   if(_LP && survival) drawables.push({y:LP_VENDING.y+LP_VENDING.h, x:LP_VENDING.x, sy:LP_VENDING.y+LP_VENDING.h, zt:0, f:drawVending});   // vending machine z-sorts like a prop
@@ -6682,7 +6682,7 @@ function _frameBody(now){
   safe('amuleto',()=>{ if(_MO && amuleto){ ctx.save(); ctx.translate(0,machuElev(amuleto.x)); try{drawAmuleto();}finally{ctx.restore();} } else drawAmuleto(); });
   safe('effects',drawEffects);
   safe('leaves',drawLeaves);
-  if(survival){ safe('mines',drawMines); safe('bullets',drawBullets); safe('grenades',drawGrenades); safe('nadecharge',drawNadeCharges); }
+  if(survival){ safe('mines',drawMines); safe('grenades',drawGrenades); safe('nadecharge',drawNadeCharges); }   // bullets moved into the depth sort
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
   if(!_LP){ safe('hearts',drawHearts); safe('nuggets',drawNuggets); }   // Modo Infinito draws these in the depth sort above (behind trees)
