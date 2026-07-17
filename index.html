@@ -815,13 +815,13 @@ addEventListener('keydown', e => {
   // Modo Infinito weapon switch: number keys 1..N pick a slot for the local player
   if(survival && state===STATE.PLAY && e.code && e.code.indexOf('Digit')===0){
     const n=+e.code.slice(5)-1; const lp=players[NET.role==='guest'?NET.slot:0];
-    if(lp && n>=0 && n<WEAPON_ORDER.length){ switchWeapon(lp, WEAPON_ORDER[n]); }
+    if(lp && n>=0 && n<WEAPON_ORDER.length){ switchWeapon(lp, WEAPON_ORDER[n]); if(NET.role==='guest') NET.guestWeapon=lp.weapon; }
   }
   // menu/shop interactions
   handleMenuKey(e.code);
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
-addEventListener('wheel', e => { if(survival && state===STATE.PLAY){ const lp=players[NET.role==='guest'?NET.slot:0]; if(lp) cycleWeapon(lp, e.deltaY>0?1:-1); } }, {passive:true});
+addEventListener('wheel', e => { if(survival && state===STATE.PLAY){ const lp=players[NET.role==='guest'?NET.slot:0]; if(lp){ cycleWeapon(lp, e.deltaY>0?1:-1); if(NET.role==='guest') NET.guestWeapon=lp.weapon; } } }, {passive:true});
 ['pointerdown','mousedown','mousemove','touchstart','click'].forEach(ev=>addEventListener(ev, ()=>{ try{ initAudio(); }catch(e){} }));
 
 // ---------- Helpers ----------
@@ -1009,6 +1009,12 @@ function lpResolve(ent){
       const rx=dcx*C, ry=rr*C, nx=clamp(ent.x,rx,rx+C), ny=clamp(ent.y,ry,ry+C);
       let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
       if(dd<r && dd>0.0001){ ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; }
+    }
+    // player-built concrete blocks (Modo Infinito) collide like solid grid cells
+    if(incaWalls.length) for(const w of incaWalls){
+      const nx=clamp(ent.x,w.x,w.x+w.w), ny=clamp(ent.y,w.y,w.y+w.h);
+      let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
+      if(dd<r){ if(dd<0.0001){ const cx=w.x+w.w/2; ent.x = ent.x<cx ? w.x-r : w.x+w.w+r; } else { ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; } }
     }
   }
   ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
@@ -1303,7 +1309,8 @@ function drawWeaponCrate(x,y,kind){   // wooden ammo crate stamped with the weap
   ctx.strokeStyle='#4a3016'; ctx.lineWidth=1.5; rrect(x-13,y-11,26,22,3); ctx.stroke();
   ctx.fillStyle=W2.col; ctx.fillRect(x-11,y-2,22,7);
   ctx.fillStyle='#241a10'; ctx.font='bold 12px Courier New'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(kind==='grenade'?'G':kind==='rapid'?'R':'?', x, y+1); ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+  const IN={rapid:'R',fire:'F',grenade:'G',mine:'M',block:'B',torreta:'T'};
+  ctx.fillText(IN[kind]||'?', x, y+1); ctx.textBaseline='alphabetic'; ctx.textAlign='left';
 }
 function drawLpItems(){
   for(const it of lpItems){ const bob=Math.abs(Math.sin(it.bob))*6, cy=it.y-bob, pop=clamp(it.spawn,0,1);
@@ -1315,9 +1322,12 @@ function drawLpItems(){
   }
 }
 let lpCrateT=10;
+// weighted crate loot table — common ammo drops often, the powerful placeables are rare
+const CRATE_LOOT=[['rapid',5],['fire',3],['grenade',3],['mine',2],['block',3],['torreta',1]];
+function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r=Math.random()*tot; for(const w of CRATE_LOOT){ r-=w[1]; if(r<=0) return w[0]; } return 'rapid'; }
 function spawnWeaponCrate(){
   if(lpItems.filter(it=>it.kind!=='shoe').length>=4) return;   // cap crates on the ground
-  const kind=(Math.random()<0.5)?'rapid':'grenade';
+  const kind=pickCrateKind();
   for(let t=0;t<40;t++){ const x=rand(140,LP_W-140), y=rand(140,LP_H-140); if(!lpSolidAt(x,y)){ lpItems.push({id:_entId++, kind, x, y, bob:Math.random()*TAU, spawn:0}); return; } }
 }
 function spawnBreakItems(){
@@ -1418,23 +1428,27 @@ function segPtDist2(ax,ay,bx,by,px,py){
 const WEAPONS={
   pistol:  {name:'PISTOLA',  col:'#fff6d6', auto:false, cd:0.16, ammoMax:0 },   // unlimited
   rapid:   {name:'RÁPIDA',   col:'#7fd4ff', auto:true,  cd:0.06, ammoMax:110},
+  fire:    {name:'FUEGO',    col:'#ff7a2a', auto:false, cd:0.30, ammoMax:26},   // ignites + spreads
   grenade: {name:'GRANADAS', col:'#8ac24a', auto:false, cd:0.5,  ammoMax:8 },
+  mine:    {name:'MINAS',    col:'#ff5a4a', auto:false, cd:0.4,  ammoMax:5 },   // proximity blast
+  block:   {name:'BLOQUES',  col:'#d8d2c2', auto:false, cd:0.28, ammoMax:12},   // concrete barricade
+  torreta: {name:'TORRETA',  col:'#caa66a', auto:false, cd:0.5,  ammoMax:3 },   // auto arrow turret
 };
-const WEAPON_ORDER=['pistol','rapid','grenade'];   // number keys 1..N map to this order
+const WEAPON_ORDER=['pistol','rapid','fire','grenade','mine','block','torreta'];   // number keys 1..N map to this order
 function weaponOwned(p,k){ return k==='pistol' || !!(p.ammo && p.ammo[k]>0); }
 function giveWeapon(p,k){ const W=WEAPONS[k]; if(!W) return; if(!p.ammo) p.ammo={}; p.ammo[k]=Math.min(W.ammoMax*3,(p.ammo[k]||0)+W.ammoMax); p.weapon=k; floatText(p.x,p.y-30,W.name,W.col); playCoin(); }
 function switchWeapon(p,k){ if(weaponOwned(p,k)) p.weapon=k; }
 function cycleWeapon(p,dir){ const own=WEAPON_ORDER.filter(k=>weaponOwned(p,k)); if(!own.length) return; let i=own.indexOf(p.weapon); if(i<0)i=0; p.weapon=own[(i+dir+own.length)%own.length]; }
 function consumeAmmo(p,k){ if(k==='pistol') return; if(!p.ammo) p.ammo={}; p.ammo[k]=(p.ammo[k]||0)-1; if(p.ammo[k]<=0){ p.ammo[k]=0; p.weapon='pistol'; floatText(p.x,p.y-26,'SIN MUNICIÓN','#ffd0a0'); } }
-function fireBullet(p){
+function fireBullet(p,fire){
   let fx=p.facing.x, fy=p.facing.y;
   if(!fx && !fy){ fy=1; }                                                // never moved yet -> shoot south
   const ang=Math.round(Math.atan2(fy,fx)/(Math.PI/4))*(Math.PI/4);       // snap to the 8 compass directions
   const cx=Math.cos(ang), cy=Math.sin(ang);
   // spawn at the player centre so the swept segment also catches enemies pressed right up against you
-  bullets.push({ id:_entId++, x:p.x, y:p.y, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD,
-                 life:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra] });   // damage = maxhp/shots, boosted by Piedra
-  spark(p.x+cx*22, p.y+cy*22, '#fff2c0', 3, 130);
+  bullets.push({ id:_entId++, x:p.x, y:p.y, vx:cx*(fire?BULLET_SPD*0.7:BULLET_SPD), vy:cy*(fire?BULLET_SPD*0.7:BULLET_SPD),
+                 life:fire?0.5:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra], fire:!!fire });   // damage = maxhp/shots, boosted by Piedra
+  spark(p.x+cx*22, p.y+cy*22, fire?'#ff9a2a':'#fff2c0', fire?5:3, 130);
 }
 function tryShoot(p){
   if(!p.alive || p.cooldown>0) return;
@@ -1443,8 +1457,51 @@ function tryShoot(p){
   const wk=(p.weapon&&WEAPONS[p.weapon])?p.weapon:'pistol', W=WEAPONS[wk];
   p.cooldown=W.cd; p.punchAnim=CHARS[p.kind].pd;
   if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxLaunch(); return; }
+  if(wk==='fire'){ fireBullet(p,true); consumeAmmo(p,'fire'); sfxFireShot(); return; }
+  if(wk==='mine'){ if(placeMine(p)) consumeAmmo(p,'mine'); return; }
+  if(wk==='block'){ if(placeBlockLP(p)) consumeAmmo(p,'block'); else p.cooldown=0.1; return; }
+  if(wk==='torreta'){ if(placeTurretLP(p)) consumeAmmo(p,'torreta'); else p.cooldown=0.1; return; }
   fireBullet(p); sfxGun(wk==='rapid');
   if(wk!=='pistol') consumeAmmo(p,wk);
+}
+// --- Modo Infinito placeables: mines, concrete blocks, beefed turrets ---
+const mines=[];
+function placeMine(p){
+  mines.push({ id:_entId++, x:Math.round(p.x), y:Math.round(p.y), arm:0.6, owner:players.indexOf(p) });
+  spark(p.x,p.y,'#ff5a4a',8,90); sfxPlace(); floatText(p.x,p.y-24,'MINA',' #ff8a6a'); return true;
+}
+function updateMines(dt){
+  for(let i=mines.length-1;i>=0;i--){ const m=mines[i];
+    if(m.arm>0){ m.arm-=dt; continue; }
+    let boom=false;
+    for(const e of enemies){ if(!e.dead && dist(m.x,m.y,e.x,e.y)<(e.footR||e.radius)+16){ boom=true; break; } }
+    if(boom){ explodeAt(m.x,m.y,105,0.7,players[m.owner]); mines.splice(i,1); }
+  }
+}
+function drawMines(){
+  for(const m of mines){ ctx.save();
+    const armed=m.arm<=0, bl=armed&&Math.floor(time*(armed?6:2))%2===0;
+    ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(m.x,m.y+3,9,4,0,0,TAU); ctx.fill();
+    ctx.fillStyle='#3a2a26'; ctx.beginPath(); ctx.arc(m.x,m.y,7,0,TAU); ctx.fill();
+    ctx.fillStyle=bl?'#ff3020':(armed?'#8a2a1a':'#5a5a5a'); ctx.beginPath(); ctx.arc(m.x,m.y,3,0,TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+function placeBlockLP(p){
+  const c=wallCellFor(p);
+  const rect={x:c.x, y:c.y, w:GRID, h:GRID, t:'incaWall', hp:WALL_HP, maxhp:WALL_HP, id:_entId++};
+  if(!wallAreaFree(rect,p)){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#d8d2c2'); return false; }
+  incaWalls.push(rect); obstacles.push(rect);   // obstacles is empty on Las Palmas; lpResolve reads incaWalls directly
+  resolveCollision(p);
+  for(const e of enemies){ if(!e.dead && circleRectCollide(e.x,e.y,e.radius,rect)) resolveCollision(e); }
+  spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); sfxPlace(); return true;
+}
+function placeTurretLP(p){
+  const before=turrets.length;
+  if(!placeTurret(p)) return false;
+  const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
+  if(t && turrets.length>before){ t.hp=t.maxhp=120; t.cd=0.4; t.beef=true; }
+  sfxTurretShot(); return true;
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
 const grenades=[];
@@ -1491,16 +1548,31 @@ function updateBullets(dt){
     for(const e of enemies){ if(e.dead) continue;
       const rr=(e.footR||e.radius)+6;
       if(segPtDist2(ax,ay,b.x,b.y,e.x,e.y) < rr*rr){
-        e.hp -= (e.maxhp/bulletShots(e))*b.pmul;   // fixed shots-to-kill regardless of HP scaling
+        e.hp -= (e.maxhp/(b.fire?4:bulletShots(e)))*b.pmul;   // fixed shots-to-kill regardless of HP scaling; fire round chips less on impact but ignites
         e.hitFlash=0.14; e.stagger=0.18;
-        const d=Math.hypot(b.vx,b.vy)||1, k=150;   // knockback punch
+        const d=Math.hypot(b.vx,b.vy)||1, k=b.fire?90:150;   // knockback punch
         e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
-        spark(e.x,e.y,'#ffd0d0',5,90);
+        if(b.fire){ igniteEnemy(e, b.owner); spark(e.x,e.y,'#ff9a2a',6,120); } else spark(e.x,e.y,'#ffd0d0',5,90);
         if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner); if(owner) playPunchSound(owner); }   // voice on KILL, throttled per character
         hit=true; break;
       }
     }
     if(hit || b.life<=0 || b.x<0||b.y<0||b.x>WORLD_W||b.y>WORLD_H){ bullets.splice(i,1); }
+  }
+}
+// ---- Fire: incendiary rounds ignite enemies, the flames spread to whoever they touch and burn HP away ----
+function igniteEnemy(e,owner){ if(e.boss) { e.burnT=Math.max(e.burnT||0,2.5); } else { e.burnT=4.5; } e.burnOwner=owner; }
+function updateBurns(dt){
+  for(const e of enemies){ if(e.dead || !(e.burnT>0)) continue;
+    e.burnT-=dt;
+    const dps=e.maxhp*(e.boss?0.06:0.22);   // burns HP down; bosses resist
+    e.hp-=dps*dt;
+    if(Math.random()<0.5) spark(e.x,e.y-e.radius*0.4,(Math.random()<0.5?'#ff7a2a':'#ffd24a'),1,60);
+    if(e.hp<=0){ const owner=players[e.burnOwner]; killEnemy(e, owner); continue; }
+    // spread to any non-burning enemy pressed against this one
+    for(const o of enemies){ if(o===e||o.dead||o.burnT>0) continue;
+      if(dist(e.x,e.y,o.x,o.y) < (e.footR||e.radius)+(o.footR||o.radius)+4){ o.burnT=Math.min(e.burnT,3.2)+0.6; o.burnOwner=e.burnOwner; }
+    }
   }
 }
 function drawBullets(){
@@ -1981,6 +2053,8 @@ function wallAreaFree(rect, placer){
   else if(currentMap==='machu'){ if(rect.x<38||rect.x+rect.w>WORLD_W-38||rect.y<MACHU_SKY+8||rect.y+rect.h>WORLD_H-30-Math.max(machuElev(rect.x),machuElev(rect.x+rect.w))) return false; }
   else if(currentMap==='stonebridge'){ if(rect.x<8||rect.x+rect.w>WORLD_W-8||rect.y<116||rect.y+rect.h>572) return false; }
   else { if(rect.x<8||rect.y<8||rect.x+rect.w>WORLD_W-8||rect.y+rect.h>WORLD_H-8) return false; }
+  // Las Palmas: don't let a block land on solid terrain (houses, trees, water edges)
+  if(currentMap==='laspalmas'){ for(let sx=rect.x+6;sx<=rect.x+rect.w-6;sx+=12) for(let sy=rect.y+6;sy<=rect.y+rect.h-6;sy+=12){ if(lpSolidAt(sx,sy)) return false; } }
   for(const o of obstacles){ if(rectsOverlap(rect,o)) return false; }
   for(const pl of players){ if(pl!==placer && pl.alive && circleRectCollide(pl.x,pl.y,pl.radius+2,rect)) return false; }
   for(const t of turrets){ if(circleRectCollide(t.x,t.y,18,rect)) return false; }
@@ -2008,6 +2082,7 @@ function placeTurret(p){
   let ok=true;
   const spot={x:tx-14,y:ty-14,w:28,h:28};
   for(const o of obstacles){ if(rectsOverlap(spot,o)){ok=false;break;} }
+  if(ok && currentMap==='laspalmas' && (lpSolidAt(tx,ty)||lpSolidAt(tx-12,ty)||lpSolidAt(tx+12,ty)||lpSolidAt(tx,ty-12)||lpSolidAt(tx,ty+12))) ok=false;
   if(ok && cliffs.length && inCliff(tx,ty)) ok=false;
   if(ok){ for(const t of turrets){ if(dist(tx,ty,t.x,t.y)<48){ok=false;break;} } }
   if(ok && currentMap==='machu' && (ty<MACHU_SKY+20||ty>WORLD_H-30-machuElev(tx))) ok=false;
@@ -2050,16 +2125,17 @@ function updateGear(dt){
   for(const t of turrets){
     if(t.hitFlash>0) t.hitFlash-=dt;
     t.cd-=dt;
+    const trange=t.beef?700:560, treload=t.beef?0.9:3, tspd=t.beef?460:340;
     let aim=null, ad=1e9;
     for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<ad){ad=dd;aim=e;} }
     if(aim) t.ang=Math.atan2(aim.y-(t.y-26), aim.x-t.x);
-    if(t.cd<=0 && aim && ad<560){
+    if(t.cd<=0 && aim && ad<trange){
       let best=null, bd=1e9;
-      for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<bd && dd<560 && !segBlocked(t.x,t.y-26,e.x,e.y)){bd=dd;best=e;} }
+      for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<bd && dd<trange && !segBlocked(t.x,t.y-26,e.x,e.y)){bd=dd;best=e;} }
       if(best){
         const a=Math.atan2(best.y-(t.y-26), best.x-t.x);
-        turretArrows.push({x:t.x, y:t.y-26, vx:Math.cos(a)*340, vy:Math.sin(a)*340, life:2.2, spin:a});
-        t.ang=a; t.cd=3; spark(t.x,t.y-26,'#d8c89a',4,60);
+        turretArrows.push({x:t.x, y:t.y-26, vx:Math.cos(a)*tspd, vy:Math.sin(a)*tspd, life:2.2, spin:a, beef:t.beef});
+        t.ang=a; t.cd=treload; spark(t.x,t.y-26,'#d8c89a',4,60);
       } else t.cd=0.4;   // everything walled off — retry soon instead of waiting the full 3s
     }
   }
@@ -2292,7 +2368,8 @@ function buildFlow(){
   const N=flowCols*flowRows; const blocked=new Uint8Array(N);
   for(let r=0;r<flowRows;r++) for(let c=0;c<flowCols;c++){
     const x=c*flowCell+flowCell/2, y=r*flowCell+flowCell/2; let bl=false;
-    if(currentMap==='laspalmas'){ bl=!!lpSolidAt(x,y); }
+    if(currentMap==='laspalmas'){ bl=!!lpSolidAt(x,y);
+      if(!bl) for(const w of incaWalls){ if(x>w.x-8&&x<w.x+w.w+8&&y>w.y-8&&y<w.y+w.h+8){bl=true;break;} } }
     else {
       for(const o of obstacles){ if(x>o.x-8&&x<o.x+o.w+8&&y>o.y-8&&y<o.y+o.h+8){bl=true;break;} }
       if(!bl && cliffs.length){ for(const cf of cliffs){ const ex=(x-(cf.x+cf.w/2))/(cf.w*0.5), ey=(y-(cf.y+cf.h/2))/(cf.h*0.5); if(ex*ex+ey*ey<1){bl=true;break;} } }
@@ -2538,7 +2615,7 @@ function startRound(){
   else if(round===20){ spawnQueue=0; spawnGiantBoss(); }
   else if(round%5===0){ spawnQueue = Math.round(spawnQueue*0.45); spawnBoss(round); }
   playRoundStart(round);
-  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; grenades.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
 }
 function startBreak(){
   state = STATE.BREAK;
@@ -2557,7 +2634,7 @@ function startBreak(){
 // ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
-  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
+  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
 }
 function updateSurvival(dt){
   survTime+=dt;
@@ -2589,7 +2666,7 @@ function updatePlay(dt){
   updateEnemies(dt);
   updateEffects(dt);
   updateLeaves(dt);
-  if(survival){ updateBullets(dt); updateGrenades(dt); }
+  if(survival){ updateBullets(dt); updateGrenades(dt); updateMines(dt); updateBurns(dt); }
   updateRays(dt);
   updateIceBeams(dt);
   updateHearts(dt);
@@ -3903,6 +3980,7 @@ function drawEnemy(e){
     if(fr.flip){ ctx.translate(e.x,0); ctx.scale(-1,1); ctx.translate(-e.x,0); }
     ctx.drawImage(img, dx, top, DW, DH);
     if(e.hitFlash>0 && !e.dead){ ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.65; ctx.drawImage(img,dx,top,DW,DH); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over'; }
+    if(e.burnT>0 && !e.dead){ ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.32+0.18*Math.sin(time*20+e.x); ctx.fillStyle='#ff7a1a'; ctx.beginPath(); ctx.ellipse(e.x,e.y+r*0.3,DW*0.4,DH*0.55,0,0,TAU); ctx.fill(); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over'; }
     ctx.restore();
   } else {
     ctx.fillStyle=e.hitFlash>0?'#fff':(e.color||'#6fae35'); ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
@@ -4728,8 +4806,8 @@ function startGame(){
   const sy0base = survival?LP_SPAWN.y : (currentMap==='stonebridge')?344:WORLD_H/2;
   camX=clamp(sx0-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(sy0base-H/2,0,Math.max(0,WORLD_H-H));
   round=0; score=0; particles.length=0; enemies.length=0;
-  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; grenades.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
-  bossDrops.length=0; bombs.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
+  apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
+  bossDrops.length=0; bombs.length=0; mines.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
   players=[];
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
@@ -5766,7 +5844,7 @@ function _frameBody(now){
   safe('amuleto',()=>{ if(_MO && amuleto){ ctx.save(); ctx.translate(0,machuElev(amuleto.x)); try{drawAmuleto();}finally{ctx.restore();} } else drawAmuleto(); });
   safe('effects',drawEffects);
   safe('leaves',drawLeaves);
-  if(survival){ safe('bullets',drawBullets); safe('grenades',drawGrenades); }
+  if(survival){ safe('mines',drawMines); safe('bullets',drawBullets); safe('grenades',drawGrenades); }
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
   safe('hearts',drawHearts);
@@ -5920,7 +5998,7 @@ function netSerializeSnapshot(){
     fx:      fx_effects.map(netSerEnt),
     leaves:  leaves.map(netSerEnt),   rays: rays.map(netSerEnt),   ice: iceBeams.map(netSerEnt),   bullets: bullets.map(netSerEnt),   grenades: grenades.map(netSerEnt),
     nuggets: nuggets.map(netSerEnt),  wallets: wallets.map(netSerEnt),
-    bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
+    bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt), mines: mines.map(m=>({id:m.id,x:m.x,y:m.y,arm:m.arm})),
     drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) };
 }
 // PVP snapshot: tiny — a grid string, a handful of bombs/flames/items, and per-player pvp stats
@@ -6237,6 +6315,7 @@ function netApplyGuest(dt){
   }
   // boss-drop gadgets: bombs / turrets / drop crates replicate wholesale each snapshot
   bombs.length=0;     for(const b3 of cur.bombs||[])   bombs.push({...b3});
+  mines.length=0;     for(const m of cur.mines||[])    mines.push({...m});
   turrets.length=0;   for(const t2 of cur.turrets||[]) turrets.push({...t2});
   bossDrops.length=0; for(const d2 of cur.drops||[])   bossDrops.push({...d2});
   // Inca walls also live inside `obstacles` (own-player prediction collides with them), so the
@@ -6314,6 +6393,8 @@ requestAnimationFrame(frame);
     keysObj['ArrowRight'] = !!d.r;
     keysObj['Comma']      = !!d.p;
     keysObj['Period']     = !!d.g;
+    // guest's weapon choice: host adopts it (only if that slot is actually owned on the authoritative side)
+    if(d.w && players[guest.slot] && weaponOwned(players[guest.slot], d.w)) players[guest.slot].weapon=d.w;
     // client-authoritative movement: adopt the pose the guest simulated locally (its own player runs
     // with zero input latency). Attacks/damage stay host-authoritative via the keys above.
     if(typeof d.x==='number' && typeof d.y==='number'){
@@ -6350,6 +6431,7 @@ requestAnimationFrame(frame);
       // stream our locally-simulated pose so the host adopts it verbatim (client-authoritative movement,
       // zero input round-trip). Only once prediction has a real position to report.
       if(gPred.init){ pk.x=gPred.x; pk.y=gPred.y; pk.fx=gPred.fx; pk.fy=gPred.fy; pk.dr=gPred.dir; pk.mv=gPred.moving?1:0; }
+      if(NET.guestWeapon) pk.w=NET.guestWeapon;   // guest's chosen weapon slot -> host fires it
       return pk;
     }
     // send the instant input changes (force=true for the periodic heartbeat resend);
