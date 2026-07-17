@@ -4691,6 +4691,7 @@ function drawPauseSurvival(){
   ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(rx,py,rw,ph,10); ctx.fill();
   ctx.strokeStyle='rgba(174,247,194,0.32)'; ctx.lineWidth=1.5; ctx.stroke();
   ctx.fillStyle='#aef7c2'; ctx.font='bold 18px Courier New'; ctx.fillText('MEJORES 10', rx+18, py+28);
+  ctx.fillStyle='#6a7a86'; ctx.font='10px Courier New'; ctx.fillText('local · tabla global pronto', rx+150, py+28);
   const board=lpTop10();
   if(!board.length){
     ctx.fillStyle='#7a8a80'; ctx.font='12px Courier New';
