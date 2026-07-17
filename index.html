@@ -1258,7 +1258,7 @@ function spawnEnemy(){
   if (survival && round>=34) pool.push('fast','large','fast','large');
   let type = pool[randi(0,pool.length-1)];
   if(type==='large'){            // cap concurrent big leaf-throwers (grows over time in survival)
-    const cap = survival ? Math.min(10, 2+Math.floor(round/6))*Math.max(1,activePlayerCount())
+    const cap = survival ? Math.min(6, 2+Math.floor(round/8))*Math.max(1,activePlayerCount())
                          : ((activePlayerCount()===1) ? (round>=11?2:1) : (round>=11?5:2));
     let cur=0; for(const en of enemies){ if(en.type==='large') cur++; }
     if(cur>=cap) type = (round>=3 && Math.random()<0.5) ? 'fast' : 'normal';
@@ -1291,17 +1291,12 @@ function spawnEnemy(){
     else if(edge===2){ x=rand(20,WORLD_W-20); y=WORLD_H-20; }
     else { x=20; y=rand(20,WORLD_H-20); }
   }
-  // Early ramp (rounds 1-15). In endless Modo Infinito, enemies then keep getting MUCH stronger over
-  // REAL time so the run never plateaus: tankier (grenades/mines still one-shot them), harder-hitting,
-  // and a bit faster. This is separate from the ever-climbing spawn cap in updateSurvival.
-  let scale = 1 + Math.min(round-1,14)*0.05;   // hp/dmg base ramp → 1.7 by round 15
-  let dmgScale = scale, spdBonus = 0;
-  if(survival){
-    const overm = Math.max(0, survTime-120)/60;   // minutes survived past a 2-minute grace period
-    scale    += overm*0.55;    // HP climbs steeply and never stops
-    dmgScale += overm*0.13;    // damage climbs more gently so you're not one-shot too early
-    spdBonus  = Math.min(34, overm*3.2);
-  }
+  // Enemies reach their full per-enemy stats by round 15 and then STAY there. In endless Modo Infinito
+  // the difficulty comes ENTIRELY from the growing swarm (see updateSurvival: the live-enemy cap and
+  // spawn rate keep climbing, and the type mix gets nastier) — never from per-enemy HP/damage buffs,
+  // so every enemy stays killable no matter how long the run lasts and your ammo isn't wasted.
+  let scale = 1 + Math.min(round-1,14)*0.05;   // → 1.7 by round 15, then flat
+  const dmgScale = scale, spdBonus = 0;
   let skin='chu', radius=t.radius, speed=t.speed, leafer=!!t.leafer, archer=false, supay=false, llama=false, ttype=null, tint=t.tint, baseHp=t.hp;
   if(currentMap==='stonebridge'){
     if(type==='normal'){ skin='knight'; }
@@ -3022,12 +3017,12 @@ function updateSurvival(dt){
   // don't keep killing, the map fills up and eventually becomes impossible. CAP_MAX is only a
   // performance ceiling, reached deep into a run.
   const CAP_MAX=240;
-  const cap = Math.min(CAP_MAX, Math.round(8 + 4*nParty + dtf*0.18));
+  const cap = Math.min(CAP_MAX, Math.round(10 + 5*nParty + dtf*0.26));
   survSpawnT-=dt;
   if(aliveN<cap && survSpawnT<=0){
-    const burst = dtf>200?3:(dtf>60?2:1);   // spawn faster as the run drags on, so a passive player is quickly swarmed
+    const burst = dtf>300?4:(dtf>150?3:(dtf>60?2:1));   // bigger spawn bursts over time — cut the swarm down and it rebuilds fast
     for(let i=0;i<burst;i++){ if(enemies.reduce((a,e)=>a+(e.dead?0:1),0)>=cap) break; spawnEnemy(); }
-    survSpawnT = Math.max(0.2, (nParty>=2?0.8:1.05) - dtf*0.005);
+    survSpawnT = Math.max(0.16, (nParty>=2?0.7:0.95) - dtf*0.006);
   }
 }
 
