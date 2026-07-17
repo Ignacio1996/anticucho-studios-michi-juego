@@ -1542,6 +1542,10 @@ function updateLeaves(dt){
         gone=true; break;
       }
     }
+    // enemy shots also hurt recruited AI allies (death handled by updateNpcs)
+    if(!gone && survival) for(const n of npcs){ if(n.npcState!=='active') continue;
+      if(dist(l.x,l.y,n.x,n.y) < n.radius+9){ n.hitFlash=1.0; n.hp-=l.dmg; spark(n.x,n.y,'#ff5050',6,100); gone=true; break; }
+    }
     if(gone) leaves.splice(i,1);
   }
 }
@@ -2708,6 +2712,14 @@ function nearestPlayer(e){
     const d=dist(e.x,e.y,p.x,p.y); if(d<bd){bd=d;best=p;} }
   return {p:best,d:bd};
 }
+// Enemy chase target: players PLUS recruited AI allies (Modo Infinito) — enemies claw/shoot
+// whichever is nearest. Idle (untagged) NPCs stay invisible to them.
+function nearestTarget(e){
+  const r=nearestPlayer(e); let best=r.p, bd=r.d;
+  if(survival) for(const n of npcs){ if(n.npcState!=='active') continue;
+    const d=dist(e.x,e.y,n.x,n.y); if(d<bd){bd=d;best=n;} }
+  return {p:best,d:bd};
+}
 
 function buildFlow(){
   flowCell=36; flowCols=Math.ceil(WORLD_W/flowCell); flowRows=Math.ceil(WORLD_H/flowCell);
@@ -2724,6 +2736,9 @@ function buildFlow(){
   }
   const dist=new Int32Array(N); dist.fill(-1); const q=[];
   for(const p of players){ if(!p.alive) continue; const c=Math.max(0,Math.min(flowCols-1,Math.floor(p.x/flowCell))), r=Math.max(0,Math.min(flowRows-1,Math.floor(p.y/flowCell))); const idx=r*flowCols+c; if(dist[idx]<0){ dist[idx]=0; q.push(idx); } }
+  // recruited AI allies attract enemies too (the field descends to the nearest seed, so the swarm
+  // naturally splits between players and allies)
+  if(survival) for(const n of npcs){ if(n.npcState!=='active') continue; const c=Math.max(0,Math.min(flowCols-1,Math.floor(n.x/flowCell))), r=Math.max(0,Math.min(flowRows-1,Math.floor(n.y/flowCell))); const idx=r*flowCols+c; if(dist[idx]<0){ dist[idx]=0; q.push(idx); } }
   let head=0;
   while(head<q.length){ const idx=q[head++]; const r=(idx/flowCols)|0, c=idx%flowCols, d0=dist[idx];
     const nb=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -2784,7 +2799,7 @@ function updateEnemies(dt){
     e.x+=e.vx*dt; e.y+=e.vy*dt;
     e.vx*=0.86; e.vy*=0.86;
 
-    const {p:tgt,d} = nearestPlayer(e);
+    const {p:tgt,d} = nearestTarget(e);
     // Torreta: melee enemies switch to the turret when it's strictly closer than every player
     // (players always win ties, and archers keep shooting players)
     let turTgt=null;
@@ -2892,7 +2907,8 @@ function updateEnemies(dt){
       } else {
         tgt.hp -= e.dmg;
         spark(tgt.x,tgt.y,'#ff5050',6,100);
-        if(tgt.hp<=0){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
+        // AI allies die through updateNpcs (their own death voice + respawn queue), not the player path
+        if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
       }
     }
     // turret melee: enemies claw it down with their real contact damage (player contact wins ties above)
@@ -3092,7 +3108,30 @@ function makeNpc(kind,x,y){
   n.isNpc=true; n.npcState='idle'; n.tagBob=Math.random()*TAU;
   n.maxhp*=2; n.hp=n.maxhp; n.weapon='pistol';   // double HP, always a pistol
   n.aiShootCd=0; n.aiRepathT=0; n.aiWX=x; n.aiWY=y;
+  n.aiSide=Math.random()<0.5?-1:1; n.aiStuckT=0; n.aiLX=x; n.aiLY=y; n.aiDetourT=0; n.aiDetourA=0; n.aiReturn=false;
+  n.aiTgt=null; n.aiTgtT=0;   // target lock: commit to one enemy ~1s so aim/facing doesn't thrash in a crowd
+  n.aiOffT=0;                 // seconds spent fully off-screen (catch-up teleport timer)
   return n;
+}
+// -- NPC navigation brains --
+// Walking is blocked by map solids AND player-built concrete blocks; a shot only needs the bullet
+// path clear (bullets stop on solids but fly over the pool/jacuzzi — same rule as updateBullets).
+function npcWalkBlocked(x,y){ if(lpSolidAt(x,y)) return true; if(incaWalls.length) for(const w of incaWalls){ if(x>w.x-4&&x<w.x+w.w+4&&y>w.y-4&&y<w.y+w.h+4) return true; } return false; }
+function npcShotLos(x0,y0,x1,y1){ const d=Math.hypot(x1-x0,y1-y0), stp=Math.max(2,Math.ceil(d/14)); for(let s=1;s<stp;s++){ const tx=x0+(x1-x0)*s/stp, ty=y0+(y1-y0)*s/stp; if(lpSolidAt(tx,ty)&&!lpBulletPass(tx,ty)) return false; } return true; }
+// Whisker steering: head straight for (tx,ty), but if the next ~66px are walled, swing the heading in
+// growing steps to whichever side opens up first. n.aiSide is hysteresis — once it commits to going
+// around a house clockwise it keeps hugging that side instead of dithering left-right at the corner.
+function npcSteer(n,tx,ty){
+  const base=Math.atan2(ty-n.y,tx-n.x);
+  const probe=a=>{ const cx=Math.cos(a),cy=Math.sin(a); return !(npcWalkBlocked(n.x+cx*22,n.y+cy*22)||npcWalkBlocked(n.x+cx*44,n.y+cy*44)||npcWalkBlocked(n.x+cx*66,n.y+cy*66)); };
+  if(probe(base)){ n.aiSide=0; return base; }
+  const pref=n.aiSide||(Math.random()<0.5?-1:1);
+  for(const stepDeg of [30,55,80,105,130,155]){
+    const st=stepDeg*Math.PI/180;
+    if(probe(base+pref*st)){ n.aiSide=pref; return base+pref*st; }
+    if(probe(base-pref*st)){ n.aiSide=-pref; return base-pref*st; }
+  }
+  return base+Math.PI;   // fully boxed in — back straight out
 }
 function spawnIdleNpc(){
   if(npcs.length>=2 || !npcQueue.length) return;
@@ -3121,7 +3160,6 @@ function updateNpcs(dt){
     if(!npcQueue.length && npcs.length===0 && npcDeadWait<=0) refillNpcQueue();   // loop restart once everyone's gone
     if(npcDeadWait<=0 && npcs.length<2 && npcQueue.length) spawnIdleNpc();
   }
-  for(const e of enemies){ if(e.atkNpcCd>0) e.atkNpcCd-=dt; }
   const alive=players.filter(p=>p.alive), host=alive[0]||players[0];
   for(let i=npcs.length-1;i>=0;i--){
     const n=npcs[i]; n.animTime+=dt; if(n.hitFlash>0) n.hitFlash-=dt; if(n.punchAnim>0) n.punchAnim-=dt;
@@ -3131,25 +3169,79 @@ function updateNpcs(dt){
       for(const p of players){ if(p.alive && dist(p.x,p.y,n.x,n.y) < p.radius+n.radius+6){ tagNpc(n); break; } }
       continue;   // idle NPCs are invulnerable until tagged
     }
-    // ---- active: roam the player's VISIBLE area, hunt the nearest enemy, shoot it ----
-    let te=null, td=1e9; for(const e of enemies){ if(e.dead) continue; const d=dist(n.x,n.y,e.x,e.y); if(d<td){td=d;te=e;} }
-    const off = host && (n.x<camX+50||n.x>camX+W-50||n.y<camY+50||n.y>camY+H-50);
-    let mx=0,my=0;
-    if(off){ const a=Math.atan2(host.y-n.y, host.x-n.x); mx=Math.cos(a); my=Math.sin(a); }   // drifted off-screen → run back to the player
-    else if(te){
-      const a=Math.atan2(te.y-n.y, te.x-n.x);
-      if(td>160){ mx=Math.cos(a); my=Math.sin(a); } else if(td<95){ mx=-Math.cos(a); my=-Math.sin(a); }
-      n.aiShootCd-=dt;
-      if(n.aiShootCd<=0 && td<560){ fireNpcBullet(n, te.x, te.y); n.aiShootCd=rand(0.3,0.55); }
-      else { n.facing.x=Math.cos(a); n.facing.y=Math.sin(a); n.dir=Math.abs(n.facing.x)>Math.abs(n.facing.y)?(n.facing.x<0?'w':'e'):(n.facing.y<0?'n':'s'); }
-    } else if(host){
-      n.aiRepathT-=dt; if(n.aiRepathT<=0){ n.aiRepathT=rand(0.8,1.8); const a=Math.random()*TAU, r=rand(60,190); n.aiWX=host.x+Math.cos(a)*r; n.aiWY=host.y+Math.sin(a)*r; }
-      if(dist(n.x,n.y,n.aiWX,n.aiWY)>20){ const a=Math.atan2(n.aiWY-n.y, n.aiWX-n.x); mx=Math.cos(a); my=Math.sin(a); }
+    // ---- active: fight only what's ON SCREEN, and prefer enemies with a CLEAR LINE OF FIRE ----
+    // Off-screen enemies are ignored entirely: when the player walks away and the ally ends up at
+    // the screen edge, it commits to returning to the middle (hysteresis below) instead of jittering
+    // at the boundary chasing things it can't see. Once it picks an enemy it LOCKS ON for ~1s —
+    // re-choosing "nearest" every frame in a crowd made it spin to face a different foe each tick.
+    const visT=e=> !e.dead && e.x>camX+24 && e.x<camX+W-24 && e.y>camY+24 && e.y<camY+H-24;
+    n.aiTgtT-=dt;
+    let te=(n.aiTgt && visT(n.aiTgt) && n.aiTgtT>0) ? n.aiTgt : null;
+    if(!te){
+      let tv=null, tvd=1e9, tn=null, tnd=1e9;
+      for(const e of enemies){ if(!visT(e)) continue;
+        const d=dist(n.x,n.y,e.x,e.y); if(d<tnd){tnd=d;tn=e;}
+        if(d<620 && d<tvd && npcShotLos(n.x,n.y,e.x,e.y)){ tvd=d; tv=e; } }
+      te=tv||tn; n.aiTgt=te; n.aiTgtT=rand(0.9,1.5);
     }
-    if(mx||my){ const l=Math.hypot(mx,my); mx/=l; my/=l; const sp=effSpeed(n); n.x+=mx*sp*dt; n.y+=my*sp*dt; resolveCollision(n); n.moving=true; n.facing.x=mx; n.facing.y=my; n.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); }
+    const td=te?dist(n.x,n.y,te.x,te.y):1e9;
+    const hasLos=te?npcShotLos(n.x,n.y,te.x,te.y):false;
+    // screen-edge hysteresis: near the border → return mode, held until it's WELL inside (central
+    // area, or close to the player) so it doesn't flap on/off at the edge
+    if(host){
+      if(!n.aiReturn && (n.x<camX+70||n.x>camX+W-70||n.y<camY+70||n.y>camY+H-70)) n.aiReturn=true;
+      else if(n.aiReturn && (dist(n.x,n.y,host.x,host.y)<180 || (n.x>camX+W*0.3&&n.x<camX+W*0.7&&n.y>camY+H*0.32&&n.y<camY+H*0.68))) n.aiReturn=false;
+    }
+    let wantA=null;
+    if(n.aiDetourT>0){ n.aiDetourT-=dt; wantA=n.aiDetourA; }                            // unsticking: hold the detour heading briefly
+    else if(n.aiReturn && host){ wantA=npcSteer(n, host.x, host.y); }                   // head back to the centre (around walls)
+    if(te){
+      n.aiShootCd-=dt;
+      if(wantA===null){
+        // wide deadband: close in above 190, retreat below 70, otherwise HOLD GROUND and shoot —
+        // and when 3+ enemies are crowding it, stop retreating entirely (backing away from one just
+        // walks into another and it jitters): stand and blast, taking hits like anyone surrounded
+        if(!hasLos || td>190){ wantA=npcSteer(n, te.x, te.y); }                         // flank/close in, wall-aware
+        else if(td<70){
+          let near=0; for(const e of enemies){ if(!e.dead && dist(n.x,n.y,e.x,e.y)<130){ near++; if(near>=3) break; } }
+          if(near<3) wantA=npcSteer(n, n.x*2-te.x, n.y*2-te.y);                         // clear behind → back off (wall-aware)
+        }
+      }
+      // it can still fire on visible enemies while retreating — a fighting withdrawal, not a panic
+      if(hasLos && n.aiShootCd<=0 && td<560){ fireNpcBullet(n, te.x, te.y); n.aiShootCd=rand(0.3,0.55); }
+      else if(wantA===null){ const a=Math.atan2(te.y-n.y,te.x-n.x); n.facing.x=Math.cos(a); n.facing.y=Math.sin(a); n.dir=Math.abs(n.facing.x)>Math.abs(n.facing.y)?(n.facing.x<0?'w':'e'):(n.facing.y<0?'n':'s'); }
+    } else if(host && wantA===null){
+      n.aiRepathT-=dt;
+      if(n.aiRepathT<=0){ n.aiRepathT=rand(0.8,1.8); for(let t=0;t<8;t++){ const a=Math.random()*TAU, r=rand(60,190), wx=host.x+Math.cos(a)*r, wy=host.y+Math.sin(a)*r; if(!npcWalkBlocked(wx,wy)){ n.aiWX=wx; n.aiWY=wy; break; } } }
+      if(dist(n.x,n.y,n.aiWX,n.aiWY)>20) wantA=npcSteer(n, n.aiWX, n.aiWY);
+    }
+    let mx=0,my=0; if(wantA!==null){ mx=Math.cos(wantA); my=Math.sin(wantA); }
+    if(mx||my){ const sp=effSpeed(n); n.x+=mx*sp*dt; n.y+=my*sp*dt; resolveCollision(n); n.moving=true; n.facing.x=mx; n.facing.y=my; n.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); }
     else n.moving=false;
-    // adjacent enemies claw the ally down (idle ones are ignored above), so it dies eventually
-    for(const e of enemies){ if(e.dead) continue; if(dist(n.x,n.y,e.x,e.y) < e.radius+n.radius+2 && (e.atkNpcCd||0)<=0){ e.atkNpcCd=0.6; n.hp-=e.dmg; n.hitFlash=1.0; spark(n.x,n.y,'#ff5050',5,90); break; } }
+    // stuck watchdog: wanted to move but barely displaced (wedged on a corner) → hard sideways detour
+    n.aiStuckT+=dt;
+    if(n.aiStuckT>=0.5){
+      if(n.moving && dist(n.x,n.y,n.aiLX,n.aiLY)<9){ n.aiSide=-(n.aiSide||1); n.aiDetourT=0.7; n.aiDetourA=(wantA===null?Math.random()*TAU:wantA)+n.aiSide*(Math.PI/2+rand(-0.3,0.3)); }
+      n.aiStuckT=0; n.aiLX=n.x; n.aiLY=n.y;
+    }
+    // catch-up: if the player sprints across the map and the ally ends up wedged off-screen behind a
+    // building, after a few seconds it quietly relocates to a walkable spot just OUTSIDE the current
+    // view and walks in — the hop is never visible, and the ally always finds you again
+    const offScr = n.x<camX-10||n.x>camX+W+10||n.y<camY-10||n.y>camY+H+10;
+    n.aiOffT = offScr ? n.aiOffT+dt : 0;
+    if(offScr && n.aiOffT>3.5){
+      for(let t=0;t<50;t++){
+        const side=randi(0,3);
+        const x = side===0?camX-46 : side===1?camX+W+46 : camX+rand(40,W-40);
+        const y = side===2?camY-46 : side===3?camY+H+46 : camY+rand(40,H-40);
+        const cx2=clamp(x,40,WORLD_W-40), cy2=clamp(y,40,WORLD_H-40);
+        if(cx2>camX-14 && cx2<camX+W+14 && cy2>camY-14 && cy2<camY+H+14) continue;   // clamped back into view (map edge) — invisible hop only
+        if(npcWalkBlocked(cx2,cy2)) continue;
+        n.x=cx2; n.y=cy2; n.aiOffT=0; n.aiReturn=true; n.aiTgt=null; n.aiDetourT=0; n.aiStuckT=0; n.aiLX=cx2; n.aiLY=cy2;
+        break;
+      }
+    }
+    // (enemies deal contact damage to the ally through their own attack path — see nearestTarget)
     if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcDeadWait=rand(11,18); }
   }
 }
@@ -4637,6 +4729,22 @@ function drawHUD(){
     } else {
       ctx.fillText('ELIMINADOS: '+kills, W/2, 22);
       ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 40);
+    }
+    // recruited AI allies: slim "ALIADO" health bars tucked against the right edge, out of the way
+    {
+      let ay=(players.length>=3)?110:58;
+      for(const nn of npcs){ if(nn.npcState!=='active') continue;
+        const bw2=110, bx2=W-16-bw2;
+        ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(bx2-8,ay-14,bw2+16,34);
+        ctx.textAlign='right'; ctx.fillStyle='#bfe6ff'; ctx.font='bold 10px Courier New';
+        ctx.fillText('ALIADO · '+nn.name.toUpperCase(), W-16, ay-3);
+        const hf=clamp(nn.hp/nn.maxhp,0,1);
+        ctx.fillStyle='#333'; ctx.fillRect(bx2,ay+2,bw2,7);
+        ctx.fillStyle=hf>0.5?'#7fe07f':hf>0.25?'#ffd24a':'#ff6a5a'; ctx.fillRect(bx2,ay+2,bw2*hf,7);
+        ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.strokeRect(bx2,ay+2,bw2,7);
+        ay+=40;
+      }
+      ctx.textAlign='center';
     }
   } else if(state===STATE.PLAY){
     const cnt='Enemigos: '+(enemies.filter(en=>!en.dead).length+spawnQueue);
