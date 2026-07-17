@@ -2092,7 +2092,11 @@ function drawHeart(h){
 }
 function drawHearts(){ for(const h of hearts) drawHeart(h); }
 function updateDeathAnims(dt){
-  for(const p of players){ if(p.alive||p.deathAnim==null) continue; p.deathAnim+=dt; if(p.deathAnim>=4.6) p.deathAnim=null; }
+  for(const p of players){
+    if(p.alive){ p.deadT=0; continue; }
+    p.deadT=(p.deadT||0)+dt;                 // continuous time-on-the-ground clock (drives the 30s death pose)
+    if(p.deathAnim==null) continue; p.deathAnim+=dt; if(p.deathAnim>=4.6) p.deathAnim=null;
+  }
 }
 function updateRevive(dt){
   if(players.length<2) return;
@@ -3105,6 +3109,22 @@ function drawLasPalmasTint(){
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   ctx.restore();
 }
+// ---------- Modo Infinito death poses ----------
+// Bespoke lying-down art (body + blood pool + dropped water gun) per roster character. A fallen
+// player or ally stays on the ground in this pose ~30s, fading out over the last 3, then vanishes.
+const DP_IMG={}; for(const nm of ['alfredo','mati','sebas','vannucci','flash']){ const im=new Image(); im.src='assets/char_'+nm+'_dp.png'; DP_IMG[nm]=im; }
+const CORPSE_LIFE=30, CORPSE_FADE=3;
+const corpses=[];   // fallen NPC allies leave one of these; players draw their pose via drawPlayer while dead
+function drawDeathPose(kind,x,y,groundY,t){
+  const img=DP_IMG[kind]; if(!img || !img.naturalWidth) return false;
+  const DW=img.naturalWidth/2, DH=img.naturalHeight/2;      // assets ship at 2× for crisp downscale
+  ctx.save();
+  ctx.globalAlpha=clamp((CORPSE_LIFE-(t||0))/CORPSE_FADE,0,1);
+  ctx.drawImage(img, x-DW/2, groundY-DH, DW, DH);           // bottom-anchored: body lies at the feet line
+  ctx.restore();
+  return true;
+}
+function updateCorpses(dt){ for(let i=corpses.length-1;i>=0;i--){ corpses[i].t+=dt; if(corpses[i].t>=CORPSE_LIFE) corpses.splice(i,1); } }
 // ---------- Modo Infinito NPC helpers ----------
 // The roster characters nobody is playing wander the map IDLE + hidden; walk into one to TAG it and
 // it joins as an AI ally that hunts enemies until it dies. ONE ally at a time; random order; a delay
@@ -3253,7 +3273,7 @@ function updateNpcs(dt){
       }
     }
     // (enemies deal contact damage to the ally through their own attack path — see nearestTarget)
-    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcSpawnT=60; }
+    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); corpses.push({id:_entId++, kind:n.kind, x:Math.round(n.x), y:Math.round(n.y+n.radius+4), t:0}); npcs.splice(i,1); npcSpawnT=60; }
   }
 }
 function drawNpc(n){
@@ -3269,13 +3289,14 @@ function drawNpc(n){
 }
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
-  npcs.length=0; refillNpcQueue(); npcSpawnT=14;
+  npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
 }
 function updateSurvival(dt){
   survTime+=dt;
   if(vendFlash>0) vendFlash-=dt;
+  updateCorpses(dt);   // fallen allies fade off the ground after ~30s
   updateNpcs(dt);      // AI ally helpers (tag-to-recruit)
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
@@ -3365,6 +3386,8 @@ function drawDeathScene(){
     const s=m.dh/m.h, dw=m.w*s, dh=m.h*s;
     const dx=dp.x - m.d1cx*s, dy=(dp.y+dp.radius+5) - m.d1by*s;
     ctx.drawImage(img,dx,dy,dw,dh);
+  } else if(survival && DP_IMG[dp.kind] && DP_IMG[dp.kind].naturalWidth){
+    drawDeathPose(dp.kind, dp.x, dp.y, dp.y+dp.radius+4, 0);   // Modo Infinito: zoom onto the lying pose
   } else {
     // characters without bespoke KO frames: same tipped-sprite fade the in-round deaths use
     const C=CHARS[dp.kind];
@@ -3917,6 +3940,17 @@ function drawPlayer(p){
   if(!p.alive){
     if(p.fell){
       if(p.fallT>0){ const k=clamp(p.fallT/0.5,0,1), C=CHARS[p.kind]; if(C.loaded()){ const fr=charFrame(p), CELL=C.cell, DH=C.dh*k, scale=DH/CELL.h, DW=CELL.w*scale, top=p.y-DH+p.radius+(1-k)*30, dx=p.x-DW/2; ctx.save(); ctx.globalAlpha=k; if(fr.flip){ctx.translate(p.x,0);ctx.scale(-1,1);ctx.translate(-p.x,0);} ctx.drawImage(fr.img,dx,top,DW,DH); ctx.restore(); } }
+      return;
+    }
+    // Modo Infinito: fallen players lie in their bespoke death pose ~30s (fading out at the end)
+    // instead of the tip-over animation + wooden cross. The revive ring still draws on top.
+    if(survival && DP_IMG[p.kind] && DP_IMG[p.kind].naturalWidth){
+      drawDeathPose(p.kind, p.x, p.y, p.y+p.radius+4, p.deadT||0);
+      if((p.reviveProgress||0)>0){
+        const fr2=clamp(p.reviveProgress/5,0,1);
+        ctx.strokeStyle='#aef7c2'; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(p.x,p.y-3,19,-Math.PI/2,-Math.PI/2+fr2*TAU); ctx.stroke();
+      }
       return;
     }
     if(p.deathAnim!=null){
@@ -6651,6 +6685,7 @@ function _frameBody(now){
   const drawables=[...enemies.map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
+                   ...(survival?corpses:[]).map(c=>({y:c.y,x:c.x,sy:c.y,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat (lose z-ties to the living)
                    ...(survival?bullets:[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
@@ -6809,7 +6844,7 @@ function netSerEnemyStatic(e){ // static tier: only the constant fields the rend
 function netSerPlayer(p){
   return { kind:p.kind, name:p.name, color:p.color, radius:p.radius, x:p.x, y:p.y,
     dir:p.dir, moving:p.moving, animTime:p.animTime, hp:p.hp, maxhp:p.maxhp, speed:p.speed, cd:p.cd,
-    alive:p.alive, fell:p.fell, fallT:p.fallT, deathAnim:(p.deathAnim==null?null:p.deathAnim), reviveProgress:p.reviveProgress||0,
+    alive:p.alive, fell:p.fell, fallT:p.fallT, deathAnim:(p.deathAnim==null?null:p.deathAnim), deadT:p.deadT||0, reviveProgress:p.reviveProgress||0,
     punchAnim:p.punchAnim, hitFlash:p.hitFlash, shieldFlash:p.shieldFlash, shields:p.shields,
     special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0, soles:p.soles||0,
     gear:p.gear||'none', gearCount:p.gearCount||0,
@@ -6834,6 +6869,7 @@ function netSerializeSnapshot(){
     npcs: npcs.map(n=>({id:n.id, kind:n.kind, x:Math.round(n.x*10)/10, y:Math.round(n.y*10)/10,
       st:n.npcState==='active'?1:0, hp:Math.round(n.hp), maxhp:n.maxhp, dir:n.dir, mv:n.moving?1:0,
       pa:n.punchAnim, hf:n.hitFlash, fx:n.facing.x, fy:n.facing.y})),
+    corpses: corpses.map(c=>({id:c.id, kind:c.kind, x:c.x, y:c.y, t:Math.round(c.t*10)/10})),
     lpItems: lpItems.map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
@@ -6926,7 +6962,7 @@ function netApplyMeta(s){
 function netRenderPlayer(sp){
   return { kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
     dir:sp.dir, moving:sp.moving, animTime:sp.animTime, hp:sp.hp, maxhp:sp.maxhp, speed:sp.speed, cd:sp.cd,
-    alive:sp.alive, pending:sp.pending, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, reviveProgress:sp.reviveProgress,
+    alive:sp.alive, pending:sp.pending, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, deadT:sp.deadT||0, reviveProgress:sp.reviveProgress,
     punchAnim:sp.punchAnim, hitFlash:sp.hitFlash, shieldFlash:sp.shieldFlash, shields:sp.shields,
     special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge, soles:sp.soles||0,
     gear:sp.gear, gearCount:sp.gearCount,
@@ -7176,6 +7212,7 @@ function netApplyGuest(dt){
   }
   // boss-drop gadgets: bombs / turrets / drop crates replicate wholesale each snapshot
   bombs.length=0;     for(const b3 of cur.bombs||[])   bombs.push({...b3});
+  corpses.length=0;   for(const c2 of cur.corpses||[]) corpses.push({...c2});
   mines.length=0;     for(const m of cur.mines||[])    mines.push({...m});
   turrets.length=0;   for(const t2 of cur.turrets||[]) turrets.push({...t2});
   bossDrops.length=0; for(const d2 of cur.drops||[])   bossDrops.push({...d2});
