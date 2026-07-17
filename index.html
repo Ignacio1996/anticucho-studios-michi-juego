@@ -636,9 +636,12 @@ const CHARS={
       loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...A.base} };
   }
 }
-const CHAR_LIST=['freddy','michi','sumac','shooshy','alfredo','mati','sebas','vannucci','flash'];
-// PVP roster ordered so the two-row pick screen groups the original six on top, the newcomers below
+const CHAR_LIST=['freddy','michi','sumac','shooshy'];                 // Horda roster
+const SURV_CHAR_LIST=['alfredo','mati','sebas','vannucci','flash'];   // Modo Infinito roster (the five newcomers)
+// PVP roster: EVERY character is playable (includes Teddington + Cóndor)
 const PVP_CHAR_LIST=['freddy','michi','sumac','shooshy','teddington','condor','alfredo','mati','sebas','vannucci','flash'];
+// the pick-screen roster depends on the mode: Modo Infinito (Las Palmas) uses the newcomers, Horda the originals
+function hordaRoster(){ return currentMap==='laspalmas' ? SURV_CHAR_LIST : CHAR_LIST; }
 let selMode=1, selCursor1=0, selCursor2=1, selChar1=null, selChar2=null, modTest=false, selPending=false, selStartTimer=0;
 function charFrame(p){
   const C=CHARS[p.kind], S=C.S, d=p.dir;
@@ -817,6 +820,8 @@ const NET = { role:'local', peer:null, conn:null, conns:[], link:'', hosting:fal
   guestReady:false, slot:1, snap:null, guestKeys:null, waitState:'' };                 // guest: replicated-state fields
 addEventListener('keydown', e => {
   initAudio();
+  // Las Palmas intro is playing: swallow all input; Space/Enter/Esc skip the clip, nothing drives the menu behind it
+  if(introPlaying){ e.preventDefault(); if(introSkip && (e.code==='Space'||e.code==='Enter'||e.code==='Escape')) introSkip(); return; }
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Comma'].includes(e.code)) e.preventDefault();
   if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && (pvp.paused||pvpInfo) && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
@@ -1152,7 +1157,7 @@ function reassignKind(p, kind){
   p.dmg=base.dmg; p.knock=base.knock; p.speed=base.speed; p.cd=base.cd;
 }
 function shuffledChars(){
-  const a=CHAR_LIST.slice();
+  const a=hordaRoster().slice();
   for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; }
   return a;
 }
@@ -2743,17 +2748,17 @@ function startBreak(){
 // Las Palmas cinematic intro: fullscreen video (with its own audio) that plays every time you enter
 // the map, then hands off to the round. Skippable. If the asset is missing it silently starts the game,
 // so the mode always works even before the video file is added.
-let introPlaying=false;
+let introPlaying=false, introSkip=null;   // introSkip: call to end the clip early (SALTAR button or a key)
 function playLasPalmasIntro(onDone){
   const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
   if(!v){ onDone(); return; }
   let done=false, watchdog=0;
-  const finish=()=>{ if(done) return; done=true; introPlaying=false; if(watchdog) clearTimeout(watchdog);
+  const finish=()=>{ if(done) return; done=true; introPlaying=false; introSkip=null; if(watchdog) clearTimeout(watchdog);
     try{ v.pause(); v.onended=v.onerror=v.onplaying=null; }catch(e){}
     v.style.display='none'; if(skip){ skip.style.display='none'; skip.onclick=null; }
-    try{ lpMusicStart(); }catch(e){}   // restore the map music after the clip's own audio
-    onDone();
+    onDone();   // caller decides what plays next (character select re-starts the map music)
   };
+  introSkip=finish;
   try{ lpMusicStop(); }catch(e){}      // duck the map music while the clip plays
   introPlaying=true;
   v.muted=false; v.volume=1;
@@ -2766,6 +2771,28 @@ function playLasPalmasIntro(onDone){
   try{ v.load(); }catch(e){}            // reset to the start + pick a playable <source> (mp4 or webm)
   try{ v.currentTime=0; }catch(e){}
   const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>finish());   // autoplay blocked → start the round
+}
+// Las Palmas apocalyptic atmosphere: a subtle warm-red multiply + faint red mist + soft dark-red
+// vignette, matching the alien-invasion intro. Kept light so the map stays readable.
+function drawLasPalmasTint(){
+  ctx.save();
+  // 1) inject warm red light so even green areas glow reddish (the "mist")
+  ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle='rgba(130,18,10,0.20)';
+  ctx.fillRect(0,0,W,H);
+  // 2) multiply to redden + deepen the midtones/shadows
+  ctx.globalCompositeOperation='multiply';
+  ctx.fillStyle='rgba(255,105,85,0.34)';
+  ctx.fillRect(0,0,W,H);
+  // 3) faint flat red haze
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='rgba(150,25,15,0.10)';
+  ctx.fillRect(0,0,W,H);
+  // 4) soft dark-red vignette for the apocalyptic mood
+  const g=ctx.createRadialGradient(W/2,H*0.46,H*0.26,W/2,H*0.55,H*1.02);
+  g.addColorStop(0,'rgba(40,0,0,0)'); g.addColorStop(1,'rgba(48,0,0,0.42)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.restore();
 }
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
@@ -4803,7 +4830,12 @@ function handleMenuKey(code){
       if(modeSel===0){ lobbyMode='horda'; state=STATE.MAPAS; mapSel=0; }
       else if(modeSel===1){ // MODO INFINITO — survival on Las Palmas (co-op / online / solo, like Horda)
         lobbyMode='horda'; currentMap='laspalmas'; WORLD_W=W; camX=0;
-        if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); }
+        if(NET.hosting){ enterLobby(); }
+        else {
+          // Cinematic intro first (map music stays OFF under it), THEN pick your character.
+          stopMenuMusic(); lpMusicStop();
+          playLasPalmasIntro(()=>{ state=STATE.MENU; menuSel=0; resumeCumbia(); });
+        }
       }
       else if(NET.hosting){ lobbyMode='pvp'; currentMap='pvp'; enterLobby(); }
       else { enterPvpSelect(); }
@@ -4907,7 +4939,7 @@ function charsPerRow(n){ return (n<=6)? n : Math.ceil(n/2); }
 function handleSelectKey(code){
   if(selPending) return;
   if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
-  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length, pr=charsPerRow(n);   // Teddington/Cóndor are PVP-only
+  const list=pvpPending?PVP_CHAR_LIST:hordaRoster(), n=list.length, pr=charsPerRow(n);   // Teddington/Cóndor are PVP-only
   if(selMode===1){
     if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+n-1)%n;
     else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%n;
@@ -4956,7 +4988,7 @@ function drawSelect(){
   ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
-  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;
+  const list=pvpPending?PVP_CHAR_LIST:hordaRoster(), n=list.length;
   // two rows once the roster outgrows one: originals on top, the new characters underneath
   const perRow=charsPerRow(n), rows=Math.ceil(n/perRow);
   const cw=(rows>1)?160:((n>4)?160:200), gap=(rows>1)?16:((n>4)?16:26), rowGap=12;
@@ -5004,7 +5036,7 @@ function enterNetSelect(){
   netSelT=0; state=STATE.NETSELECT;
 }
 function updateNetSelect(dt){
-  updateChoosers(dt, CHAR_LIST);   // horda roster: the original four only
+  updateChoosers(dt, hordaRoster());   // horda = originals · Modo Infinito = newcomers
   const act=players.filter(pl=>!pl.departed);
   if(act.length && act.every(pl=>pl.selKind)){
     netSelT+=dt;
@@ -5034,7 +5066,7 @@ function startGame(){
     const total=Math.min(4, Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-    for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
+    for(let i=0;i<total;i++){ const R=hordaRoster(); players.push(makePlayer(R[i]||R[0], sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
     if(netSelPicks){ for(let i=0;i<players.length && i<netSelPicks.length;i++){ if(netSelPicks[i]) reassignKind(players[i], netSelPicks[i]); } netSelPicks=null; }
     else randomizeOnlineChars();   // fallback only — the lobby now goes through the NETSELECT pick screen
@@ -5045,10 +5077,7 @@ function startGame(){
     players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
-  else if(survival){                       // Modo Infinito — no Cóndor / countdown; offline gets the cinematic intro
-    if(NET.role==='local'){ state=STATE.PLAY; playLasPalmasIntro(startSurvival); }   // hold on PLAY under the video, then start
-    else startSurvival();                  // online: skip the video so guests aren't left waiting
-  }
+  else if(survival){ startSurvival(); }    // Modo Infinito — no Cóndor / countdown (intro video already played at map select)
   else startIntro();
 }
 
@@ -5990,7 +6019,7 @@ function _frameBody(now){
     // horda pre-game pick phase: replicated as its own packet type ({_nsel}) — render and return
     if(NET.nsel){
       const L=(NET.nsel.list||[]).map(e=>({kind:e.kind, selKind:e.skd?e.kind:null, selCur:e.sc||0, departed:!!e.dp}));
-      safe('nselDraw',()=>drawCharsPick(CHAR_LIST, L, NET.slot, false, {bg:'banner', title:'HORDA — ELIGE TU PERSONAJE'}));
+      safe('nselDraw',()=>drawCharsPick(hordaRoster(), L, NET.slot, false, {bg:'banner', title:(currentMap==='laspalmas'?'MODO INFINITO':'HORDA')+' — ELIGE TU PERSONAJE'}));
       requestAnimationFrame(frame); return;
     }
     if(!NET.guestReady){ safe('guestwait',drawGuestWaiting); requestAnimationFrame(frame); return; }
@@ -6025,7 +6054,7 @@ function _frameBody(now){
   if(state===STATE.MAINMENU){ drawMainMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MODOS){ drawModos(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAPAS){ drawMapas(); ctx.restore(); requestAnimationFrame(frame); return; }
-  if(state===STATE.NETSELECT){ drawCharsPick(CHAR_LIST, players, 0, false, {bg:'banner', title:'HORDA — ELIGE TU PERSONAJE'}); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.NETSELECT){ drawCharsPick(hordaRoster(), players, 0, false, {bg:'banner', title:(currentMap==='laspalmas'?'MODO INFINITO':'HORDA')+' — ELIGE TU PERSONAJE'}); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.HELP){ drawHelp(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MENU){ drawMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.SELECT){ drawSelect(); ctx.restore(); requestAnimationFrame(frame); return; }
@@ -6084,6 +6113,7 @@ function _frameBody(now){
   ctx.restore(); ctx.setTransform(1,0,0,1,0,0); if(_shx||_shy) ctx.translate(_shx,_shy);
   if(currentMap==='stonebridge') safe('snow',()=>drawSnow(dt));
   if(currentMap==='templo' && state!==STATE.PAUSE) safe('debris',()=>drawDebris(dt));
+  if(_LP) safe('lptint',drawLasPalmasTint);   // post-apocalyptic reddish haze over the whole scene
   safe('hud',drawHUD);
   safe('bossbars',drawBossBars);
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
