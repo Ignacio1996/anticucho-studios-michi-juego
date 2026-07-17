@@ -1694,7 +1694,7 @@ function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
-  if(t && turrets.length>before){ t.hp=t.maxhp=90; t.cd=0.4; t.beef=true; }   // destructible: a swarm can bring it down
+  if(t && turrets.length>before){ t.hp=t.maxhp=400; t.cd=0.4; t.beef=true; }   // destructible, but it takes a real siege to bring one down
   sfxTurretShot(); return true;
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
@@ -3137,7 +3137,8 @@ function makeNpc(kind,x,y){
   const n=makePlayer(kind,x,y,null);   // reuse the player shape so drawPlayer/charFrame just work
   n.id=_entId++;                       // stable id for cross-snapshot matching (online replication)
   n.isNpc=true; n.npcState='idle'; n.tagBob=Math.random()*TAU;
-  n.maxhp*=2; n.hp=n.maxhp; n.weapon='pistol';   // double HP, always a pistol
+  n.maxhp *= (activePlayerCount()<=1 ? 3 : 2);   // solo: the ally is your only backup → 3× player HP; co-op/online: 2×
+  n.hp=n.maxhp; n.weapon='pistol';               // always a pistol
   n.aiShootCd=0; n.aiRepathT=0; n.aiWX=x; n.aiWY=y;
   n.aiSide=Math.random()<0.5?-1:1; n.aiStuckT=0; n.aiLX=x; n.aiLY=y; n.aiDetourT=0; n.aiDetourA=0; n.aiReturn=false;
   n.aiTgt=null; n.aiTgtT=0;   // target lock: commit to one enemy ~1s so aim/facing doesn't thrash in a crowd
