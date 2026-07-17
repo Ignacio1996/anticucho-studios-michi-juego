@@ -1027,6 +1027,11 @@ let obstacles = OBST_AMAZONAS;
 // half size, and dying strips ALL your powers (even after a revive).
 const LP_W=3280, LP_H=5880;
 const LP_SPAWN={x:1640, y:1587};          // town centre, by the water tower (player start)
+// Modo Infinito vending machine: save up soles, walk up, buy a random weapon crate. Sits on the plaza
+// in front of the clubhouse. Its lower body is solid (see lpSolidAt); `r` is the buy-interaction radius.
+const LP_VENDING={x:2060, y:498, w:52, h:82, r:82};   // against the clubhouse entrance (left of the glass doors)
+const VENDING_COST=200;                    // soles per random weapon crate — a real save-up (tunable)
+let vendFlash=0;
 const LP_TERRAIN_IMG=new Image(); LP_TERRAIN_IMG.src='assets/laspalmas_terrain.png';   // prop-free ground (background layers flattened)
 const LP_THUMB_IMG=new Image(); LP_THUMB_IMG.src='assets/laspalmas_thumb.png';         // map-select card art
 // Prop instances from the map pack: x,y = sprite CENTER; sy = sort_y (feet line); zt = z_tiebreak;
@@ -1059,7 +1064,11 @@ let LP_COL=null;
 // collision mask already carries. The court's fix is purely visual: it's a flat ground decal (see
 // LP_GROUND_FI) drawn UNDER entities, so the player never disappears behind it while standing on it.
 function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return true; const idx=r*LP_COL_COLS+c; return (LP_COL[idx>>3]>>(idx&7))&1; }
-function lpSolidAt(x,y){ return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL)); }
+function lpSolidAt(x,y){
+  // the vending machine's lower body is solid (players/enemies walk around it, bullets stop on it)
+  if(survival){ const v=LP_VENDING; if(x>v.x-v.w/2 && x<v.x+v.w/2 && y>v.y+26 && y<v.y+v.h) return true; }
+  return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL));
+}
 // Bullets/projectiles fly OVER these water bodies (pool + jacuzzi) even though players/enemies can't
 // walk on them — shoot across the water to enemies on the far side. World-pixel {x,y,w,h}.
 const LP_BULLET_PASS=[{x:595,y:1250,w:345,h:365},{x:800,y:1030,w:150,h:150}];   // pool (incl. stone coping) + jacuzzi: projectiles fly over, movement still blocked
@@ -1188,7 +1197,7 @@ function makePlayer(kind, x, y, controls){
     facing: {x:0, y:1},
     dir:'s', moving:false, animTime:0,
     cooldown: 0, punchAnim: 0, hitFlash:0, shieldFlash:0,
-    alive: true, reviveProgress:0, oro:0, oroCharge:0, wasPunch:false, rioGrabbed:false, fell:false, fallT:0,
+    alive: true, reviveProgress:0, oro:0, oroCharge:0, soles:0, wasPunch:false, rioGrabbed:false, fell:false, fallT:0,
     gear:'none', gearCount:0, wasGear:false,   // boss-drop gadget: 'dinamita' | 'muro' | 'torreta'
     weapon:'pistol', ammo:{}, nadeArmed:false, nadeCharge:0, nadeDir:1,   // Modo Infinito: active weapon + per-weapon ammo counts (pistol unlimited)
     pending:false,   // online: joined mid-round → sits out until the next round begins (no full-HP mid-fight join)
@@ -1243,9 +1252,14 @@ function spawnEnemy(){
   if (round>=5) pool.push('large');
   if (round>=8) pool.push('fast','normal');
   if (round>=11) pool.push('large','fast');
+  // endless: the mix keeps getting nastier — more fast + big enemies the longer you survive
+  if (survival && round>=16) pool.push('fast','large','fast');
+  if (survival && round>=24) pool.push('large','fast','large');
+  if (survival && round>=34) pool.push('fast','large','fast','large');
   let type = pool[randi(0,pool.length-1)];
-  if(type==='large'){            // cap concurrent big leaf-throwers
-    const cap = (activePlayerCount()===1) ? (round>=11?2:1) : (round>=11?5:2);
+  if(type==='large'){            // cap concurrent big leaf-throwers (grows over time in survival)
+    const cap = survival ? Math.min(10, 2+Math.floor(round/6))*Math.max(1,activePlayerCount())
+                         : ((activePlayerCount()===1) ? (round>=11?2:1) : (round>=11?5:2));
     let cur=0; for(const en of enemies){ if(en.type==='large') cur++; }
     if(cur>=cap) type = (round>=3 && Math.random()<0.5) ? 'fast' : 'normal';
   }
@@ -1277,8 +1291,17 @@ function spawnEnemy(){
     else if(edge===2){ x=rand(20,WORLD_W-20); y=WORLD_H-20; }
     else { x=20; y=rand(20,WORLD_H-20); }
   }
-  let scale = 1 + Math.min(round-1,14)*0.05;
-  if(survival) scale += Math.max(0,round-15)*0.02;   // endless: keep toughening past the round-15 cap
+  // Early ramp (rounds 1-15). In endless Modo Infinito, enemies then keep getting MUCH stronger over
+  // REAL time so the run never plateaus: tankier (grenades/mines still one-shot them), harder-hitting,
+  // and a bit faster. This is separate from the ever-climbing spawn cap in updateSurvival.
+  let scale = 1 + Math.min(round-1,14)*0.05;   // hp/dmg base ramp → 1.7 by round 15
+  let dmgScale = scale, spdBonus = 0;
+  if(survival){
+    const overm = Math.max(0, survTime-120)/60;   // minutes survived past a 2-minute grace period
+    scale    += overm*0.55;    // HP climbs steeply and never stops
+    dmgScale += overm*0.13;    // damage climbs more gently so you're not one-shot too early
+    spdBonus  = Math.min(34, overm*3.2);
+  }
   let skin='chu', radius=t.radius, speed=t.speed, leafer=!!t.leafer, archer=false, supay=false, llama=false, ttype=null, tint=t.tint, baseHp=t.hp;
   if(currentMap==='stonebridge'){
     if(type==='normal'){ skin='knight'; }
@@ -1301,7 +1324,7 @@ function spawnEnemy(){
     type, x, y,
     radius: radius,
     hp: baseHp*scale*mcfg.hpMul, maxhp: baseHp*scale*mcfg.hpMul,
-    dmg: t.dmg*scale*mcfg.dmgMul, speed: speed, eye: t.eye, pts: t.pts,
+    dmg: t.dmg*dmgScale*mcfg.dmgMul, speed: Math.round(speed+spdBonus), eye: t.eye, pts: t.pts,
     color: tint || '#6fae35', tint: tint, charge: !!t.charge, leafer: leafer, archer: archer, supay: supay, llama: llama, skin: skin, ttype: ttype, faceRight:true, gvar: randi(0,GIRL_NVAR-1), lvar: randi(0,5), gpvar: randi(0,3), dead:false, deathT:0,
     aiming:0, aimRight:false, shotDone:false, punchAnim:0,
     vx:0, vy:0, stagger:0, hitFlash:0, atkcd:0,
@@ -1619,7 +1642,7 @@ function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
-  if(t && turrets.length>before){ t.hp=t.maxhp=120; t.cd=0.4; t.beef=true; }
+  if(t && turrets.length>before){ t.hp=t.maxhp=90; t.cd=0.4; t.beef=true; }   // destructible: a swarm can bring it down
   sfxTurretShot(); return true;
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
@@ -1628,9 +1651,10 @@ function explodeAt(x,y,radius,frac,owner){
   spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=11; sfxBoom();
   fx_effects.push({kind:'shock', x, y, r:radius, life:0.4, max:0.4});
   for(const e of enemies){ if(e.dead) continue; const d=dist(x,y,e.x,e.y); if(d<radius+(e.footR||e.radius)){
-    e.hp-=e.maxhp*frac; e.hitFlash=0.16; e.stagger=0.3;
+    if(e.boss){ e.hp-=e.maxhp*frac; } else { e.hp=0; }   // grenades wipe out regular enemies instantly; bosses just take a chunk
+    e.hitFlash=0.16; e.stagger=0.3;
     const dd=d||1, k=280*Math.max(0.2,1-d/(radius+40)); e.vx+=(e.x-x)/dd*k; e.vy+=(e.y-y)/dd*k;
-    if(e.hp<=0 && owner) killEnemy(e, owner);
+    if(e.hp<=0) killEnemy(e, owner||null);
   } }
 }
 function throwGrenade(p,power){
@@ -1880,7 +1904,20 @@ const hearts=[];
 const nuggets=[];
 let _gnBag=[];
 function nextGN(){ if(_gnBag.length===0){ _gnBag=[1,2,3,4,5]; for(let i=_gnBag.length-1;i>0;i--){ const j=randi(0,i); const t=_gnBag[i]; _gnBag[i]=_gnBag[j]; _gnBag[j]=t; } } return 'gn'+_gnBag.pop(); }
-function dropNugget(x,y){ nuggets.push({x, y, vx:rand(-40,40), vy:rand(-60,-15), img:nextGN(), bob:Math.random()*TAU, pull:0, life:survival?LP_PICKUP_LIFE:null}); }
+// Modo Infinito drops PERUVIAN SOLES (coins 1/2/5 + a 10-soles bill) instead of gold. Not every kill
+// pays out; you save up and spend at the vending machine. Horda keeps the gold nuggets → ORO nova.
+const SOLES_DENOMS=[[1,55],[5,30],[10,15]];   // [value, weight] — 1 & 5 are coins, 10 is a bill
+const SOL_IMG={}; for(const val of [1,5,10]){ const im=new Image(); im.src='assets/sol_'+val+'.png'; SOL_IMG[val]=im; }
+function pickSol(){ let t=0; for(const d of SOLES_DENOMS) t+=d[1]; let r=Math.random()*t; for(const d of SOLES_DENOMS){ r-=d[1]; if(r<=0) return d[0]; } return 1; }
+const SOLES_DROP_CHANCE=0.45;   // most enemies drop nothing, so the vending machine is a real save-up
+function dropNugget(x,y){
+  if(survival){
+    if(Math.random()>=SOLES_DROP_CHANCE) return;
+    nuggets.push({x, y, vx:rand(-40,40), vy:rand(-60,-15), val:pickSol(), coin:1, bob:Math.random()*TAU, pull:0, life:LP_PICKUP_LIFE});
+  } else {
+    nuggets.push({x, y, vx:rand(-40,40), vy:rand(-60,-15), img:nextGN(), bob:Math.random()*TAU, pull:0, life:null});
+  }
+}
 function updateNuggets(dt){
   for(let i=nuggets.length-1;i>=0;i--){
     const g=nuggets[i]; g.bob+=dt*8;
@@ -1895,17 +1932,32 @@ function updateNuggets(dt){
     }
     g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.9; g.vy*=0.9;
     if(nearest && nd<nearest.radius+11 && !blocked){
-      nearest.oro=Math.min(ORO_MAX,nearest.oro+1); playCoin(); spark(g.x,g.y,'#ffd21a',8,120);
-      if(nearest.oro>=ORO_MAX && nearest.special==='none'){ nearest.special='oro'; nearest.specialCharges=1; floatText(nearest.x,nearest.y-30,'\u00a1PODER DE ORO!','#ff9a2a'); playOroPower(); }
+      if(g.coin){ nearest.soles=(nearest.soles||0)+(g.val||1); playCoin(); spark(g.x,g.y,'#ffe07a',8,120); floatText(g.x,g.y-14,'+'+(g.val||1)+' S/.','#ffe07a'); }
+      else { nearest.oro=Math.min(ORO_MAX,nearest.oro+1); playCoin(); spark(g.x,g.y,'#ffd21a',8,120);
+        if(nearest.oro>=ORO_MAX && nearest.special==='none'){ nearest.special='oro'; nearest.specialCharges=1; floatText(nearest.x,nearest.y-30,'\u00a1PODER DE ORO!','#ff9a2a'); playOroPower(); } }
       nuggets.splice(i,1);
     }
   }
 }
+// a single Peruvian coin (1/5) or the 10-soles bill, from the real art. Coins are small and the same
+// size; the bill is a bit bigger. `sc` scales the whole thing (1 = in-world drop size).
+function drawSol(x,y,val,sc){
+  sc=sc||1; const img=SOL_IMG[val>=10?10:(val>=5?5:1)];
+  const dh=(val>=10?21:26)*sc;   // bill shorter but wider; coins square
+  if(img && img.naturalWidth){ const dw=dh*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, x-dw/2, y-dh/2, dw, dh); return; }
+  // fallback disc/rect until the art loads
+  ctx.save();
+  if(val>=10){ const w=26*sc,h=15*sc; ctx.fillStyle='#2f9068'; rrect(x-w/2,y-h/2,w,h,2); ctx.fill(); ctx.fillStyle='#eaffe0'; ctx.font='bold '+(9*sc)+'px Courier New'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('10',x,y); }
+  else { const r=8*sc; ctx.fillStyle=val>=5?'#cdd0d6':'#c8853a'; ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill(); ctx.fillStyle='#3a2a10'; ctx.font='bold '+(9*sc)+'px Courier New'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(''+val,x,y); }
+  ctx.textBaseline='alphabetic'; ctx.textAlign='left'; ctx.restore();
+}
 function drawNugget(g){
   if(pickupBlinkHide(g.life)) return;
   const oy=(currentMap==='machu')?machuElev(g.x):0;
-  const img=PROP[g.img], y=g.y+Math.sin(g.bob)*2.5+oy;
-  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(g.x,g.y+6+oy,5,2,0,0,TAU); ctx.fill();
+  const y=g.y+Math.sin(g.bob)*2.5+oy;
+  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(g.x,g.y+6+oy,6,2,0,0,TAU); ctx.fill();
+  if(g.coin){ drawSol(g.x,y,g.val||1); if(Math.sin(g.bob*1.7)>0.9) spark(g.x+rand(-6,6), g.y+rand(-6,6), '#fff2b0', 1, 18); return; }
+  const img=PROP[g.img];
   ctx.save(); ctx.shadowColor='#ffd23a'; ctx.shadowBlur=8+4*Math.sin(g.bob);
   if(img && img.naturalWidth){ const h=14, w=h*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, g.x-w/2, y-h/2, w, h); }
   else { ctx.fillStyle='#ffd21a'; ctx.beginPath(); ctx.arc(g.x,y,6,0,TAU); ctx.fill(); }
@@ -1913,6 +1965,50 @@ function drawNugget(g){
   if(Math.sin(g.bob*1.7)>0.85){ spark(g.x+rand(-8,8), g.y+rand(-8,8), '#fff8c0', 1, 20); }
 }
 function drawNuggets(){ for(const g of nuggets) drawNugget(g); }
+// ---- Vending machine: proximity buy of a random weapon crate for soles ----
+function nearVending(p){ const v=LP_VENDING; return survival && p.alive && dist(p.x,p.y, v.x, v.y+v.h*0.5) < v.r; }
+function tryVend(p){
+  if(!nearVending(p)) return false;
+  if((p.soles||0) < VENDING_COST){ floatText(LP_VENDING.x, LP_VENDING.y-40, 'Faltan '+(VENDING_COST-(p.soles||0))+' S/.', '#ff9a7a'); playPlin(); return true; }
+  p.soles-=VENDING_COST; vendFlash=0.5;
+  const kind=pickCrateKind(); giveWeapon(p, kind);   // giveWeapon already floats the weapon name + plays a coin
+  spark(LP_VENDING.x, LP_VENDING.y-6, '#ffe07a', 22, 170); cameraShake=4;
+  return true;
+}
+function drawVending(){
+  const v=LP_VENDING, x=v.x, top=v.y, w=v.w, h=v.h;
+  ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(x, top+h+1, w*0.6, 8, 0,0,TAU); ctx.fill();
+  const lit = vendFlash>0;
+  ctx.fillStyle=lit?'#e05a5a':'#b83a3a'; rrect(x-w/2, top, w, h, 6); ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,0.18)'; rrect(x-w/2, top, 8, h, 6); ctx.fill();
+  ctx.strokeStyle='#5a1a1a'; ctx.lineWidth=2; rrect(x-w/2, top, w, h, 6); ctx.stroke();
+  ctx.fillStyle='#ffe14a'; ctx.font='bold 10px Courier New'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillText('ARMAS', x-8, top+13);
+  // glass window with a weapon crate teaser inside
+  ctx.fillStyle='#16222d'; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.fill();
+  ctx.strokeStyle='#3a5060'; ctx.lineWidth=1; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.stroke();
+  try{ drawWeaponCrate(x-6, top+40, 'rapid'); }catch(e){}
+  ctx.strokeStyle='rgba(255,255,255,0.16)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x-w/2+11, top+24); ctx.lineTo(x-w/2+11, top+h-26); ctx.stroke();
+  // coin column: slot + price screen
+  ctx.fillStyle='#2a2320'; rrect(x+w/2-16, top+20, 12, h-42, 2); ctx.fill();
+  ctx.fillStyle='#ffe14a'; ctx.fillRect(x+w/2-13, top+28, 6, 2);
+  ctx.fillStyle=lit?'#7dffb0':'#0e3b28'; rrect(x+w/2-15, top+38, 10, 14, 1); ctx.fill();
+  ctx.fillStyle=lit?'#0e3b28':'#7dffb0'; ctx.font='bold 7px Courier New'; ctx.fillText('S/', x+w/2-10, top+48);
+  // price plate at the base
+  ctx.fillStyle='#0d1218'; rrect(x-w/2+6, top+h-18, w-12, 13, 2); ctx.fill();
+  ctx.fillStyle='#ffe14a'; ctx.font='bold 9px Courier New'; ctx.fillText(VENDING_COST+' S/.', x, top+h-8);
+  // proximity prompt
+  let near=null; for(const p of players){ if(nearVending(p)){ near=p; break; } }
+  if(near){
+    const canBuy=(near.soles||0)>=VENDING_COST, key=(players.indexOf(near)===0?'F':'.');
+    ctx.font='bold 11px Courier New';
+    const txt=canBuy?('Comprar  ['+key+']'):('Ahorra '+(VENDING_COST-(near.soles||0))+' S/. más');
+    const tw=ctx.measureText(txt).width+16;
+    ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(x-tw/2, top-26, tw, 18, 4); ctx.fill();
+    ctx.fillStyle=canBuy?'#aef7c2':'#ffcf9a'; ctx.fillText(txt, x, top-13);
+  }
+  ctx.textAlign='left';
+}
 function updateHearts(dt){
   for(let i=hearts.length-1;i>=0;i--){
     const h=hearts[i]; h.spin+=dt*5; h.bob+=dt*4;
@@ -2271,7 +2367,7 @@ function updateGear(dt){
   for(const t of turrets){
     if(t.hitFlash>0) t.hitFlash-=dt;
     t.cd-=dt;
-    const trange=t.beef?700:560, treload=t.beef?0.9:3, tspd=t.beef?460:340;
+    const trange=t.beef?640:560, treload=t.beef?1.4:3, tspd=t.beef?460:340;   // beefed turret fires a bit less often (was 0.9s) — less OP
     let aim=null, ad=1e9;
     for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<ad){ad=dd;aim=e;} }
     if(aim) t.ang=Math.atan2(aim.y-(t.y-26), aim.x-t.x);
@@ -2548,11 +2644,11 @@ function updatePlayers(dt){
       else { if(p.wasPunch && p.oroCharge>0 && p.oroCharge<0.28) tryPunch(p); p.oroCharge=0; }
       p.wasPunch = !!ks[c.punch];
     } else { if(ks[c.punch]) tryPunch(p); p.wasPunch=!!ks[c.punch]; }
-    // gear key (F for J1 / . for the rest): boss-drop gadget in Horda; in Modo Infinito it unleashes
-    // the gold ULTIMATE — a golden lightning nova once the ORO meter is full (100/100)
+    // gear key (F for J1 / . for the rest): boss-drop gadget in Horda; in Modo Infinito it buys a
+    // random weapon crate from the vending machine when you're standing next to it (no more gold nova)
     const gkd=!!(c.gear && ks[c.gear]);
     if(gkd && !p.wasGear){
-      if(survival){ if(p.oro>=ORO_MAX){ fireLightning(p,'#ff9a2a',260); spark(p.x,p.y,'#ffe24a',30,220); cameraShake=12; floatText(p.x,p.y-30,'¡ORO DESATADO!','#ff9a2a'); playOroPower(); p.oro=0; p.special='none'; } }
+      if(survival){ tryVend(p); }
       else useGear(p);
     }
     p.wasGear=gkd;
@@ -2753,10 +2849,10 @@ function updateEnemies(dt){
         if(tgt.hp<=0){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
       }
     }
-    // turret melee: 1 hit per swing, 50 hits to bring it down (player contact takes priority above)
+    // turret melee: enemies claw it down with their real contact damage (player contact wins ties above)
     else if(turTgt && e.atkcd<=0 && dist(e.x,e.y,turTgt.x,turTgt.y) < e.radius+20){
       e.atkcd=0.6; if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH;
-      hitTurret(turTgt,1);
+      hitTurret(turTgt, e.dmg||8);
     }
   }
 }
@@ -2907,8 +3003,11 @@ function startSurvival(){
 }
 function updateSurvival(dt){
   survTime+=dt;
+  if(vendFlash>0) vendFlash-=dt;
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(9,15); spawnWeaponCrate(); }   // weapon/ammo crates rain in over time
+  // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
+  // for) — they rain in far less often than before
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(22,40); spawnWeaponCrate(); }
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
@@ -2919,12 +3018,16 @@ function updateSurvival(dt){
   const dtf=survTime*rf;
   round = 1 + Math.floor(dtf/22);   // virtual round drives spawnEnemy's type pool + base scaling
   const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
-  const cap = Math.min(70, Math.round(4 + 4*nParty + dtf*0.11));
+  // The live-enemy cap keeps climbing the longer the run goes (it no longer stops at 70): if you
+  // don't keep killing, the map fills up and eventually becomes impossible. CAP_MAX is only a
+  // performance ceiling, reached deep into a run.
+  const CAP_MAX=240;
+  const cap = Math.min(CAP_MAX, Math.round(8 + 4*nParty + dtf*0.18));
   survSpawnT-=dt;
   if(aliveN<cap && survSpawnT<=0){
-    const burst=(dtf>60 && Math.random()<0.5)?2:1;
+    const burst = dtf>200?3:(dtf>60?2:1);   // spawn faster as the run drags on, so a passive player is quickly swarmed
     for(let i=0;i<burst;i++){ if(enemies.reduce((a,e)=>a+(e.dead?0:1),0)>=cap) break; spawnEnemy(); }
-    survSpawnT = Math.max(0.26, (nParty>=2?0.8:1.05) - dtf*0.004);
+    survSpawnT = Math.max(0.2, (nParty>=2?0.8:1.05) - dtf*0.005);
   }
 }
 
@@ -4389,9 +4492,7 @@ function drawHUD(){
       }
     }
     ctx.font='bold 11px Courier New'; ctx.textAlign='right';
-    if(survival){ const gk=(players.indexOf(p)===0?'F':'.');
-      if(p.oro>=ORO_MAX){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('\u00a1ORO LISTO ['+gk+']!', px+w, 14); } }
-      else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/'+ORO_MAX, px+w, 14); } }
+    if(survival){ ctx.fillStyle='#ffe07a'; ctx.fillText('S/. '+(p.soles||0), px+w, 14); }   // Modo Infinito wallet (soles)
     else if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO '+ORO_MAX+'/'+ORO_MAX+' \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/'+ORO_MAX, px+w, 14); }
     ctx.textAlign='left';
     if(survival) drawPlayerWeapons(p, px, 35, w);
@@ -4862,25 +4963,33 @@ function drawPauseSurvival(){
   }
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('CONTROLES', px+18, wy+10);
   ctx.fillStyle='#6a7a86'; ctx.font='10px Courier New';
-  ctx.fillText('J1: WASD \u00b7 Espacio dispara \u00b7 cambiar arma: E  (o 1-7 / rueda) \u00b7 ORO: F', px+18, wy+30);
-  ctx.fillText('J2: Flechas \u00b7 Coma (,) dispara \u00b7 cambiar arma: / \u00b7 ORO: Punto (.)', px+18, wy+48);
+  ctx.fillText('J1: WASD \u00b7 Espacio dispara \u00b7 cambiar arma: E  (o 1-7 / rueda) \u00b7 comprar: F', px+18, wy+30);
+  ctx.fillText('J2: Flechas \u00b7 Coma (,) dispara \u00b7 cambiar arma: / \u00b7 comprar: Punto (.)', px+18, wy+48);
 
   // ---- PODERES panel (middle) ----
   const mx=488, mw=250;
   ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(mx,py,mw,ph,10); ctx.fill();
   ctx.strokeStyle='rgba(255,210,74,0.32)'; ctx.lineWidth=1.5; ctx.stroke();
   ctx.fillStyle='#ffd24a'; ctx.font='bold 18px Courier New'; ctx.fillText('PODERES', mx+18, py+28);
-  const POW=[['#ff9a2a','ORO','llena 100/100 y pulsa F / . para la nova dorada'],
-             ['#dfeaff','ZAPATILLA','+ velocidad (brilla en el suelo)'],
+  // SOLES showcase \u2014 the real coins/bill up close
+  ctx.fillStyle='#ffe07a'; ctx.font='bold 13px Courier New'; ctx.fillText('SOLES', mx+18, py+50);
+  const coinY=py+84;
+  drawSol(mx+44, coinY, 1, 1.9); drawSol(mx+104, coinY, 5, 1.9); drawSol(mx+178, coinY, 10, 1.9);
+  ctx.fillStyle='#c8d2da'; ctx.font='10px Courier New'; ctx.textAlign='center';
+  ctx.fillText('S/.1', mx+44, coinY+30); ctx.fillText('S/.5', mx+104, coinY+30); ctx.fillText('S/.10', mx+178, coinY+26);
+  ctx.textAlign='left';
+  ctx.fillStyle='#aef7c2'; ctx.font='11px Courier New';
+  wrapText('Junta soles de los enemigos y compra un arma al azar en la M\u00c1QUINA (frente al club) por '+VENDING_COST+' S/. \u2014 pulsa F / .', mx+18, py+128, mw-32, 14);
+  const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
-             ['#8ac24a','CAJAS','sueltan armas y munici\u00f3n']];
-  let my=py+60;
+             ['#8ac24a','CAJAS','arma al azar (aparecen a veces)']];
+  let my=py+206;
   for(const g of POW){
     ctx.fillStyle=g[0]; ctx.beginPath(); ctx.arc(mx+26,my-4,7,0,TAU); ctx.fill();
     ctx.fillStyle=g[0]; ctx.font='bold 14px Courier New'; ctx.fillText(g[1], mx+40, my);
     ctx.fillStyle='#c8d2da'; ctx.font='11px Courier New';
     wrapText(g[2], mx+40, my+16, mw-56, 14);
-    my+=58;
+    my+=46;
   }
   ctx.fillStyle='#ff7a7a'; ctx.font='bold 12px Courier New'; ctx.fillText('\u26a0 Al morir pierdes TODO', mx+18, py+ph-20);
 
@@ -6218,6 +6327,7 @@ function _frameBody(now){
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
+  if(_LP && survival) drawables.push({y:LP_VENDING.y+LP_VENDING.h, x:LP_VENDING.x, sy:LP_VENDING.y+LP_VENDING.h, zt:0, f:drawVending});   // vending machine z-sorts like a prop
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
   if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
   if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
@@ -6374,7 +6484,7 @@ function netSerPlayer(p){
     dir:p.dir, moving:p.moving, animTime:p.animTime, hp:p.hp, maxhp:p.maxhp, speed:p.speed, cd:p.cd,
     alive:p.alive, fell:p.fell, fallT:p.fallT, deathAnim:(p.deathAnim==null?null:p.deathAnim), reviveProgress:p.reviveProgress||0,
     punchAnim:p.punchAnim, hitFlash:p.hitFlash, shieldFlash:p.shieldFlash, shields:p.shields,
-    special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0,
+    special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0, soles:p.soles||0,
     gear:p.gear||'none', gearCount:p.gearCount||0,
     tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, fx:p.facing.x, fy:p.facing.y,
     weapon:p.weapon||'pistol', ammo:p.ammo||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0 };
@@ -6483,7 +6593,7 @@ function netRenderPlayer(sp){
     dir:sp.dir, moving:sp.moving, animTime:sp.animTime, hp:sp.hp, maxhp:sp.maxhp, speed:sp.speed, cd:sp.cd,
     alive:sp.alive, pending:sp.pending, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, reviveProgress:sp.reviveProgress,
     punchAnim:sp.punchAnim, hitFlash:sp.hitFlash, shieldFlash:sp.shieldFlash, shields:sp.shields,
-    special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge,
+    special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge, soles:sp.soles||0,
     gear:sp.gear, gearCount:sp.gearCount,
     tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy},
     weapon:sp.weapon||'pistol', ammo:sp.ammo||{}, nadeArmed:!!sp.nadeArmed, nadeCharge:sp.nadeCharge||0 };
