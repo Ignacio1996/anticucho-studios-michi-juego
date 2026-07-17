@@ -96,6 +96,8 @@ AUDIO_SRC.lpmx1='assets/snd_lp_mx1.mp3';   // Modo Infinito (Las Palmas) music �
 AUDIO_SRC.lpmx2='assets/snd_lp_mx2.mp3';
 AUDIO_SRC.lpmx3='assets/snd_lp_mx3.mp3';
 AUDIO_SRC.camclick='assets/snd_038.mp3';
+// Soles pickup SFX: the 10-soles bill has its own sound; 1 & 5 coins pick a random of 3 takes each time
+AUDIO_SRC.sol_a='assets/snd_sol_a.mp3'; AUDIO_SRC.sol_b='assets/snd_sol_b.mp3'; AUDIO_SRC.sol_c='assets/snd_sol_c.mp3'; AUDIO_SRC.sol10='assets/snd_sol10.mp3';
 AUDIO_SRC.condor_mp_single='assets/snd_039.mp3';
 AUDIO_SRC.condor_mp_coop='assets/snd_040.mp3';
 AUDIO_SRC.mp_round='assets/snd_041.mp3';
@@ -338,6 +340,13 @@ function playPickup(){
   }catch(e){}
 }
 function playCameraClick(){ playSfx(AUDIO_SRC.camclick, 0.5); }
+// soles pickup: 10-bill has its own sound; coins randomize between 3 takes (never the same twice in a row)
+let _lastSolN=0;
+function playSolPickup(val){
+  if(val>=10){ playSfx(AUDIO_SRC.sol10, 0.8); return; }
+  let n; do{ n=randi(1,3); }while(n===_lastSolN); _lastSolN=n;
+  playSfx(AUDIO_SRC[['sol_a','sol_b','sol_c'][n-1]], 0.7);
+}
 function playBeamSound(){
   if(!actx) return;
   try{
@@ -745,6 +754,14 @@ const CHU_SRC={
   sidle:"assets/img_142.png",
 };
 const CHU={}; for(const k in CHU_SRC){ const im=new Image(); im.src=CHU_SRC[k]; im._key=k; CHU[k]=im; }
+// ---- Las Palmas alien enemies (replace the Amazonas chullachaki set in Modo Infinito) ----
+// Grey = average melee (walk 1-2-3-2 + a HIT frame per direction); Slime = small/fast (jelly squish,
+// N/S/E facings); Egg = big floating chrysalis thrower (lobs plasma; N/S/E/SE facings). West = East
+// mirrored. Frames are pre-aligned so feet sit at the cell's centre-bottom.
+const GREY_CELL={w:329,h:270}, SLIME_CELL={w:223,h:180}, EGG_CELL={w:213,h:300};
+const GREY={}; for(const k of ['sw1','sw2','sw3','shit','nw1','nw2','nw3','nhit','ew1','ew2','ew3','ehit']){ const im=new Image(); im.src='assets/enemy_grey_'+k+'.png'; im._key='grey_'+k; GREY[k]=im; }
+const SLIME={}; for(const k of ['s','n','e']){ const im=new Image(); im.src='assets/enemy_slime_'+k+'.png'; im._key='slime_'+k; SLIME[k]=im; }
+const EGG={}; for(const k of ['s','n','e','se']){ const im=new Image(); im.src='assets/enemy_egg_'+k+'.png'; im._key='egg_'+k; EGG[k]=im; }
 const KN_CELL={w:148,h:130};
 const KN_SRC={
   ew1:"assets/img_143.png",
@@ -1313,6 +1330,11 @@ function spawnEnemy(){
     if(type==='fast'){ skin='supay'; radius=14; }
     else if(type==='large'){ skin='supay'; archer=true; supay=true; leafer=false; radius=26; speed=28; baseHp=170; }
   }
+  else if(currentMap==='laspalmas'){   // Modo Infinito aliens
+    if(type==='normal'){ skin='grey'; tint=null; radius=16; }
+    else if(type==='fast'){ skin='slime'; tint=null; radius=13; }   // keeps the fast type's dash
+    else if(type==='large'){ skin='egg'; tint=null; leafer=true; radius=26; speed=32; baseHp=210; }   // floating plasma thrower
+  }
   if(currentMap==='machu') speed=Math.round(speed*1.2);
   enemies.push({
     id:_entId++,
@@ -1438,17 +1460,14 @@ let lpCrateT=10;
 const CRATE_LOOT=[['rapid',5],['fire',3],['grenade',3],['mine',2],['block',3],['torreta',1]];
 function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r=Math.random()*tot; for(const w of CRATE_LOOT){ r-=w[1]; if(r<=0) return w[0]; } return 'rapid'; }
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
-const CRATE_LIFE=22;   // crates fade out if not grabbed, so fresh (varied) ones keep coming
+const CRATE_LIFE=55;   // crates linger a while so a distant one is worth walking to before it fades
 function spawnWeaponCrate(){
-  if(lpItems.filter(it=>it.kind!=='shoe').length>=4) return;   // cap crates on the ground
+  if(lpItems.filter(it=>it.kind!=='shoe').length>=3) return;   // few crates on the ground at once
   const kind=pickCrateKind();
-  // Spawn NEAR a living player so crates are actually reachable — the map is huge (3280×5880) and
-  // fully-random spawns almost never landed near the action, so players only ever stumbled on a few.
-  const alive=players.filter(p=>p.alive);
-  const anchor=alive.length?alive[randi(0,alive.length-1)]:{x:LP_SPAWN.x,y:LP_SPAWN.y};
-  for(let t=0;t<50;t++){
-    const ang=rand(0,TAU), rad=rand(180,470);   // close enough to stay on-screen + reachable
-    const x=clamp(anchor.x+Math.cos(ang)*rad,140,LP_W-140), y=clamp(anchor.y+Math.sin(ang)*rad,140,LP_H-140);
+  // Spawn ANYWHERE on the map (NOT near players) — free crates landing at your feet defeated the point
+  // of saving up for the vending machine. Now they're an occasional find that rewards exploring.
+  for(let t=0;t<60;t++){
+    const x=rand(180,LP_W-180), y=rand(180,LP_H-180);
     if(!lpSolidAt(x,y)){ lpItems.push({id:_entId++, kind, x:Math.round(x), y:Math.round(y), bob:Math.random()*TAU, spawn:0, life:CRATE_LIFE}); return; }
   }
 }
@@ -1481,13 +1500,19 @@ const fx_effects = [];
 const leaves = [];
 function fireLeaf(e,tgt){
   const a=Math.atan2(tgt.y-e.y, tgt.x-e.x);
+  if(e.skin==='egg'){   // the Egg alien lobs a bright light-blue plasma ball — 40% more damage than the rock
+    const oy=(e.skin==='egg')?e.radius*0.5:0;
+    leaves.push({x:e.x, y:e.y-oy, vx:Math.cos(a)*175, vy:Math.sin(a)*175, life:6, spin:0, dmg:17, plasma:true});
+    spark(e.x,e.y-oy,'#8fe0ff',7,110); try{ sfxBeam(); }catch(_e){}
+    return;
+  }
   leaves.push({x:e.x, y:e.y, vx:Math.cos(a)*150, vy:Math.sin(a)*150, life:6, spin:Math.random()*TAU, dmg:12});
   spark(e.x,e.y,'#9a9085',5,70);
 }
 function updateLeaves(dt){
   for(let i=leaves.length-1;i>=0;i--){
     const l=leaves[i];
-    l.x+=l.vx*dt; l.y+=l.vy*dt; l.life-=dt; if(!l.arrow && !l.fire && !l.spit) l.spin+=dt*7;
+    l.x+=l.vx*dt; l.y+=l.vy*dt; l.life-=dt; if(!l.arrow && !l.fire && !l.spit && !l.plasma) l.spin+=dt*7;
     let gone = l.life<=0 || l.x<-20||l.x>WORLD_W+20||l.y<-20||l.y>WORLD_H+20;
     // Paredes Incas stop rocks/arrows/fireballs/spit — the projectile damages the block instead
     if(!gone && incaWalls.length){
@@ -1524,6 +1549,14 @@ function drawLeaves(){
       ctx.restore(); continue;
     }
     if(l.spit){ ctx.fillStyle='rgba(180,210,140,0.45)'; ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.fill(); ctx.fillStyle='#cfe6a0'; ctx.beginPath(); ctx.arc(0,0,4.5,0,TAU); ctx.fill(); ctx.fillStyle='#eef7d0'; ctx.beginPath(); ctx.arc(-1.2,-1.2,2,0,TAU); ctx.fill(); ctx.restore(); continue; }
+    if(l.plasma){   // bright light-blue plasma ball with a glowing halo + sparkle core
+      const pl=2.2*Math.sin(performance.now()/45+l.x);
+      ctx.fillStyle='rgba(120,220,255,0.35)'; ctx.beginPath(); ctx.arc(0,0,12+pl,0,TAU); ctx.fill();
+      ctx.fillStyle='rgba(150,235,255,0.6)'; ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fill();
+      ctx.fillStyle='#bff0ff'; ctx.beginPath(); ctx.arc(0,0,5,0,TAU); ctx.fill();
+      ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.arc(-1.4,-1.4,2.2,0,TAU); ctx.fill();
+      ctx.restore(); continue;
+    }
     ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(0,6,8,3,0,0,TAU); ctx.fill();
     ctx.fillStyle='#7a6f64'; ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fill();
     ctx.fillStyle='#9a9085'; ctx.beginPath(); ctx.arc(-2.5,-2.5,4.5,0,TAU); ctx.fill();
@@ -1927,7 +1960,7 @@ function updateNuggets(dt){
     }
     g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.9; g.vy*=0.9;
     if(nearest && nd<nearest.radius+11 && !blocked){
-      if(g.coin){ nearest.soles=(nearest.soles||0)+(g.val||1); playCoin(); spark(g.x,g.y,'#ffe07a',8,120); floatText(g.x,g.y-14,'+'+(g.val||1)+' S/.','#ffe07a'); }
+      if(g.coin){ nearest.soles=(nearest.soles||0)+(g.val||1); playSolPickup(g.val||1); spark(g.x,g.y,'#ffe07a',8,120); floatText(g.x,g.y-14,'+'+(g.val||1)+' S/.','#ffe07a'); }
       else { nearest.oro=Math.min(ORO_MAX,nearest.oro+1); playCoin(); spark(g.x,g.y,'#ffd21a',8,120);
         if(nearest.oro>=ORO_MAX && nearest.special==='none'){ nearest.special='oro'; nearest.specialCharges=1; floatText(nearest.x,nearest.y-30,'\u00a1PODER DE ORO!','#ff9a2a'); playOroPower(); } }
       nuggets.splice(i,1);
@@ -1951,7 +1984,7 @@ function drawNugget(g){
   const oy=(currentMap==='machu')?machuElev(g.x):0;
   const y=g.y+Math.sin(g.bob)*2.5+oy;
   ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(g.x,g.y+6+oy,6,2,0,0,TAU); ctx.fill();
-  if(g.coin){ drawSol(g.x,y,g.val||1); if(Math.sin(g.bob*1.7)>0.9) spark(g.x+rand(-6,6), g.y+rand(-6,6), '#fff2b0', 1, 18); return; }
+  if(g.coin){ drawSol(g.x,y,g.val||1); return; }   // soles drawn at full opacity, no glint/shine over the design
   const img=PROP[g.img];
   ctx.save(); ctx.shadowColor='#ffd23a'; ctx.shadowBlur=8+4*Math.sin(g.bob);
   if(img && img.naturalWidth){ const h=14, w=h*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, g.x-w/2, y-h/2, w, h); }
@@ -1964,7 +1997,7 @@ function drawNuggets(){ for(const g of nuggets) drawNugget(g); }
 function nearVending(p){ const v=LP_VENDING; return survival && p.alive && dist(p.x,p.y, v.x, v.y+v.h*0.5) < v.r; }
 function tryVend(p){
   if(!nearVending(p)) return false;
-  if((p.soles||0) < VENDING_COST){ floatText(LP_VENDING.x, LP_VENDING.y-40, 'Faltan '+(VENDING_COST-(p.soles||0))+' S/.', '#ff9a7a'); playPlin(); return true; }
+  if((p.soles||0) < VENDING_COST){ floatText(LP_VENDING.x, LP_VENDING.y-40, '¡Sigues misio!', '#ff9a7a'); playPlin(); return true; }
   p.soles-=VENDING_COST; vendFlash=0.5;
   const kind=pickCrateKind(); giveWeapon(p, kind);   // giveWeapon already floats the weapon name + plays a coin
   spark(LP_VENDING.x, LP_VENDING.y-6, '#ffe07a', 22, 170); cameraShake=4;
@@ -1997,7 +2030,7 @@ function drawVending(){
   if(near){
     const canBuy=(near.soles||0)>=VENDING_COST, key=(players.indexOf(near)===0?'F':'.');
     ctx.font='bold 11px Courier New';
-    const txt=canBuy?('Comprar  ['+key+']'):('Ahorra '+(VENDING_COST-(near.soles||0))+' S/. más');
+    const txt=canBuy?('Comprar  ['+key+']'):'Sigues misio';
     const tw=ctx.measureText(txt).width+16;
     ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(x-tw/2, top-26, tw, 18, 4); ctx.fill();
     ctx.fillStyle=canBuy?'#aef7c2':'#ffcf9a'; ctx.fillText(txt, x, top-13);
@@ -2151,7 +2184,9 @@ function killEnemy(e,p){
   if(e.skin==='tourist' && !e.dead){ e.dead=true; e.deathT=0; e.hitFlash=0; e.vx=0; e.vy=0; score+=e.pts; if(e.type==='normal'||e.type==='fast') dropNugget(e.x,e.y); spark(e.x,e.y,e.color||'#fff',12,160); floatText(e.x,e.y-10,'+'+e.pts,'#ffe680'); return; }
   enemies.splice(idx,1);
   score += e.pts;
-  if(survival && !e.boss){ kills++; lpMaybeDrop(e); }
+  if(survival && !e.boss){ kills++; lpMaybeDrop(e);
+    const col=e.skin==='slime'?'#7fe0ff':(e.skin==='egg'?'#a6f0d0':'#d2d5db'); spark(e.x,e.y,col,14,150);   // alien death pop
+  }
   if(e.type==='large' && !survival){ hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16}); }   // Horda: big enemies always drop a heart. Modo Infinito governs hearts via lpMaybeDrop instead.
   if(e.boss){
     for(let k=0;k<80;k++) spark(e.x+rand(-40,40), e.y+rand(-54,20), ['#ffd24a','#ff7a3a','#ffffff','#ff5050','#ffe24a'][randi(0,4)], 1, 260);
@@ -2833,7 +2868,7 @@ function updateEnemies(dt){
 
     // contact damage (Cuarzo shields absorb whole hits)
     if(tgt && d < e.radius+tgt.radius+2 && e.atkcd<=0){
-      e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } tgt.hitFlash=1.0; cameraShake=4;
+      e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); } tgt.hitFlash=1.0; cameraShake=4;
       if(tgt.shields>0){
         tgt.shields--; tgt.shieldFlash=0.25;
         spark(tgt.x,tgt.y,'#7fd4ff',12,150);
@@ -3002,7 +3037,7 @@ function updateSurvival(dt){
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(22,40); spawnWeaponCrate(); }
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(30,55); spawnWeaponCrate(); }
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
@@ -3747,6 +3782,29 @@ function drawPlayer(p){
   // (character name tags intentionally omitted)
 }
 
+// Grey: 1-2-3-2 walk ping-pong, or the HIT frame while its attack animation plays. (W = E mirrored.)
+function greyFrame(e){
+  const d=e.dir||'s';
+  if(e.hitAnim>0){ if(d==='n') return {img:GREY.nhit,flip:false}; if(d==='s') return {img:GREY.shit,flip:false}; return {img:GREY.ehit,flip:(d==='w')}; }
+  const idx=[0,1,2,1][Math.floor(e.animTime/0.16)%4];
+  if(d==='n') return {img:[GREY.nw1,GREY.nw2,GREY.nw3][idx],flip:false};
+  if(d==='s') return {img:[GREY.sw1,GREY.sw2,GREY.sw3][idx],flip:false};
+  return {img:[GREY.ew1,GREY.ew2,GREY.ew3][idx],flip:(d==='w')};
+}
+// Slime: single frame per facing; the jelly squish is applied in drawEnemy.
+function slimeFrame(e){ const d=e.dir||'s'; if(d==='n') return {img:SLIME.n,flip:false}; if(d==='s') return {img:SLIME.s,flip:false}; return {img:SLIME.e,flip:(d==='w')}; }
+// Egg: faces the nearest player, collapsed to the 4 art frames (SE mirrored for SW).
+function eggFrame(e){
+  const tgt=nearestPlayer(e).p; let dx=0,dy=1; if(tgt){ dx=tgt.x-e.x; dy=tgt.y-e.y; }
+  const flip=dx<0, ax=Math.abs(dx), ay=Math.abs(dy);
+  let key;
+  if(dy<0 && ay>ax) key='n';
+  else if(ax>ay*1.8) key='e';
+  else if(dy>0 && ax<ay*0.5) key='s';
+  else if(dy>0) key='se';
+  else key='e';
+  return {img:EGG[key], flip};
+}
 function chuFrame(e){
   const d=e.dir, S=CHU;
   if(!e.moving){
@@ -4336,15 +4394,24 @@ function drawEnemy(e){
   else if(e.skin==='tourist'){ const T=TOURDATA[e.ttype]||TOURDATA.girl, tf=tourFrame(e); let tim=T.img[tf.key]; const tv=TOUR_VARC[e.ttype]; if(tv && tv[e.gvar||0] && tv[e.gvar||0][tf.key] && tv[e.gvar||0][tf.key].naturalWidth) tim=tv[e.gvar||0][tf.key]; fr={img:tim, flip:tf.flip}; CELL=T.cell; dhm=3.5; }
   else if(e.skin==='guinea'){ const gf=guineaFrame(e); let gim=GUINEA_IMG[gf.key]; if((e.gpvar||0)>0 && GUINEA_VARC[e.gpvar-1]){ const vi=GUINEA_VARC[e.gpvar-1][gf.key]; if(vi && vi.naturalWidth) gim=vi; } fr={img:gim, flip:gf.flip}; CELL=GUINEA_CELL; dhm=2.7; }
   else if(e.skin==='llama'){ const lf=llamaFrame(e); let lim=LLAMA_IMG[lf.key]; const lv=LLAMA_VARC[e.lvar||0]; if(lv && lv[lf.key] && lv[lf.key].naturalWidth) lim=lv[lf.key]; fr={img:lim, flip:lf.flip}; CELL=LLAMA_CELL; dhm=3.7; }
+  else if(e.skin==='grey'){ fr=greyFrame(e); CELL=GREY_CELL; dhm=3.4; }
+  else if(e.skin==='slime'){ fr=slimeFrame(e); CELL=SLIME_CELL; dhm=2.6; }
+  else if(e.skin==='egg'){ fr=eggFrame(e); CELL=EGG_CELL; dhm=3.2; }
   else { fr=chuFrame(e); CELL=CHU_CELL; dhm=2.9; }
   const ready = fr.img && (fr.img.naturalWidth||fr.img.width);
   let img=fr.img;
-  if(ready && e.tint && e.skin!=='llama' && e.skin!=='tourist' && e.skin!=='guinea') img=tinted(fr.img, fr.img._key, e.tint);
+  if(ready && e.tint && e.skin!=='llama' && e.skin!=='tourist' && e.skin!=='guinea' && e.skin!=='grey' && e.skin!=='slime' && e.skin!=='egg') img=tinted(fr.img, fr.img._key, e.tint);
+  // alien flourishes: the egg levitates (bob above its shadow), the slime jiggles like jelly on the spot
+  let hover=0, sqx=1, sqy=1;
+  if(e.skin==='egg'){ hover = r*0.5 + Math.sin(time*2.2 + (e.wob||0))*3.2; }
+  else if(e.skin==='slime'){ const s=0.13*Math.sin(time*7 + (e.wob||0)); sqx=1+s; sqy=1-s; }
   const DH=r*dhm, DW=DH*(CELL.w/CELL.h);
-  const top=e.y + r - DH, dx=e.x - DW/2;
+  const feetY=e.y + r - hover;
+  const top=feetY - DH, dx=e.x - DW/2;
   if(ready){
     ctx.save();
     if(fr.flip){ ctx.translate(e.x,0); ctx.scale(-1,1); ctx.translate(-e.x,0); }
+    if(sqx!==1||sqy!==1){ ctx.translate(e.x, feetY); ctx.scale(sqx,sqy); ctx.translate(-e.x,-feetY); }
     ctx.drawImage(img, dx, top, DW, DH);
     if(e.hitFlash>0 && !e.dead){ ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.65; ctx.drawImage(img,dx,top,DW,DH); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over'; }
     if(e.burnT>0 && !e.dead){ ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.32+0.18*Math.sin(time*20+e.x); ctx.fillStyle='#ff7a1a'; ctx.beginPath(); ctx.ellipse(e.x,e.y+r*0.3,DW*0.4,DH*0.55,0,0,TAU); ctx.fill(); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over'; }
@@ -4974,7 +5041,7 @@ function drawPauseSurvival(){
   ctx.fillText('S/.1', mx+44, coinY+30); ctx.fillText('S/.5', mx+104, coinY+30); ctx.fillText('S/.10', mx+178, coinY+26);
   ctx.textAlign='left';
   ctx.fillStyle='#aef7c2'; ctx.font='11px Courier New';
-  wrapText('Junta soles de los enemigos y compra un arma al azar en la M\u00c1QUINA (frente al club) por '+VENDING_COST+' S/. \u2014 pulsa F / .', mx+18, py+128, mw-32, 14);
+  wrapText('Junta soles de los enemigos y compra un arma al azar en la M\u00c1QUINA (frente al clubhouse) por '+VENDING_COST+' S/. \u2014 pulsa F / .', mx+18, py+128, mw-32, 14);
   const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
              ['#8ac24a','CAJAS','arma al azar (aparecen a veces)']];
