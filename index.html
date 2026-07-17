@@ -3020,6 +3020,43 @@ function playLasPalmasIntro(onDone){
   try{ v.currentTime=0; }catch(e){}
   const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>finish());   // autoplay blocked → start the round
 }
+// ---- Online Modo Infinito intro: everyone watches, only the host can skip ----
+// The data channel is UNRELIABLE, so we don't fire one-shot start/stop messages: the host
+// heartbeats {_introNet:1} every frame while its clip plays, and each guest ends its own clip
+// the instant the first real gameplay snapshot arrives (the host resumes broadcasting those the
+// moment its intro finishes or is skipped). That survives dropped packets in both directions.
+let netIntroAccum=0;
+function netBroadcastIntro(dt){
+  if(NET.role!=='host' || !NET.conns.length) return;
+  netIntroAccum+=dt; if(netIntroAccum<0.08) return; netIntroAccum=0;   // ~12×/s is plenty for a start cue
+  for(const g of NET.conns){ try{ if(g.conn && g.conn.open) g.conn.send({_introNet:1}); }catch(e){} }
+}
+function playIntroGuest(){
+  if(introPlaying) return;   // idempotent — repeated heartbeats mustn't restart the clip
+  const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
+  if(!v) return;
+  NET.nsel=null; NET.snap=null; NET.guestReady=false;   // leave the pick screen; wait for gameplay after
+  introPlaying=true; introSkip=null;                    // guests can't skip — the host controls the clip
+  try{ silenceAllMusic(); }catch(e){}
+  boostIntroAudio(v);
+  v.muted=false; v.volume=1;
+  v.style.display='block'; if(skip) skip.style.display='none';   // no SALTAR button for guests
+  v.onended=endIntroGuest; v.onerror=endIntroGuest;
+  try{ v.load(); v.currentTime=0; }catch(e){}
+  const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>{});   // blocked → just hold on the first frame until snapshots arrive
+}
+function endIntroGuest(){
+  const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
+  introPlaying=false; introSkip=null;
+  try{ if(v){ v.pause(); v.onended=v.onerror=null; v.style.display='none'; } }catch(e){}
+  if(skip) skip.style.display='none';
+}
+// Host path from startGame(): roll the intro (with a working SALTAR), telling guests to roll theirs,
+// then drop into the survival round once the clip ends or the host skips.
+function hostIntroThenSurvival(){
+  netIntroAccum=0;
+  playLasPalmasIntro(()=>{ startSurvival(); });   // netBroadcastIntro (host frame) cues guests while introPlaying
+}
 // Las Palmas apocalyptic atmosphere: a subtle warm-red multiply + faint red mist + soft dark-red
 // vignette, matching the alien-invasion intro. Kept light so the map stays readable.
 function drawLasPalmasTint(){
@@ -5491,7 +5528,10 @@ function startGame(){
     players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
-  else if(survival){ startSurvival(); }    // Modo Infinito — no Cóndor / countdown (intro video already played at map select)
+  // Online host: the intro didn't play at map-select (that path went straight to the lobby), so play it
+  // here for everyone — the host watches + can skip, and guests mirror it (netBroadcastIntro / netOnSnapshot).
+  else if(survival && NET.hosting){ hostIntroThenSurvival(); }
+  else if(survival){ startSurvival(); }    // offline Modo Infinito — intro already played at map select
   else startIntro();
 }
 
@@ -6425,8 +6465,9 @@ function _frameBody(now){
   for(let _i=0;_i<40;_i++) ctx.restore();
   ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
 
-  // Las Palmas cinematic intro is on top of the canvas — freeze the sim (no spawning/dying behind it)
-  if(introPlaying){ requestAnimationFrame(frame); return; }
+  // Las Palmas cinematic intro is on top of the canvas — freeze the sim (no spawning/dying behind it).
+  // Online: the host keeps cueing guests to roll their own copy while its clip plays.
+  if(introPlaying){ if(NET.role==='host') safe('introcast',()=>netBroadcastIntro(dt)); requestAnimationFrame(frame); return; }
 
   // online guest: replicate the host's world from snapshots instead of simulating locally
   if(NET.role==='guest'){
@@ -6722,6 +6763,10 @@ let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
 function netOnSnapshot(d){
+  if(d._introNet){ playIntroGuest(); return; }                 // host is rolling the Modo Infinito intro — mirror it
+  // while our clip is up, ONLY the first real gameplay snapshot ends it (a late/out-of-order pick-screen
+  // or wait packet from just before the intro must NOT cut it short on the unreliable channel)
+  if(introPlaying){ if(d._snap) endIntroGuest(); else return; }
   if(d._wait){ NET.snap=null; NET.nsel=null; NET.guestReady=false; NET.waitState=d.state; pvpInfo=false; return; }
   if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; if(typeof d.you==='number') NET.slot=d.you; netPlayEvts(d); return; }
   if(!d._snap) return;
