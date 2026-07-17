@@ -18,6 +18,9 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style id="netcss">
   #remotevideo{ display:none; position:fixed; inset:0; width:100vw; height:100vh; object-fit:contain; background:#000; image-rendering:pixelated; z-index:50; }
+  #introvideo{ display:none; position:fixed; inset:0; width:100vw; height:100vh; object-fit:contain; background:#000; z-index:80; }
+  #introskip{ display:none; position:fixed; bottom:22px; right:22px; z-index:81; background:rgba(0,0,0,.55); color:#fff; font:bold 15px 'Courier New',monospace; padding:9px 18px; border:2px solid rgba(255,255,255,.7); border-radius:8px; cursor:pointer; letter-spacing:1px; }
+  #introskip:hover{ background:rgba(0,0,0,.8); }
   #netbanner{ display:none; position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:60; background:#2a1f14; color:#e8dcc0; font:13px 'Courier New',monospace; padding:8px 14px; border:2px solid #c0504a; border-radius:6px; }
   #netui{ display:none; position:fixed; top:8px; right:8px; z-index:40; background:rgba(26,20,16,.92); color:#e8dcc0; font:12px 'Courier New',monospace; padding:8px 10px; border:1px solid #5a4632; border-radius:6px; max-width:320px; }
   #netstatus{ margin-bottom:6px; line-height:1.35; }
@@ -43,6 +46,11 @@
 </div>
 <div class="hint">J1: WASD + Espacio &nbsp;|&nbsp; J2: Flechas + Coma &nbsp;|&nbsp; Esc: Pausa</div>
 <video id="remotevideo" autoplay playsinline muted></video>
+<video id="introvideo" playsinline preload="none">
+  <source src="assets/laspalmas_intro.mp4" type="video/mp4">
+  <source src="assets/laspalmas_intro.webm" type="video/webm">
+</video>
+<button id="introskip">SALTAR ▶▶</button>
 <div id="netbanner"></div>
 <div id="netui">
   <div id="netstatus">Iniciando red…</div>
@@ -59,7 +67,7 @@ const W = cv.width, H = cv.height;
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
 let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, pvpMusic=null, actx=null, sfxGain=null, audioStarted=false;
 let lpMx=[], lpMxIdx=0, lpMxNext=-1;   // Las Palmas Modo Infinito playlist (3 tracks, crossfaded in order)
-const LP_MX_VOL=0.42, LP_MX_FADE=3.2;
+const LP_MX_VOL=0.21, LP_MX_FADE=3.2;   // Las Palmas tracks are hot — cap them at half so full slider ≈ old half
 // (the old masterGain/streamDest WebRTC audio tap is gone — guests play their own audio locally)
 let musicVol=0.55, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}   // start music quieter by default (raise it in AJUSTES)
 let pauseView='main', pauseSel=0, setSel=0;
@@ -628,9 +636,12 @@ const CHARS={
       loaded:(m=>()=>!!(m.ew1&&m.ew1.naturalWidth))(NCHAR[nm]), base:{...A.base} };
   }
 }
-const CHAR_LIST=['freddy','michi','sumac','shooshy','alfredo','mati','sebas','vannucci','flash'];
-// PVP roster ordered so the two-row pick screen groups the original six on top, the newcomers below
+const CHAR_LIST=['freddy','michi','sumac','shooshy'];                 // Horda roster
+const SURV_CHAR_LIST=['alfredo','mati','sebas','vannucci','flash'];   // Modo Infinito roster (the five newcomers)
+// PVP roster: EVERY character is playable (includes Teddington + Cóndor)
 const PVP_CHAR_LIST=['freddy','michi','sumac','shooshy','teddington','condor','alfredo','mati','sebas','vannucci','flash'];
+// the pick-screen roster depends on the mode: Modo Infinito (Las Palmas) uses the newcomers, Horda the originals
+function hordaRoster(){ return currentMap==='laspalmas' ? SURV_CHAR_LIST : CHAR_LIST; }
 let selMode=1, selCursor1=0, selCursor2=1, selChar1=null, selChar2=null, modTest=false, selPending=false, selStartTimer=0;
 function charFrame(p){
   const C=CHARS[p.kind], S=C.S, d=p.dir;
@@ -809,13 +820,23 @@ const NET = { role:'local', peer:null, conn:null, conns:[], link:'', hosting:fal
   guestReady:false, slot:1, snap:null, guestKeys:null, waitState:'' };                 // guest: replicated-state fields
 addEventListener('keydown', e => {
   initAudio();
+  // Las Palmas intro is playing: swallow all input; Space/Enter/Esc skip the clip, nothing drives the menu behind it
+  if(introPlaying){ e.preventDefault(); if(introSkip && (e.code==='Space'||e.code==='Enter'||e.code==='Escape')) introSkip(); return; }
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Comma'].includes(e.code)) e.preventDefault();
   if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && (pvp.paused||pvpInfo) && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
   // Modo Infinito weapon switch: number keys 1..N pick a slot for the local player
-  if(survival && state===STATE.PLAY && e.code && e.code.indexOf('Digit')===0){
-    const n=+e.code.slice(5)-1; const lp=players[NET.role==='guest'?NET.slot:0];
-    if(lp && n>=0 && n<WEAPON_ORDER.length){ switchWeapon(lp, WEAPON_ORDER[n]); if(NET.role==='guest') NET.guestWeapon=lp.weapon; }
+  if(survival && state===STATE.PLAY){
+    const lp=players[NET.role==='guest'?NET.slot:0];
+    // number keys select the Nth weapon you actually own (matches the on-screen strip order)
+    if(lp && e.code && e.code.indexOf('Digit')===0){
+      const n=+e.code.slice(5)-1, own=WEAPON_ORDER.filter(k=>weaponOwned(lp,k));
+      if(n>=0 && n<own.length){ lp.weapon=own[n]; if(NET.role==='guest') NET.guestWeapon=lp.weapon; }
+    }
+    // local co-op: P2 (arrows) has no number row, so Slash / RightShift cycle their weapon
+    if(NET.role!=='guest' && players[1] && (e.code==='Slash'||e.code==='ShiftRight')){ cycleWeapon(players[1], 1); }
+    // P1 can also cycle with Q / E without reaching for the number row
+    if(NET.role!=='guest' && players[0] && (e.code==='KeyQ'||e.code==='KeyE')){ cycleWeapon(players[0], e.code==='KeyQ'?-1:1); }
   }
   // menu/shop interactions
   handleMenuKey(e.code);
@@ -991,7 +1012,7 @@ function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return t
 function lpSolidAt(x,y){ return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL)); }
 // Bullets/projectiles fly OVER these water bodies (pool + jacuzzi) even though players/enemies can't
 // walk on them — shoot across the water to enemies on the far side. World-pixel {x,y,w,h}.
-const LP_BULLET_PASS=[{x:630,y:1260,w:240,h:345},{x:805,y:1035,w:140,h:140}];
+const LP_BULLET_PASS=[{x:595,y:1250,w:345,h:365},{x:800,y:1030,w:150,h:150}];   // pool (incl. stone coping) + jacuzzi: projectiles fly over, movement still blocked
 function lpBulletPass(x,y){ for(const r of LP_BULLET_PASS){ if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h) return true; } return false; }
 // push a circle entity out of any solid grid cells it overlaps (2 passes for stability)
 function lpResolve(ent){
@@ -1022,9 +1043,25 @@ function lpResolve(ent){
 // survival run state
 let survival=false, survTime=0, survSpawnT=0, kills=0;
 let lpBestScore=0; try{ lpBestScore=(+localStorage.getItem('fm_laspalmas_best'))||0; }catch(e){}
+// Local Modo Infinito leaderboard (top 20 kept; top 10 shown). A Cloudflare-backed global board can
+// sync into fm_lp_board later — the render only cares about the {name,score} shape.
+let lpBoardCache=null;
+function lpLoadBoard(){ if(lpBoardCache) return lpBoardCache; let a=[]; try{ a=JSON.parse(localStorage.getItem('fm_lp_board')||'[]'); }catch(e){} if(!Array.isArray(a)) a=[]; lpBoardCache=a; return a; }
+function lpTop10(){
+  const arr=lpLoadBoard().slice();
+  if(kills>0) arr.push({name:'TÚ (ahora)', score:kills, _live:true});   // show where the live run would rank
+  arr.sort((a,b)=>b.score-a.score);
+  return arr.slice(0,10);
+}
+function lpSaveScore(name,score){
+  const arr=lpLoadBoard();
+  arr.push({name:((name||'---').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()||'---').slice(0,10), score:score|0, t:0});
+  arr.sort((a,b)=>b.score-a.score); lpBoardCache=arr.slice(0,20);
+  try{ localStorage.setItem('fm_lp_board', JSON.stringify(lpBoardCache)); }catch(e){}
+}
 function stripPowers(p){   // death wipes every buff — you re-earn them from scratch
   p.tierra=0; p.piedra=0; p.shields=0; p.special='none'; p.specialCharges=0; p.oro=0; p.oroCharge=0; p.rioGrabbed=false;
-  p.weapon='pistol'; p.ammo={};   // death drops you back to the basic pistol, loses all weapon ammo
+  p.weapon='pistol'; p.ammo={}; p.nadeArmed=false; p.nadeCharge=0;   // death drops you back to the basic pistol, loses all weapon ammo
 }
 
 
@@ -1103,7 +1140,7 @@ function makePlayer(kind, x, y, controls){
     cooldown: 0, punchAnim: 0, hitFlash:0, shieldFlash:0,
     alive: true, reviveProgress:0, oro:0, oroCharge:0, wasPunch:false, rioGrabbed:false, fell:false, fallT:0,
     gear:'none', gearCount:0, wasGear:false,   // boss-drop gadget: 'dinamita' | 'muro' | 'torreta'
-    weapon:'pistol', ammo:{},   // Modo Infinito: active weapon + per-weapon ammo counts (pistol unlimited)
+    weapon:'pistol', ammo:{}, nadeArmed:false, nadeCharge:0, nadeDir:1,   // Modo Infinito: active weapon + per-weapon ammo counts (pistol unlimited)
     pending:false,   // online: joined mid-round → sits out until the next round begins (no full-HP mid-fight join)
   };
 }
@@ -1120,7 +1157,7 @@ function reassignKind(p, kind){
   p.dmg=base.dmg; p.knock=base.knock; p.speed=base.speed; p.cd=base.cd;
 }
 function shuffledChars(){
-  const a=CHAR_LIST.slice();
+  const a=hordaRoster().slice();
   for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; }
   return a;
 }
@@ -1467,15 +1504,26 @@ function tryShoot(p){
 // --- Modo Infinito placeables: mines, concrete blocks, beefed turrets ---
 const mines=[];
 function placeMine(p){
-  mines.push({ id:_entId++, x:Math.round(p.x), y:Math.round(p.y), arm:0.6, owner:players.indexOf(p) });
-  spark(p.x,p.y,'#ff5a4a',8,90); sfxPlace(); floatText(p.x,p.y-24,'MINA',' #ff8a6a'); return true;
+  mines.push({ id:_entId++, x:Math.round(p.x), y:Math.round(p.y), arm:1.0, owner:players.indexOf(p) });   // ~1s to arm
+  spark(p.x,p.y,'#ff5a4a',8,90); sfxPlace(); floatText(p.x,p.y-24,'MINA','#ff8a6a'); return true;
+}
+// a mine wipes out everything caught in the blast outright (bosses just take a heavy hit)
+function mineBlast(x,y,owner){
+  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=12; sfxBoom();
+  fx_effects.push({kind:'shock', x, y, r:120, life:0.4, max:0.4});
+  const ow=players[owner], bossDmg=ow?effDmg(ow)*2.5:70;
+  for(const e of enemies){ if(e.dead) continue; if(dist(x,y,e.x,e.y)<120+(e.footR||e.radius)){
+    if(e.boss){ e.hp-=bossDmg; } else { e.hp=0; }
+    e.hitFlash=0.16; e.stagger=0.3; spark(e.x,e.y,'#ff9a2a',6,140);
+    if(e.hp<=0){ e.hp=0; killEnemy(e, ow); }
+  } }
 }
 function updateMines(dt){
   for(let i=mines.length-1;i>=0;i--){ const m=mines[i];
     if(m.arm>0){ m.arm-=dt; continue; }
     let boom=false;
     for(const e of enemies){ if(!e.dead && dist(m.x,m.y,e.x,e.y)<(e.footR||e.radius)+16){ boom=true; break; } }
-    if(boom){ explodeAt(m.x,m.y,105,0.7,players[m.owner]); mines.splice(i,1); }
+    if(boom){ mineBlast(m.x,m.y,m.owner); mines.splice(i,1); }
   }
 }
 function drawMines(){
@@ -1514,9 +1562,11 @@ function explodeAt(x,y,radius,frac,owner){
     if(e.hp<=0 && owner) killEnemy(e, owner);
   } }
 }
-function throwGrenade(p){
+function throwGrenade(p,power){
+  power=(power==null?1:clamp(power,0,1));
   let fx=p.facing.x, fy=p.facing.y; if(!fx&&!fy){fy=1;} const l=Math.hypot(fx,fy)||1; fx/=l; fy/=l;
-  grenades.push({ id:_entId++, x:p.x, y:p.y, vx:fx*430, vy:fy*430, fuse:0.9, owner:players.indexOf(p) });
+  const spd=250+power*440;                     // charge maps to launch speed (250..690)
+  grenades.push({ id:_entId++, x:p.x, y:p.y, vx:fx*spd, vy:fy*spd, fuse:0.85+power*0.55, owner:players.indexOf(p) });
 }
 function updateGrenades(dt){
   for(let i=grenades.length-1;i>=0;i--){ const g=grenades[i];
@@ -1535,6 +1585,18 @@ function drawGrenades(){
     ctx.fillStyle='#5a8a3a'; ctx.beginPath(); ctx.arc(g.x-2,g.y-7+bob,2.4,0,TAU); ctx.fill();
     ctx.fillStyle=(Math.floor(time*12)%2?'#ff4a2a':'#ffd24a'); ctx.fillRect(g.x-1,g.y-13+bob,2,3);
     ctx.restore();
+  }
+}
+// power meter floating over any player charging a grenade throw (fills/empties as they hold)
+function drawNadeCharges(){
+  for(const p of players){ if(!p || !p.nadeArmed || !p.alive) continue;
+    const c=clamp(p.nadeCharge||0,0,1), bw=52, bh=7, x=p.x-bw/2, y=p.y-p.radius-30;
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(x-1,y-1,bw+2,bh+2);
+    // colour ramps green→yellow→red as you wind up
+    const col = c<0.5 ? '#8ac24a' : c<0.8 ? '#ffd24a' : '#ff5a2a';
+    ctx.fillStyle=col; ctx.fillRect(x,y,bw*c,bh);
+    ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,bw-1,bh-1);
+    ctx.fillStyle='#fff'; ctx.font='8px Courier New'; ctx.textAlign='center'; ctx.fillText('FUERZA', p.x, y-3); ctx.textAlign='left';
   }
 }
 function updateBullets(dt){
@@ -2164,6 +2226,17 @@ function updateGear(dt){
       if(circleRectCollide(e.x,e.y,(e.footR||e.radius)+6,w)){ e._wallCd=0.5; hitWall(w,80); cameraShake=5; break; }
     }
   }
+  // Modo Infinito: any enemy pressed against a concrete block claws at it (its melee dmg per swing),
+  // so barricades get chewed down instead of just funnelling — enemies still prefer to route around.
+  if(survival) for(const e of enemies){ if(e.boss||e.dead) continue;
+    if(e._wallCd>0){ e._wallCd-=dt; continue; }
+    for(const w of incaWalls){
+      if(circleRectCollide(e.x,e.y,(e.footR||e.radius)+5,w)){
+        e._wallCd=0.55; if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH;
+        hitWall(w, e.dmg||8); break;
+      }
+    }
+  }
 }
 function drawBossDrops(){
   for(const dr of bossDrops){
@@ -2213,6 +2286,7 @@ function drawBombs(){
 }
 function drawIncaBlock(w){
   const f=clamp(w.hp/(w.maxhp||WALL_HP),0,1);
+  if(currentMap==='laspalmas'){ drawConcreteBlock(w,f); return; }             // Modo Infinito uses concrete barricades
   ctx.fillStyle='#b8ad94'; ctx.fillRect(w.x,w.y,w.w,10);                    // sunlit top face
   ctx.fillStyle='#a0937c'; ctx.fillRect(w.x,w.y+10,w.w,w.h-10);            // front face
   ctx.strokeStyle='rgba(70,60,44,0.55)'; ctx.lineWidth=1.5;                // inca masonry joints
@@ -2231,6 +2305,30 @@ function drawIncaBlock(w){
   if(w.hp<w.maxhp){
     ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(w.x+4,w.y-8,w.w-8,4);
     ctx.fillStyle='#d8d2c2'; ctx.fillRect(w.x+4,w.y-8,(w.w-8)*f,4);
+  }
+}
+// grey poured-concrete barricade with a top slab, form-lines and progressive cracks
+function drawConcreteBlock(w,f){
+  ctx.fillStyle='#cfcfca'; ctx.fillRect(w.x,w.y,w.w,9);                       // sunlit top slab
+  ctx.fillStyle='#b0b0aa'; ctx.fillRect(w.x,w.y+9,w.w,w.h-9);               // front face
+  ctx.fillStyle='#9a9a94'; ctx.fillRect(w.x,w.y+w.h-5,w.w,5);               // shaded base
+  // faint aggregate speckle (deterministic from position so it doesn't shimmer)
+  ctx.fillStyle='rgba(90,90,86,0.35)';
+  for(let i=0;i<10;i++){ const sx=w.x+3+((i*37+w.x)%(w.w-6)), sy=w.y+11+((i*53+w.y)%(w.h-14)); ctx.fillRect(sx,sy,1.5,1.5); }
+  ctx.strokeStyle='rgba(70,70,66,0.5)'; ctx.lineWidth=1;                     // formwork panel lines
+  const midY=w.y+9+(w.h-11)/2;
+  ctx.beginPath(); ctx.moveTo(w.x+1.5,midY); ctx.lineTo(w.x+w.w-1.5,midY); ctx.stroke();
+  ctx.strokeStyle='#5a5a54'; ctx.lineWidth=2; ctx.strokeRect(w.x+1,w.y+1,w.w-2,w.h-2);
+  if(f<0.67){ ctx.strokeStyle='rgba(40,40,38,0.75)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(w.x+7,w.y+7); ctx.lineTo(w.x+13,w.y+19); ctx.lineTo(w.x+9,w.y+31); ctx.stroke(); }
+  if(f<0.34){ ctx.strokeStyle='rgba(40,40,38,0.8)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(w.x+w.w-6,w.y+6); ctx.lineTo(w.x+w.w-15,w.y+17); ctx.lineTo(w.x+w.w-8,w.y+30); ctx.stroke();
+    // exposed rebar when nearly broken
+    ctx.strokeStyle='rgba(120,80,50,0.8)'; ctx.beginPath(); ctx.moveTo(w.x+3,w.y+w.h*0.4); ctx.lineTo(w.x+w.w-3,w.y+w.h*0.4); ctx.stroke();
+    ctx.fillStyle='rgba(30,30,28,0.22)'; ctx.fillRect(w.x+2,w.y+2,w.w-4,w.h-4); }
+  if(w.hp<w.maxhp){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(w.x+4,w.y-8,w.w-8,4);
+    ctx.fillStyle='#e6e6e0'; ctx.fillRect(w.x+4,w.y-8,(w.w-8)*f,4);
   }
 }
 // While a player carries Paredes Incas, show a very faint red grid around them plus a clearer
@@ -2335,8 +2433,23 @@ function updatePlayers(dt){
         resolveCollision(p);
       }
     }
-    if(survival){   // Modo Infinito: auto weapons fire while held; the rest are tap-to-fire (no spam-hold)
-      if(state===STATE.PLAY){ const _W=WEAPONS[p.weapon]||WEAPONS.pistol; if(ks[c.punch] && ((_W&&_W.auto) || !p.wasPunch)) tryShoot(p); }
+    if(survival){   // Modo Infinito: auto weapons fire while held; grenades charge on hold; the rest tap-to-fire
+      if(state===STATE.PLAY){
+        const _W=WEAPONS[p.weapon]||WEAPONS.pistol;
+        if(p.weapon==='grenade'){
+          // hold to build a power meter that ping-pongs 0..1; release to lob at that strength
+          if(ks[c.punch]){
+            if(!p.nadeArmed && p.cooldown<=0 && (p.ammo&&p.ammo.grenade>0)){ p.nadeArmed=true; p.nadeCharge=0; p.nadeDir=1; }
+            if(p.nadeArmed){ p.nadeCharge+=p.nadeDir*dt*1.5; if(p.nadeCharge>=1){p.nadeCharge=1;p.nadeDir=-1;} else if(p.nadeCharge<=0){p.nadeCharge=0;p.nadeDir=1;} }
+          } else if(p.nadeArmed){
+            p.nadeArmed=false; throwGrenade(p, p.nadeCharge); consumeAmmo(p,'grenade'); sfxLaunch();
+            p.cooldown=WEAPONS.grenade.cd; p.punchAnim=CHARS[p.kind].pd; p.nadeCharge=0;
+          }
+        } else {
+          p.nadeArmed=false;
+          if(ks[c.punch] && ((_W&&_W.auto) || !p.wasPunch)) tryShoot(p);
+        }
+      }
       p.wasPunch=!!ks[c.punch];
     }
     else if(p.special==='oro'){
@@ -2632,8 +2745,58 @@ function startBreak(){
 }
 
 // ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
+// Las Palmas cinematic intro: fullscreen video (with its own audio) that plays every time you enter
+// the map, then hands off to the round. Skippable. If the asset is missing it silently starts the game,
+// so the mode always works even before the video file is added.
+let introPlaying=false, introSkip=null;   // introSkip: call to end the clip early (SALTAR button or a key)
+function playLasPalmasIntro(onDone){
+  const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
+  if(!v){ onDone(); return; }
+  let done=false, watchdog=0;
+  const finish=()=>{ if(done) return; done=true; introPlaying=false; introSkip=null; if(watchdog) clearTimeout(watchdog);
+    try{ v.pause(); v.onended=v.onerror=v.onplaying=null; }catch(e){}
+    v.style.display='none'; if(skip){ skip.style.display='none'; skip.onclick=null; }
+    onDone();   // caller decides what plays next (character select re-starts the map music)
+  };
+  introSkip=finish;
+  try{ lpMusicStop(); }catch(e){}      // duck the map music while the clip plays
+  introPlaying=true;
+  v.muted=false; v.volume=1;
+  v.style.display='block'; if(skip){ skip.style.display='block'; skip.onclick=finish; }
+  v.onended=finish; v.onerror=finish;   // decode error → just start the round
+  // <source> children don't reliably bubble an 'error' to the video, so a watchdog covers a total
+  // failure (missing files / stalled). 'playing' means it started fine and cancels the watchdog.
+  v.onplaying=()=>{ if(watchdog){ clearTimeout(watchdog); watchdog=0; } };
+  watchdog=setTimeout(()=>{ if(!done && v.paused && (v.currentTime||0)<0.05) finish(); }, 8000);
+  try{ v.load(); }catch(e){}            // reset to the start + pick a playable <source> (mp4 or webm)
+  try{ v.currentTime=0; }catch(e){}
+  const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>finish());   // autoplay blocked → start the round
+}
+// Las Palmas apocalyptic atmosphere: a subtle warm-red multiply + faint red mist + soft dark-red
+// vignette, matching the alien-invasion intro. Kept light so the map stays readable.
+function drawLasPalmasTint(){
+  ctx.save();
+  // 1) inject warm red light so even green areas glow reddish (the "mist")
+  ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle='rgba(130,18,10,0.20)';
+  ctx.fillRect(0,0,W,H);
+  // 2) multiply to redden + deepen the midtones/shadows
+  ctx.globalCompositeOperation='multiply';
+  ctx.fillStyle='rgba(255,105,85,0.34)';
+  ctx.fillRect(0,0,W,H);
+  // 3) faint flat red haze
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='rgba(150,25,15,0.10)';
+  ctx.fillRect(0,0,W,H);
+  // 4) soft dark-red vignette for the apocalyptic mood
+  const g=ctx.createRadialGradient(W/2,H*0.46,H*0.26,W/2,H*0.55,H*1.02);
+  g.addColorStop(0,'rgba(40,0,0,0)'); g.addColorStop(1,'rgba(48,0,0,0.42)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.restore();
+}
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
+  try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
 }
 function updateSurvival(dt){
@@ -4103,7 +4266,7 @@ function drawHUD(){
     drawBar(px, 19, w, 12, p.alive?p.hp/p.maxhp:0, '#ff5a4a');
     ctx.fillStyle='#fff'; ctx.font='10px Courier New';
     ctx.fillText(Math.ceil(p.hp)+'/'+p.maxhp, px+4, 29);
-    { // boss-drop gadget status (count + key hint, plus a blinking DETONAR while a bomb is armed)
+    if(!survival){ // boss-drop gadget status (Horda only) — count + key hint, blinking DETONAR while armed
       const pi=players.indexOf(p), gkey=(pi===0?'F':'.');
       const armed=bombs.some(b=>b.owner===pi);
       if(p.gear && p.gear!=='none' && GEAR_DEF[p.gear]){
@@ -4122,33 +4285,30 @@ function drawHUD(){
       else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); } }
     else if(p.special==='oro'){ if(Math.floor(time*3)%2===0){ ctx.fillStyle='#ff9a2a'; ctx.fillText('ORO 50/50 \u00a1FULL!', px+w, 14); } } else { ctx.fillStyle='#ffd21a'; ctx.fillText('ORO '+p.oro+'/50', px+w, 14); }
     ctx.textAlign='left';
-    drawApuStatus(p, px, 48);
+    if(survival) drawPlayerWeapons(p, px, 35, w);
+    else drawApuStatus(p, px, 48);
     px += w+40;
   }
-  if(survival && state===STATE.PLAY) drawWeaponBar();
 }
 
-// bottom-centre inventory: the local player's weapons, ammo counts and the active highlight
-function drawWeaponBar(){
-  const lp = (NET.role==='guest') ? players[NET.slot] : players[0];
-  if(!lp) return;
-  const slots=WEAPON_ORDER.filter(k=>weaponOwned(lp,k));
-  const sw=64, sh=34, gap=6, total=slots.length*sw+(slots.length-1)*gap;
-  let x=(W-total)/2, y=H-sh-12;
-  ctx.textAlign='center';
-  for(let i=0;i<slots.length;i++){
-    const k=slots[i], Wd=WEAPONS[k], active=(lp.weapon===k);
-    ctx.fillStyle=active?'rgba(0,0,0,0.78)':'rgba(0,0,0,0.5)';
-    ctx.fillRect(x,y,sw,sh);
-    ctx.strokeStyle=active?Wd.col:'rgba(255,255,255,0.22)'; ctx.lineWidth=active?2:1;
-    ctx.strokeRect(x+0.5,y+0.5,sw-1,sh-1);
-    ctx.fillStyle=active?'#fff':'rgba(255,255,255,0.55)'; ctx.font='9px Courier New';
-    ctx.fillText((i+1)+' '+Wd.name, x+sw/2, y+13);
-    ctx.font='bold 12px Courier New'; ctx.fillStyle=active?Wd.col:'rgba(255,255,255,0.6)';
-    ctx.fillText(Wd.ammoMax===0?'∞':(''+(lp.ammo&&lp.ammo[k]||0)), x+sw/2, y+27);
-    x+=sw+gap;
+// per-player weapon strip, tucked right under that player's name + health bar
+function drawPlayerWeapons(p, px, y, w){
+  const own=WEAPON_ORDER.filter(k=>weaponOwned(p,k));
+  const cw=22, gap=2;
+  for(let i=0;i<own.length;i++){
+    const k=own[i], Wd=WEAPONS[k], active=(p.weapon===k), x=px+i*(cw+gap);
+    ctx.fillStyle=active?'rgba(0,0,0,0.82)':'rgba(0,0,0,0.42)'; ctx.fillRect(x,y,cw,22);
+    ctx.strokeStyle=active?Wd.col:'rgba(255,255,255,0.2)'; ctx.lineWidth=active?2:1; ctx.strokeRect(x+0.5,y+0.5,cw-1,21);
+    ctx.textAlign='center';
+    ctx.fillStyle=active?Wd.col:'rgba(255,255,255,0.5)'; ctx.font='bold 9px Courier New'; ctx.fillText(''+(i+1), x+cw/2, y+9);
+    ctx.fillStyle=active?'#fff':'rgba(255,255,255,0.55)'; ctx.font='8px Courier New';
+    ctx.fillText(Wd.ammoMax===0?'∞':(''+(p.ammo&&p.ammo[k]||0)), x+cw/2, y+18);
+    ctx.textAlign='left';
   }
-  ctx.textAlign='left';
+  // active weapon name to the right of the strip
+  const Wa=WEAPONS[p.weapon]||WEAPONS.pistol;
+  ctx.fillStyle=Wa.col; ctx.font='bold 10px Courier New';
+  ctx.fillText(Wa.name, px+own.length*(cw+gap)+4, y+15);
 }
 
 function drawBreakUI(){
@@ -4486,6 +4646,7 @@ function drawVolumeSettings(){
 function drawPause(){
   ctx.fillStyle='rgba(0,0,0,0.80)'; ctx.fillRect(0,0,W,H);
   if(pauseView==='settings'){ drawVolumeSettings(); return; }
+  if(survival){ drawPauseSurvival(); return; }
   ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText('PAUSA', W/2, 96);
   ctx.font='13px Courier New'; ctx.fillStyle='#cdbf9a'; ctx.fillText('Pulsa Esc para continuar', W/2, 124);
@@ -4523,9 +4684,12 @@ function drawPause(){
     ctx.textAlign='center'; ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New';
     ctx.fillText('CO-OP: revive a tu compa\u00f1ero par\u00e1ndote 5s sobre su cruz', W/2, 492);
   }
+  drawPauseOptions();
+}
+// shared bottom menu for the pause screen (guest sees a shorter list)
+function drawPauseOptions(){
   ctx.textAlign='center';
   if(NET.role==='guest'){
-    // the shared CONTINUAR unpauses everyone (host-owned), but AJUSTES tunes THIS machine's volumes
     const popts=['CONTINUAR (para todos)','AJUSTES'];
     popts.forEach((o,i)=>{ const oy=H-92+i*30; ctx.fillStyle=i===pauseSel?'#ffe14a':'#bdb190'; ctx.font='bold 18px Courier New'; ctx.fillText((i===pauseSel?'\u25b6 ':'')+o, W/2, oy); });
     ctx.fillStyle='#9a8f75'; ctx.font='11px Courier New'; ctx.fillText('\u2191\u2193 elegir  \u00b7  Enter: seleccionar  \u00b7  Esc: continuar (para todos)', W/2, H-10);
@@ -4535,6 +4699,87 @@ function drawPause(){
   popts.forEach((o,i)=>{ const oy=H-104+i*30; ctx.fillStyle=i===pauseSel?'#ffe14a':'#bdb190'; ctx.font='bold 18px Courier New'; ctx.fillText((i===pauseSel?'\u25b6 ':'')+o, W/2, oy); });
   ctx.fillStyle='#9a8f75'; ctx.font='11px Courier New'; ctx.fillText('\u2191\u2193 elegir  \u00b7  Enter: seleccionar  \u00b7  Esc: continuar', W/2, H-10);
   ctx.textAlign='left';
+}
+// Modo Infinito pause: no apuchis / boss powers \u2014 a graphic weapon + power guide and the top-10 board
+function rrectPath(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function drawPauseSurvival(){
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 32px Courier New'; ctx.fillText('MODO INFINITO', W/2, 58);
+  ctx.fillStyle='#8ad0ff'; ctx.font='13px Courier New'; ctx.fillText('Sobrevive, elimina, sube en la tabla \u00b7 Esc para continuar', W/2, 82);
+
+  // ---- ARMAS panel (left) ----
+  const px=40, pw=430, py=104, ph=430;
+  ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(px,py,pw,ph,10); ctx.fill();
+  ctx.strokeStyle='rgba(127,212,255,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.textAlign='left';
+  ctx.fillStyle='#7fd4ff'; ctx.font='bold 18px Courier New'; ctx.fillText('ARMAS', px+18, py+28);
+  ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New'; ctx.fillText('recoge cajas para conseguirlas', px+92, py+28);
+  const WI=[['pistol','munici\u00f3n infinita'],['rapid','autom\u00e1tica, no para'],['fire','incendia y se contagia'],
+            ['grenade','mant\u00e9n para cargar la fuerza'],['mine','mata al instante al pisarla'],
+            ['block','barricada de concreto'],['torreta','dispara flechas sola']];
+  let wy=py+58;
+  for(let i=0;i<WI.length;i++){ const k=WI[i][0], Wd=WEAPONS[k];
+    ctx.fillStyle=Wd.col; rrectPath(px+18,wy-13,20,20,4); ctx.fill();
+    ctx.fillStyle='#0d1218'; ctx.font='bold 11px Courier New'; ctx.textAlign='center'; ctx.fillText(''+(i+1), px+28, wy+1); ctx.textAlign='left';
+    ctx.fillStyle=Wd.col; ctx.font='bold 14px Courier New'; ctx.fillText(Wd.name, px+48, wy+1);
+    ctx.fillStyle='#c8d2da'; ctx.font='12px Courier New'; ctx.fillText(WI[i][1], px+168, wy+1);
+    wy+=27;
+  }
+  ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New';
+  ctx.fillText('Cambiar: teclas 1-7 o rueda (J1) \u00b7 Q/E \u00b7 / (J2)', px+18, wy+8);
+  ctx.fillText('Disparar en la direcci\u00f3n que miras: Espacio / Coma', px+18, wy+26);
+
+  // ---- PODERES panel (middle) ----
+  const mx=488, mw=250;
+  ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(mx,py,mw,ph,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,210,74,0.32)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='#ffd24a'; ctx.font='bold 18px Courier New'; ctx.fillText('PODERES', mx+18, py+28);
+  const POW=[['#ff9a2a','ORO','llena 50/50 y pulsa F / . para la nova dorada'],
+             ['#dfeaff','ZAPATILLA','+ velocidad (brilla en el suelo)'],
+             ['#ff5a6a','CORAZ\u00d3N','+ vida'],
+             ['#8ac24a','CAJAS','sueltan armas y munici\u00f3n']];
+  let my=py+60;
+  for(const g of POW){
+    ctx.fillStyle=g[0]; ctx.beginPath(); ctx.arc(mx+26,my-4,7,0,TAU); ctx.fill();
+    ctx.fillStyle=g[0]; ctx.font='bold 14px Courier New'; ctx.fillText(g[1], mx+40, my);
+    ctx.fillStyle='#c8d2da'; ctx.font='11px Courier New';
+    wrapText(g[2], mx+40, my+16, mw-56, 14);
+    my+=58;
+  }
+  ctx.fillStyle='#ff7a7a'; ctx.font='bold 12px Courier New'; ctx.fillText('\u26a0 Al morir pierdes TODO', mx+18, py+ph-20);
+
+  // ---- LEADERBOARD panel (right) ----
+  const rx=754, rw=W-rx-40;
+  ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(rx,py,rw,ph,10); ctx.fill();
+  ctx.strokeStyle='rgba(174,247,194,0.32)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='#aef7c2'; ctx.font='bold 18px Courier New'; ctx.fillText('MEJORES 10', rx+18, py+28);
+  ctx.fillStyle='#6a7a86'; ctx.font='10px Courier New'; ctx.fillText('local · tabla global pronto', rx+150, py+28);
+  const board=lpTop10();
+  if(!board.length){
+    ctx.fillStyle='#7a8a80'; ctx.font='12px Courier New';
+    ctx.fillText('A\u00fan sin r\u00e9cords.', rx+18, py+58);
+    ctx.fillText('\u00a1S\u00e9 el primero en la tabla!', rx+18, py+76);
+  } else {
+    let ry=py+56;
+    for(let i=0;i<board.length && i<10;i++){ const e=board[i], me=(kills>0 && e.score===kills && e._live);
+      ctx.fillStyle=i===0?'#ffd24a':i===1?'#d8d8d8':i===2?'#cd9a5a':'#9fb0a6';
+      ctx.font='bold 13px Courier New'; ctx.textAlign='left'; ctx.fillText((i+1)+'.', rx+18, ry);
+      ctx.fillStyle=me?'#aef7c2':'#e8e0cc'; ctx.font='13px Courier New';
+      ctx.fillText((e.name||'---').slice(0,10), rx+44, ry);
+      ctx.textAlign='right'; ctx.fillStyle=i===0?'#ffd24a':'#c8d2da'; ctx.fillText(''+e.score, rx+rw-18, ry);
+      ctx.textAlign='left'; ry+=26;
+    }
+  }
+  ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New'; ctx.textAlign='left';
+  ctx.fillText('Tu mejor: '+lpBestScore, rx+18, py+ph-20);
+  ctx.fillText('Actual: '+kills, rx+18, py+ph-6);
+
+  drawPauseOptions();
+}
+// generic word-wrap helper for canvas text
+function wrapText(txt,x,y,maxw,lh){ const words=(''+txt).split(' '); let line='', yy=y;
+  for(const w of words){ const t=line?line+' '+w:w; if(ctx.measureText(t).width>maxw && line){ ctx.fillText(line,x,yy); line=w; yy+=lh; } else line=t; }
+  if(line) ctx.fillText(line,x,yy);
 }
 
 // ---------- Menu key handling ----------
@@ -4585,7 +4830,12 @@ function handleMenuKey(code){
       if(modeSel===0){ lobbyMode='horda'; state=STATE.MAPAS; mapSel=0; }
       else if(modeSel===1){ // MODO INFINITO — survival on Las Palmas (co-op / online / solo, like Horda)
         lobbyMode='horda'; currentMap='laspalmas'; WORLD_W=W; camX=0;
-        if(NET.hosting){ enterLobby(); } else { stopMenuMusic(); state=STATE.MENU; menuSel=0; resumeCumbia(); }
+        if(NET.hosting){ enterLobby(); }
+        else {
+          // Cinematic intro first (map music stays OFF under it), THEN pick your character.
+          stopMenuMusic(); lpMusicStop();
+          playLasPalmasIntro(()=>{ state=STATE.MENU; menuSel=0; resumeCumbia(); });
+        }
       }
       else if(NET.hosting){ lobbyMode='pvp'; currentMap='pvp'; enterLobby(); }
       else { enterPvpSelect(); }
@@ -4689,7 +4939,7 @@ function charsPerRow(n){ return (n<=6)? n : Math.ceil(n/2); }
 function handleSelectKey(code){
   if(selPending) return;
   if(code==='Escape'){ if(pvpPending){ pvpPending=false; state=STATE.MODOS; modeSel=1; playMenuMusic(); } else { state=STATE.MENU; menuSel=0; } return; }   // playMenuMusic also pauses the PVP track — no mixing
-  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length, pr=charsPerRow(n);   // Teddington/Cóndor are PVP-only
+  const list=pvpPending?PVP_CHAR_LIST:hordaRoster(), n=list.length, pr=charsPerRow(n);   // Teddington/Cóndor are PVP-only
   if(selMode===1){
     if(code==='KeyA'||code==='ArrowLeft') selCursor1=(selCursor1+n-1)%n;
     else if(code==='KeyD'||code==='ArrowRight') selCursor1=(selCursor1+1)%n;
@@ -4738,7 +4988,7 @@ function drawSelect(){
   ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
-  const list=pvpPending?PVP_CHAR_LIST:CHAR_LIST, n=list.length;
+  const list=pvpPending?PVP_CHAR_LIST:hordaRoster(), n=list.length;
   // two rows once the roster outgrows one: originals on top, the new characters underneath
   const perRow=charsPerRow(n), rows=Math.ceil(n/perRow);
   const cw=(rows>1)?160:((n>4)?160:200), gap=(rows>1)?16:((n>4)?16:26), rowGap=12;
@@ -4786,7 +5036,7 @@ function enterNetSelect(){
   netSelT=0; state=STATE.NETSELECT;
 }
 function updateNetSelect(dt){
-  updateChoosers(dt, CHAR_LIST);   // horda roster: the original four only
+  updateChoosers(dt, hordaRoster());   // horda = originals · Modo Infinito = newcomers
   const act=players.filter(pl=>!pl.departed);
   if(act.length && act.every(pl=>pl.selKind)){
     netSelT+=dt;
@@ -4816,7 +5066,7 @@ function startGame(){
     const total=Math.min(4, Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-    for(let i=0;i<total;i++){ players.push(makePlayer(CHAR_LIST[i]||'michi', sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
+    for(let i=0;i<total;i++){ const R=hordaRoster(); players.push(makePlayer(R[i]||R[0], sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
     if(netSelPicks){ for(let i=0;i<players.length && i<netSelPicks.length;i++){ if(netSelPicks[i]) reassignKind(players[i], netSelPicks[i]); } netSelPicks=null; }
     else randomizeOnlineChars();   // fallback only — the lobby now goes through the NETSELECT pick screen
@@ -4827,6 +5077,7 @@ function startGame(){
     players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
+  else if(survival){ startSurvival(); }    // Modo Infinito — no Cóndor / countdown (intro video already played at map select)
   else startIntro();
 }
 
@@ -5760,12 +6011,15 @@ function _frameBody(now){
   for(let _i=0;_i<40;_i++) ctx.restore();
   ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
 
+  // Las Palmas cinematic intro is on top of the canvas — freeze the sim (no spawning/dying behind it)
+  if(introPlaying){ requestAnimationFrame(frame); return; }
+
   // online guest: replicate the host's world from snapshots instead of simulating locally
   if(NET.role==='guest'){
     // horda pre-game pick phase: replicated as its own packet type ({_nsel}) — render and return
     if(NET.nsel){
       const L=(NET.nsel.list||[]).map(e=>({kind:e.kind, selKind:e.skd?e.kind:null, selCur:e.sc||0, departed:!!e.dp}));
-      safe('nselDraw',()=>drawCharsPick(CHAR_LIST, L, NET.slot, false, {bg:'banner', title:'HORDA — ELIGE TU PERSONAJE'}));
+      safe('nselDraw',()=>drawCharsPick(hordaRoster(), L, NET.slot, false, {bg:'banner', title:(currentMap==='laspalmas'?'MODO INFINITO':'HORDA')+' — ELIGE TU PERSONAJE'}));
       requestAnimationFrame(frame); return;
     }
     if(!NET.guestReady){ safe('guestwait',drawGuestWaiting); requestAnimationFrame(frame); return; }
@@ -5800,7 +6054,7 @@ function _frameBody(now){
   if(state===STATE.MAINMENU){ drawMainMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MODOS){ drawModos(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MAPAS){ drawMapas(); ctx.restore(); requestAnimationFrame(frame); return; }
-  if(state===STATE.NETSELECT){ drawCharsPick(CHAR_LIST, players, 0, false, {bg:'banner', title:'HORDA — ELIGE TU PERSONAJE'}); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.NETSELECT){ drawCharsPick(hordaRoster(), players, 0, false, {bg:'banner', title:(currentMap==='laspalmas'?'MODO INFINITO':'HORDA')+' — ELIGE TU PERSONAJE'}); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.HELP){ drawHelp(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.MENU){ drawMenu(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.SELECT){ drawSelect(); ctx.restore(); requestAnimationFrame(frame); return; }
@@ -5844,7 +6098,7 @@ function _frameBody(now){
   safe('amuleto',()=>{ if(_MO && amuleto){ ctx.save(); ctx.translate(0,machuElev(amuleto.x)); try{drawAmuleto();}finally{ctx.restore();} } else drawAmuleto(); });
   safe('effects',drawEffects);
   safe('leaves',drawLeaves);
-  if(survival){ safe('mines',drawMines); safe('bullets',drawBullets); safe('grenades',drawGrenades); }
+  if(survival){ safe('mines',drawMines); safe('bullets',drawBullets); safe('grenades',drawGrenades); safe('nadecharge',drawNadeCharges); }
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
   safe('hearts',drawHearts);
@@ -5859,6 +6113,7 @@ function _frameBody(now){
   ctx.restore(); ctx.setTransform(1,0,0,1,0,0); if(_shx||_shy) ctx.translate(_shx,_shy);
   if(currentMap==='stonebridge') safe('snow',()=>drawSnow(dt));
   if(currentMap==='templo' && state!==STATE.PAUSE) safe('debris',()=>drawDebris(dt));
+  if(_LP) safe('lptint',drawLasPalmasTint);   // post-apocalyptic reddish haze over the whole scene
   safe('hud',drawHUD);
   safe('bossbars',drawBossBars);
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
@@ -5975,7 +6230,7 @@ function netSerPlayer(p){
     special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0,
     gear:p.gear||'none', gearCount:p.gearCount||0,
     tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, fx:p.facing.x, fy:p.facing.y,
-    weapon:p.weapon||'pistol', ammo:p.ammo||{} };
+    weapon:p.weapon||'pistol', ammo:p.ammo||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0 };
 }
 function netSerializeSnapshot(){
   const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0), estatic={}, ids=new Set();
@@ -6084,7 +6339,7 @@ function netRenderPlayer(sp){
     special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge,
     gear:sp.gear, gearCount:sp.gearCount,
     tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy},
-    weapon:sp.weapon||'pistol', ammo:sp.ammo||{} };
+    weapon:sp.weapon||'pistol', ammo:sp.ammo||{}, nadeArmed:!!sp.nadeArmed, nadeCharge:sp.nadeCharge||0 };
 }
 function netPredictOwned(rp, me, cur, dt){
   if(!me.alive){ gPred.init=false; gPred.punchAnim=0; return; }   // dead → just show authoritative pose
