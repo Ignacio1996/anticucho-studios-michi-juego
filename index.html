@@ -1267,15 +1267,20 @@ const ENEMY_TYPES = {
   large:  { hp:210, dmg:20, speed:30, radius:30, pts:35, tint:'#cfe39a', eye:'#ffd',    leafer:true }, // big, lobs leaves
 };
 function spawnEnemy(){
-  let pool = ['normal','normal'];
-  if (round>=3) pool.push('fast');
-  if (round>=5) pool.push('large');
-  if (round>=8) pool.push('fast','normal');
-  if (round>=11) pool.push('large','fast');
-  // endless: the mix keeps getting nastier — more fast + big enemies the longer you survive
-  if (survival && round>=16) pool.push('fast','large','fast');
-  if (survival && round>=24) pool.push('large','fast','large');
-  if (survival && round>=34) pool.push('fast','large','fast','large');
+  let pool;
+  if(survival){
+    // Las Palmas keeps a FIXED type ratio — Grey dominant, Slime ~half of Grey, Egg ~a quarter
+    // (4 : 2 : 1). Difficulty ramps through the swarm SIZE (see updateSurvival), not the mix.
+    pool = ['normal','normal','normal','normal'];
+    if(round>=3) pool.push('fast','fast');
+    if(round>=5) pool.push('large');
+  } else {
+    pool = ['normal','normal'];
+    if (round>=3) pool.push('fast');
+    if (round>=5) pool.push('large');
+    if (round>=8) pool.push('fast','normal');
+    if (round>=11) pool.push('large','fast');
+  }
   let type = pool[randi(0,pool.length-1)];
   if(type==='large'){            // cap concurrent big leaf-throwers (grows over time in survival)
     const cap = survival ? Math.min(6, 2+Math.floor(round/8))*Math.max(1,activePlayerCount())
