@@ -1030,6 +1030,22 @@ function lpResolve(ent){
 // survival run state
 let survival=false, survTime=0, survSpawnT=0, kills=0;
 let lpBestScore=0; try{ lpBestScore=(+localStorage.getItem('fm_laspalmas_best'))||0; }catch(e){}
+// Local Modo Infinito leaderboard (top 20 kept; top 10 shown). A Cloudflare-backed global board can
+// sync into fm_lp_board later — the render only cares about the {name,score} shape.
+let lpBoardCache=null;
+function lpLoadBoard(){ if(lpBoardCache) return lpBoardCache; let a=[]; try{ a=JSON.parse(localStorage.getItem('fm_lp_board')||'[]'); }catch(e){} if(!Array.isArray(a)) a=[]; lpBoardCache=a; return a; }
+function lpTop10(){
+  const arr=lpLoadBoard().slice();
+  if(kills>0) arr.push({name:'TÚ (ahora)', score:kills, _live:true});   // show where the live run would rank
+  arr.sort((a,b)=>b.score-a.score);
+  return arr.slice(0,10);
+}
+function lpSaveScore(name,score){
+  const arr=lpLoadBoard();
+  arr.push({name:((name||'---').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()||'---').slice(0,10), score:score|0, t:0});
+  arr.sort((a,b)=>b.score-a.score); lpBoardCache=arr.slice(0,20);
+  try{ localStorage.setItem('fm_lp_board', JSON.stringify(lpBoardCache)); }catch(e){}
+}
 function stripPowers(p){   // death wipes every buff — you re-earn them from scratch
   p.tierra=0; p.piedra=0; p.shields=0; p.special='none'; p.specialCharges=0; p.oro=0; p.oroCharge=0; p.rioGrabbed=false;
   p.weapon='pistol'; p.ammo={}; p.nadeArmed=false; p.nadeCharge=0;   // death drops you back to the basic pistol, loses all weapon ammo
@@ -4568,6 +4584,7 @@ function drawVolumeSettings(){
 function drawPause(){
   ctx.fillStyle='rgba(0,0,0,0.80)'; ctx.fillRect(0,0,W,H);
   if(pauseView==='settings'){ drawVolumeSettings(); return; }
+  if(survival){ drawPauseSurvival(); return; }
   ctx.textAlign='center'; ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText('PAUSA', W/2, 96);
   ctx.font='13px Courier New'; ctx.fillStyle='#cdbf9a'; ctx.fillText('Pulsa Esc para continuar', W/2, 124);
@@ -4605,9 +4622,12 @@ function drawPause(){
     ctx.textAlign='center'; ctx.fillStyle='#aef7c2'; ctx.font='bold 14px Courier New';
     ctx.fillText('CO-OP: revive a tu compa\u00f1ero par\u00e1ndote 5s sobre su cruz', W/2, 492);
   }
+  drawPauseOptions();
+}
+// shared bottom menu for the pause screen (guest sees a shorter list)
+function drawPauseOptions(){
   ctx.textAlign='center';
   if(NET.role==='guest'){
-    // the shared CONTINUAR unpauses everyone (host-owned), but AJUSTES tunes THIS machine's volumes
     const popts=['CONTINUAR (para todos)','AJUSTES'];
     popts.forEach((o,i)=>{ const oy=H-92+i*30; ctx.fillStyle=i===pauseSel?'#ffe14a':'#bdb190'; ctx.font='bold 18px Courier New'; ctx.fillText((i===pauseSel?'\u25b6 ':'')+o, W/2, oy); });
     ctx.fillStyle='#9a8f75'; ctx.font='11px Courier New'; ctx.fillText('\u2191\u2193 elegir  \u00b7  Enter: seleccionar  \u00b7  Esc: continuar (para todos)', W/2, H-10);
@@ -4617,6 +4637,86 @@ function drawPause(){
   popts.forEach((o,i)=>{ const oy=H-104+i*30; ctx.fillStyle=i===pauseSel?'#ffe14a':'#bdb190'; ctx.font='bold 18px Courier New'; ctx.fillText((i===pauseSel?'\u25b6 ':'')+o, W/2, oy); });
   ctx.fillStyle='#9a8f75'; ctx.font='11px Courier New'; ctx.fillText('\u2191\u2193 elegir  \u00b7  Enter: seleccionar  \u00b7  Esc: continuar', W/2, H-10);
   ctx.textAlign='left';
+}
+// Modo Infinito pause: no apuchis / boss powers \u2014 a graphic weapon + power guide and the top-10 board
+function rrectPath(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function drawPauseSurvival(){
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffe9b0'; ctx.font='bold 32px Courier New'; ctx.fillText('MODO INFINITO', W/2, 58);
+  ctx.fillStyle='#8ad0ff'; ctx.font='13px Courier New'; ctx.fillText('Sobrevive, elimina, sube en la tabla \u00b7 Esc para continuar', W/2, 82);
+
+  // ---- ARMAS panel (left) ----
+  const px=40, pw=430, py=104, ph=430;
+  ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(px,py,pw,ph,10); ctx.fill();
+  ctx.strokeStyle='rgba(127,212,255,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.textAlign='left';
+  ctx.fillStyle='#7fd4ff'; ctx.font='bold 18px Courier New'; ctx.fillText('ARMAS', px+18, py+28);
+  ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New'; ctx.fillText('recoge cajas para conseguirlas', px+92, py+28);
+  const WI=[['pistol','munici\u00f3n infinita'],['rapid','autom\u00e1tica, no para'],['fire','incendia y se contagia'],
+            ['grenade','mant\u00e9n para cargar la fuerza'],['mine','mata al instante al pisarla'],
+            ['block','barricada de concreto'],['torreta','dispara flechas sola']];
+  let wy=py+58;
+  for(let i=0;i<WI.length;i++){ const k=WI[i][0], Wd=WEAPONS[k];
+    ctx.fillStyle=Wd.col; rrectPath(px+18,wy-13,20,20,4); ctx.fill();
+    ctx.fillStyle='#0d1218'; ctx.font='bold 11px Courier New'; ctx.textAlign='center'; ctx.fillText(''+(i+1), px+28, wy+1); ctx.textAlign='left';
+    ctx.fillStyle=Wd.col; ctx.font='bold 14px Courier New'; ctx.fillText(Wd.name, px+48, wy+1);
+    ctx.fillStyle='#c8d2da'; ctx.font='12px Courier New'; ctx.fillText(WI[i][1], px+168, wy+1);
+    wy+=27;
+  }
+  ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New';
+  ctx.fillText('Cambiar: teclas 1-7 o rueda (J1) \u00b7 Q/E \u00b7 / (J2)', px+18, wy+8);
+  ctx.fillText('Disparar en la direcci\u00f3n que miras: Espacio / Coma', px+18, wy+26);
+
+  // ---- PODERES panel (middle) ----
+  const mx=488, mw=250;
+  ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(mx,py,mw,ph,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,210,74,0.32)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='#ffd24a'; ctx.font='bold 18px Courier New'; ctx.fillText('PODERES', mx+18, py+28);
+  const POW=[['#ff9a2a','ORO','llena 50/50 y pulsa F / . para la nova dorada'],
+             ['#dfeaff','ZAPATILLA','+ velocidad (brilla en el suelo)'],
+             ['#ff5a6a','CORAZ\u00d3N','+ vida'],
+             ['#8ac24a','CAJAS','sueltan armas y munici\u00f3n']];
+  let my=py+60;
+  for(const g of POW){
+    ctx.fillStyle=g[0]; ctx.beginPath(); ctx.arc(mx+26,my-4,7,0,TAU); ctx.fill();
+    ctx.fillStyle=g[0]; ctx.font='bold 14px Courier New'; ctx.fillText(g[1], mx+40, my);
+    ctx.fillStyle='#c8d2da'; ctx.font='11px Courier New';
+    wrapText(g[2], mx+40, my+16, mw-56, 14);
+    my+=58;
+  }
+  ctx.fillStyle='#ff7a7a'; ctx.font='bold 12px Courier New'; ctx.fillText('\u26a0 Al morir pierdes TODO', mx+18, py+ph-20);
+
+  // ---- LEADERBOARD panel (right) ----
+  const rx=754, rw=W-rx-40;
+  ctx.fillStyle='rgba(20,26,34,0.72)'; rrectPath(rx,py,rw,ph,10); ctx.fill();
+  ctx.strokeStyle='rgba(174,247,194,0.32)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='#aef7c2'; ctx.font='bold 18px Courier New'; ctx.fillText('MEJORES 10', rx+18, py+28);
+  const board=lpTop10();
+  if(!board.length){
+    ctx.fillStyle='#7a8a80'; ctx.font='12px Courier New';
+    ctx.fillText('A\u00fan sin r\u00e9cords.', rx+18, py+58);
+    ctx.fillText('\u00a1S\u00e9 el primero en la tabla!', rx+18, py+76);
+  } else {
+    let ry=py+56;
+    for(let i=0;i<board.length && i<10;i++){ const e=board[i], me=(kills>0 && e.score===kills && e._live);
+      ctx.fillStyle=i===0?'#ffd24a':i===1?'#d8d8d8':i===2?'#cd9a5a':'#9fb0a6';
+      ctx.font='bold 13px Courier New'; ctx.textAlign='left'; ctx.fillText((i+1)+'.', rx+18, ry);
+      ctx.fillStyle=me?'#aef7c2':'#e8e0cc'; ctx.font='13px Courier New';
+      ctx.fillText((e.name||'---').slice(0,10), rx+44, ry);
+      ctx.textAlign='right'; ctx.fillStyle=i===0?'#ffd24a':'#c8d2da'; ctx.fillText(''+e.score, rx+rw-18, ry);
+      ctx.textAlign='left'; ry+=26;
+    }
+  }
+  ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New'; ctx.textAlign='left';
+  ctx.fillText('Tu mejor: '+lpBestScore, rx+18, py+ph-20);
+  ctx.fillText('Actual: '+kills, rx+18, py+ph-6);
+
+  drawPauseOptions();
+}
+// generic word-wrap helper for canvas text
+function wrapText(txt,x,y,maxw,lh){ const words=(''+txt).split(' '); let line='', yy=y;
+  for(const w of words){ const t=line?line+' '+w:w; if(ctx.measureText(t).width>maxw && line){ ctx.fillText(line,x,yy); line=w; yy+=lh; } else line=t; }
+  if(line) ctx.fillText(line,x,yy);
 }
 
 // ---------- Menu key handling ----------
