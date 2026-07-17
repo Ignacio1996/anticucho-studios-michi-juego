@@ -3110,11 +3110,12 @@ function drawLasPalmasTint(){
 // it joins as an AI ally that hunts enemies until it dies. ONE ally at a time; random order; a delay
 // before the next appears; the pool loops once everyone has fallen. Host-authoritative + replicated.
 const npcs=[];
-let npcQueue=[], npcSpawnT=14, npcDeadWait=0;
+let npcQueue=[], npcSpawnT=14;
 function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k && !p.departed)); }   // chars no player picked
 function refillNpcQueue(){ npcQueue=npcRoster(); for(let i=npcQueue.length-1;i>0;i--){ const j=randi(0,i); const t=npcQueue[i]; npcQueue[i]=npcQueue[j]; npcQueue[j]=t; } }
 function makeNpc(kind,x,y){
   const n=makePlayer(kind,x,y,null);   // reuse the player shape so drawPlayer/charFrame just work
+  n.id=_entId++;                       // stable id for cross-snapshot matching (online replication)
   n.isNpc=true; n.npcState='idle'; n.tagBob=Math.random()*TAU;
   n.maxhp*=2; n.hp=n.maxhp; n.weapon='pistol';   // double HP, always a pistol
   n.aiShootCd=0; n.aiRepathT=0; n.aiWX=x; n.aiWY=y;
@@ -3154,7 +3155,7 @@ function spawnIdleNpc(){
   }
   npcQueue.push(kind);                       // no spot found — retry next tick
 }
-function tagNpc(n){ n.npcState='active'; n.hp=n.maxhp; try{ playCharSelect(n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
+function tagNpc(n){ n.npcState='active'; n.hp=n.maxhp; try{ playCharSelect(n.kind); netQSnd('sel',n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
 function fireNpcBullet(n, tx, ty){
   const dx=tx-n.x, dy=ty-n.y, ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4), cx=Math.cos(ang), cy=Math.sin(ang);
   n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
@@ -3163,12 +3164,12 @@ function fireNpcBullet(n, tx, ty){
   spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(false); }catch(e){}
 }
 function updateNpcs(dt){
-  if(npcDeadWait>0) npcDeadWait-=dt;
+  // one timer drives the cycle: game start → first ally at ~14s; ally death → next EXACTLY 60s later
   npcSpawnT-=dt;
-  if(npcSpawnT<=0){
-    npcSpawnT=rand(8,14);
-    if(!npcQueue.length && npcs.length===0 && npcDeadWait<=0) refillNpcQueue();   // loop restart once everyone's gone
-    if(npcDeadWait<=0 && npcs.length<1 && npcQueue.length) spawnIdleNpc();
+  if(npcSpawnT<=0 && npcs.length<1){
+    npcSpawnT=1.5;                                              // placement attempt failed → retry shortly
+    if(!npcQueue.length) refillNpcQueue();                      // loop restart once everyone's gone
+    if(npcQueue.length) spawnIdleNpc();
   }
   const alive=players.filter(p=>p.alive), host=alive[0]||players[0];
   for(let i=npcs.length-1;i>=0;i--){
@@ -3252,7 +3253,7 @@ function updateNpcs(dt){
       }
     }
     // (enemies deal contact damage to the ally through their own attack path — see nearestTarget)
-    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcDeadWait=rand(11,18); }
+    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcSpawnT=60; }
   }
 }
 function drawNpc(n){
@@ -3268,7 +3269,7 @@ function drawNpc(n){
 }
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
-  npcs.length=0; refillNpcQueue(); npcSpawnT=14; npcDeadWait=0;
+  npcs.length=0; refillNpcQueue(); npcSpawnT=14;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
 }
@@ -6830,6 +6831,9 @@ function netSerializeSnapshot(){
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
+    npcs: npcs.map(n=>({id:n.id, kind:n.kind, x:Math.round(n.x*10)/10, y:Math.round(n.y*10)/10,
+      st:n.npcState==='active'?1:0, hp:Math.round(n.hp), maxhp:n.maxhp, dir:n.dir, mv:n.moving?1:0,
+      pa:n.punchAnim, hf:n.hitFlash, fx:n.facing.x, fy:n.facing.y})),
     lpItems: lpItems.map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
@@ -6878,6 +6882,7 @@ function netBroadcast(dt){
 let gBuf=[];                 // recent snapshots, each stamped with local receive time .rt
 const gEnemMap={};           // enemy id -> persistent render object (keeps locally-advanced anim clocks)
 const gApuMap={};            // apuchi id -> persistent render object
+const gNpcMap={};            // AI-ally id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
@@ -7136,6 +7141,20 @@ function netApplyGuest(dt){
     seenA[sa.id]=1; apuchis.push(o);
   }
   for(const id in gApuMap){ if(!seenA[id]) delete gApuMap[id]; }
+  // AI allies — persistent objects (anim clocks tick locally), positions interpolated like enemies'
+  { const aN = interp ? _byId(a.npcs||[]) : null; const seenN={};
+    npcs.length=0;
+    for(const sn of (src.npcs||[])){
+      let o=gNpcMap[sn.id]; if(!o){ o=makeNpc(sn.kind, sn.x, sn.y); o.id=sn.id; gNpcMap[sn.id]=o; }
+      o.npcState=sn.st?'active':'idle'; o.hp=sn.hp; o.maxhp=sn.maxhp; o.dir=sn.dir||o.dir; o.moving=!!sn.mv;
+      o.punchAnim=sn.pa||0; o.hitFlash=sn.hf||0; if(typeof sn.fx==='number'){ o.facing.x=sn.fx; o.facing.y=sn.fy; }
+      o.animTime+=dt; o.tagBob+=dt*3;
+      if(interp && aN && aN[sn.id]){ const pn2=aN[sn.id]; o.x=pn2.x+(sn.x-pn2.x)*alpha; o.y=pn2.y+(sn.y-pn2.y)*alpha; }
+      else { o.x=sn.x; o.y=sn.y; }
+      seenN[sn.id]=1; npcs.push(o);
+    }
+    for(const id in gNpcMap){ if(!seenN[id]) delete gNpcMap[id]; }
+  }
   lpItems.length=0; for(const it of (cur.lpItems||[])) lpItems.push({id:it.id, kind:it.kind, x:it.x, y:it.y, bob:time*6, spawn:1});
   hearts.length=0; for(const h of cur.hearts) hearts.push({x:h.x, y:h.y, bob:time*4, spin:time*3, life:16});
   if(cur.amuleto){ if(!amuleto) amuleto={bob:0, spin:0}; amuleto.x=cur.amuleto.x; amuleto.y=cur.amuleto.y; amuleto.item=cur.amuleto.item; amuleto.bob+=dt*4; amuleto.spin+=dt*2; }
