@@ -1607,10 +1607,12 @@ function fireBullet(p,fire){
   if(!fx && !fy){ fy=1; }                                                // never moved yet -> shoot south
   const ang=Math.round(Math.atan2(fy,fx)/(Math.PI/4))*(Math.PI/4);       // snap to the 8 compass directions
   const cx=Math.cos(ang), cy=Math.sin(ang);
-  // spawn at the player centre so the swept segment also catches enemies pressed right up against you
-  bullets.push({ id:_entId++, x:p.x, y:p.y, vx:cx*(fire?BULLET_SPD*0.7:BULLET_SPD), vy:cy*(fire?BULLET_SPD*0.7:BULLET_SPD),
+  // spawn a touch AHEAD of the player (at the gun muzzle) rather than dead-centre; kept small (18px)
+  // so the swept segment still catches enemies pressed right up against you on the muzzle side
+  const mz=18, bx=p.x+cx*mz, by=p.y+cy*mz;
+  bullets.push({ id:_entId++, x:bx, y:by, vx:cx*(fire?BULLET_SPD*0.7:BULLET_SPD), vy:cy*(fire?BULLET_SPD*0.7:BULLET_SPD),
                  life:fire?0.5:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra], fire:!!fire });   // damage = maxhp/shots, boosted by Piedra
-  spark(p.x+cx*22, p.y+cy*22, fire?'#ff9a2a':'#fff2c0', fire?5:3, 130);
+  spark(bx+cx*6, by+cy*6, fire?'#ff9a2a':'#fff2c0', fire?5:3, 130);
 }
 function tryShoot(p){
   if(!p.alive || p.cooldown>0) return;
