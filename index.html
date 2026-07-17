@@ -1405,7 +1405,7 @@ function placeApu(type){
 const lpItems=[];
 // Enemy-dropped pickups don't linger forever: they last a few seconds, blink faster as they run out,
 // then vanish so the field never fills up with un-grabbed loot. (Applied in Modo Infinito only.)
-const LP_PICKUP_LIFE=13, LP_PICKUP_BLINK=3.2;
+const LP_PICKUP_LIFE=21, LP_PICKUP_BLINK=3.5;   // soles/hearts linger longer before fading (blink the last ~3.5s)
 function pickupBlinkHide(life){ return life!=null && life<LP_PICKUP_BLINK && Math.floor(time*(life<1?14:7))%2===0; }
 function lpMaybeDrop(e){
   const big=(e.type==='large');
