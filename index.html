@@ -191,7 +191,7 @@ function playSfxElement(src, vol, rate){
       else { a=pool.shift(); pool.push(a); try{ a.pause(); }catch(e){} }   // all busy → steal oldest
     }
     try{ a.currentTime=0; }catch(e){}
-    a.volume=vol*sfxVol;
+    a.volume=Math.min(1, vol*sfxVol);   // element volume caps at 1 (boosted voices only amplify on the Web Audio path)
     a.preservesPitch=a.mozPreservesPitch=a.webkitPreservesPitch=!rate;
     a.playbackRate=rate||1;
     a.play().catch(()=>{});
@@ -237,12 +237,17 @@ let voices=[];
 function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
 function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
 function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); }
-// Alfredo & Mati recorded their voice takes quieter than the rest of the roster — lift their
-// select/death/hit volume a notch. Clamped to 1 so the <audio> element fallback never throws.
-const CHAR_VOL_BOOST={ alfredo:1.35, mati:1.35 };
-function charVol(kind, base){ return Math.min(1, base*(CHAR_VOL_BOOST[kind]||1)); }
-function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], charVol(kind,0.95)); }
-function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], charVol(kind,0.95)); }
+// Alfredo & Mati recorded their voice takes quieter than the rest of the roster — and each CLIP by a
+// different amount (Alfredo's select is ~7× quieter than Vannucci's, his death only ~2×). Boosts are
+// per-clip, calibrated from measured RMS to land every take at Vannucci/Flash loudness. NOT clamped
+// to 1: the Web Audio path amplifies past full volume (which quiet recordings need); only the <audio>
+// element fallback clamps, inside playSfxElement. (The old per-character min(1,…) clamp made the
+// boost a no-op: 0.95×1.35 just clipped back to 1.0 — that's why Alfredo never got louder.)
+const VOICE_BOOST={ alfredo_sel:4.5, alfredo_die:1.6, alfredo_hit1:2.8, alfredo_hit2:2.8,
+                    mati_sel:3.0, mati_die:1.6, mati_hit1:2.1, mati_hit2:2.0 };
+function voiceVol(clip, base){ return base*(VOICE_BOOST[clip]||1); }
+function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], voiceVol(kind+'_sel',0.95)); }
+function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], voiceVol(kind+'_die',0.95)); }
 function playRoundStart(r){
   const boss=(r%5===0);
   if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
@@ -1626,7 +1631,7 @@ function fireBullet(p,fire){
   const mz=18, bx=p.x+cx*mz, by=p.y+cy*mz;
   bullets.push({ id:_entId++, x:bx, y:by, vx:cx*(fire?BULLET_SPD*0.7:BULLET_SPD), vy:cy*(fire?BULLET_SPD*0.7:BULLET_SPD),
                  life:fire?0.5:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra], fire:!!fire });   // damage = maxhp/shots, boosted by Piedra
-  spark(bx+cx*6, by+cy*6, fire?'#ff9a2a':'#fff2c0', fire?5:3, 130);
+  spark(bx+cx*6, by+cy*6, fire?'#ff9a2a':'#bfe4ff', fire?5:3, 130);
 }
 function tryShoot(p){
   if(!p.alive || p.cooldown>0) return;
@@ -1750,7 +1755,7 @@ function updateBullets(dt){
     const ax=b.x, ay=b.y;                       // segment start (for swept collision — bullets are fast)
     b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
     // walls (check the segment's midpoint + end so a fast bullet can't tunnel a thin wall/net)
-    if(currentMap==='laspalmas' && !lpBulletPass(b.x,b.y) && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,'#fff2c0',3,70); bullets.splice(i,1); continue; }
+    if(currentMap==='laspalmas' && !lpBulletPass(b.x,b.y) && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,b.fire?'#fff2c0':'#bfe4ff',3,70); bullets.splice(i,1); continue; }
     let hit=false;
     for(const e of enemies){ if(e.dead) continue;
       const rr=(e.footR||e.radius)+6;
@@ -1786,8 +1791,14 @@ function drawBullets(){
   ctx.save(); ctx.lineCap='round';
   for(const b of bullets){
     const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
-    ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-    ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    if(b.fire){   // incendiary rounds keep their fiery look
+      ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    } else {      // water-gun squirt: translucent blue jet with a paler core (saturated enough to
+                  // stay clearly blue under the map's red apocalyptic tint)
+      ctx.strokeStyle='rgba(30,140,255,0.6)'; ctx.lineWidth=6.5; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.strokeStyle='rgba(140,210,255,0.95)'; ctx.lineWidth=2.8; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    }
   }
   ctx.restore();
 }
@@ -1888,7 +1899,7 @@ function playPunchSound(p){
     const horStep=(k==='vannucci')?3:(k==='sebas')?4:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
-      playOne(AUDIO_SRC[k+'_hit'+n2], charVol(k,0.6));
+      playOne(AUDIO_SRC[k+'_hit'+n2], voiceVol(k+'_hit'+n2,0.6));
     }
     return;
   }
@@ -3150,7 +3161,7 @@ function fireNpcBullet(n, tx, ty){
   n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
   const mz=18, bx=n.x+cx*mz, by=n.y+cy*mz;
   bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, npc:n});
-  spark(bx,by,'#fff2c0',3,130); try{ sfxGun(false); }catch(e){}
+  spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(false); }catch(e){}
 }
 function updateNpcs(dt){
   if(npcDeadWait>0) npcDeadWait-=dt;
