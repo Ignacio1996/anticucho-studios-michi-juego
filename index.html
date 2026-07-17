@@ -951,6 +951,10 @@ let LP_COL=null;
 // LP_GROUND_FI) drawn UNDER entities, so the player never disappears behind it while standing on it.
 function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return true; const idx=r*LP_COL_COLS+c; return (LP_COL[idx>>3]>>(idx&7))&1; }
 function lpSolidAt(x,y){ return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL)); }
+// Bullets/projectiles fly OVER these water bodies (pool + jacuzzi) even though players/enemies can't
+// walk on them — shoot across the water to enemies on the far side. World-pixel {x,y,w,h}.
+const LP_BULLET_PASS=[{x:630,y:1260,w:240,h:345},{x:805,y:1035,w:140,h:140}];
+function lpBulletPass(x,y){ for(const r of LP_BULLET_PASS){ if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h) return true; } return false; }
 // push a circle entity out of any solid grid cells it overlaps (2 passes for stability)
 function lpResolve(ent){
   const r=ent.radius, C=LP_COL_CELL;
@@ -1378,7 +1382,7 @@ function updateBullets(dt){
     const ax=b.x, ay=b.y;                       // segment start (for swept collision — bullets are fast)
     b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
     // walls (check the segment's midpoint + end so a fast bullet can't tunnel a thin wall/net)
-    if(currentMap==='laspalmas' && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,'#fff2c0',3,70); bullets.splice(i,1); continue; }
+    if(currentMap==='laspalmas' && !lpBulletPass(b.x,b.y) && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,'#fff2c0',3,70); bullets.splice(i,1); continue; }
     let hit=false;
     for(const e of enemies){ if(e.dead) continue;
       const rr=(e.footR||e.radius)+6;
@@ -4020,7 +4024,7 @@ function ensureMapThumb(){
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
 
-const BUILD='v2026-07-16.9';   // bump on every push — shown on the main menu so stale copies are obvious
+const BUILD='v2026-07-16.10';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
   { const _ui=document.getElementById('netui'); if(_ui && state!==STATE.LOBBY) _ui.style.display='none'; }
   drawImageCover(MENU_IMG.main);
