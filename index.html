@@ -67,11 +67,14 @@ const W = cv.width, H = cv.height;
 const AUDIO_SRC={ bg:"assets/snd_001.mp3", plin:"assets/snd_002.mp3", wow:"assets/snd_003.mp3", hee1:"assets/snd_004.mp3", hee2:"assets/snd_005.mp3", hee3:"assets/snd_006.mp3", plin2:"assets/snd_007.mp3", chulla:"assets/snd_008.mp3", tedintro:"assets/snd_009.mp3", condorcoop:"assets/snd_010.mp3", condorsingle:"assets/snd_011.mp3", magic:"assets/snd_012.mp3", death:"assets/snd_013.mp3", losandes:"assets/snd_014.mp3", sumac1:"assets/snd_015.mp3", sumac2:"assets/snd_016.mp3", shooshy1:"assets/snd_017.mp3", shooshy2:"assets/snd_018.mp3" };
 let bgMusic=null, sbMusic=null, tpMusic=null, evMusic=null, menuMusic=null, deathMusic=null, losAndesMusic=null, pvpMusic=null, actx=null, sfxGain=null, audioStarted=false;
 let lpMx=[], lpMxIdx=0, lpMxNext=-1;   // Las Palmas Modo Infinito playlist (3 tracks, crossfaded in order)
-const LP_MX_VOL=0.21, LP_MX_FADE=3.2;   // Las Palmas tracks are hot — cap them at half so full slider ≈ old half
+const LP_MX_VOL=0.155, LP_MX_FADE=3.2;   // Las Palmas tracks are mastered hot — this loudness-matches them to the other maps
 // (the old masterGain/streamDest WebRTC audio tap is gone — guests play their own audio locally)
 let musicVol=0.55, sfxVol=1; try{ const mv=localStorage.getItem('fm_musicVol'); if(mv!==null) musicVol=+mv; const sv=localStorage.getItem('fm_sfxVol'); if(sv!==null) sfxVol=+sv; }catch(e){}   // start music quieter by default (raise it in AJUSTES)
 let pauseView='main', pauseSel=0, setSel=0;
-function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.32*musicVol; if(menuMusic)menuMusic.volume=0.45*musicVol; if(sbMusic)sbMusic.volume=0.4*musicVol; if(tpMusic)tpMusic.volume=0.42*musicVol; if(evMusic)evMusic.volume=0.34*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.4*musicVol; }
+// Per-track base volumes are LOUDNESS-MATCHED: the mp3 masters differ wildly (the Las Palmas tracks are
+// ~5x hotter in RMS than Amazonas/menu), so these gains normalise every track to roughly the same
+// perceived level. Otherwise lowering the slider left Las Palmas audible while the rest went silent.
+function applyMusicVol(){ if(bgMusic)bgMusic.volume=0.95*musicVol; if(menuMusic)menuMusic.volume=0.71*musicVol; if(sbMusic)sbMusic.volume=0.70*musicVol; if(tpMusic)tpMusic.volume=0.95*musicVol; if(evMusic)evMusic.volume=0.95*musicVol; if(deathMusic)deathMusic.volume=0.5*musicVol; if(losAndesMusic)losAndesMusic.volume=0.5*musicVol; if(pvpMusic)pvpMusic.volume=0.47*musicVol; }
 function adjustVol(sel,delta){ if(sel===0){ musicVol=clamp(musicVol+delta,0,1); applyMusicVol(); } else { sfxVol=clamp(sfxVol+delta,0,1); if(sfxGain) sfxGain.gain.value=sfxVol; } try{ localStorage.setItem('fm_musicVol',musicVol); localStorage.setItem('fm_sfxVol',sfxVol); }catch(e){} } let lastWow=0, plinCount=0;
 AUDIO_SRC.menu="assets/snd_019.mp3";
 AUDIO_SRC.freddy_sel="assets/snd_020.mp3";
@@ -207,14 +210,14 @@ function initAudio(){
     const mkMusic=(src,vol)=>{ const el=new Audio(); el.preload='none'; el.loop=true; el.volume=vol; el._rt=0; el._src=src;
       el.addEventListener('error',()=>{ if(el._rt++<6) setTimeout(()=>{ try{ el.load(); }catch(e){} }, 2000+el._rt*2000); });
       el.src=src; return el; };
-    try{ bgMusic=mkMusic(AUDIO_SRC.bg, 0.32); }catch(e){}
-    try{ menuMusic=mkMusic(AUDIO_SRC.menu, 0.45); }catch(e){}
-    try{ sbMusic=mkMusic(AUDIO_SRC.sbbg, 0.4); }catch(e){}
-    try{ tpMusic=mkMusic(AUDIO_SRC.tpbg, 0.42); }catch(e){}
-    try{ evMusic=mkMusic(AUDIO_SRC.elvalle, 0.34); }catch(e){}
+    try{ bgMusic=mkMusic(AUDIO_SRC.bg, 0.95); }catch(e){}
+    try{ menuMusic=mkMusic(AUDIO_SRC.menu, 0.71); }catch(e){}
+    try{ sbMusic=mkMusic(AUDIO_SRC.sbbg, 0.70); }catch(e){}
+    try{ tpMusic=mkMusic(AUDIO_SRC.tpbg, 0.95); }catch(e){}
+    try{ evMusic=mkMusic(AUDIO_SRC.elvalle, 0.95); }catch(e){}
     try{ deathMusic=mkMusic(AUDIO_SRC.death, 0.5); }catch(e){}
     try{ losAndesMusic=mkMusic(AUDIO_SRC.losandes, 0.5); }catch(e){}
-    try{ pvpMusic=mkMusic(AUDIO_SRC.pvpbg, 0.4); }catch(e){}
+    try{ pvpMusic=mkMusic(AUDIO_SRC.pvpbg, 0.47); }catch(e){}
     try{ lpMx=[mkMusic(AUDIO_SRC.lpmx1,0), mkMusic(AUDIO_SRC.lpmx2,0), mkMusic(AUDIO_SRC.lpmx3,0)]; for(const t of lpMx) t.loop=false; }catch(e){ lpMx=[]; }
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
@@ -2033,6 +2036,7 @@ function drawVending(){
     const txt=canBuy?('Comprar  ['+key+']'):'Sigues misio';
     const tw=ctx.measureText(txt).width+16;
     ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(x-tw/2, top-26, tw, 18, 4); ctx.fill();
+    ctx.textAlign='center'; ctx.textBaseline='alphabetic';
     ctx.fillStyle=canBuy?'#aef7c2':'#ffcf9a'; ctx.fillText(txt, x, top-13);
   }
   ctx.textAlign='left';
