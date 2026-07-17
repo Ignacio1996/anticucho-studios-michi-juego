@@ -202,7 +202,7 @@ function initAudio(){
     // doesn't burst-request ~12MB of mp3s on top of ~800 sprites — free CDNs throttle that burst
     // and a failed element used to stay mute forever. On error: retry the load with backoff; the
     // many play()-if-paused call sites (initAudio keydown hook, state transitions) resume it after.
-    const mkMusic=(src,vol)=>{ const el=new Audio(); el.preload='none'; el.loop=true; el.volume=vol; el._rt=0;
+    const mkMusic=(src,vol)=>{ const el=new Audio(); el.preload='none'; el.loop=true; el.volume=vol; el._rt=0; el._src=src;
       el.addEventListener('error',()=>{ if(el._rt++<6) setTimeout(()=>{ try{ el.load(); }catch(e){} }, 2000+el._rt*2000); });
       el.src=src; return el; };
     try{ bgMusic=mkMusic(AUDIO_SRC.bg, 0.32); }catch(e){}
@@ -225,7 +225,7 @@ function initAudio(){
       sfxBuffer(AUDIO_SRC.sumac1); sfxBuffer(AUDIO_SRC.sumac2); sfxBuffer(AUDIO_SRC.shooshy1); sfxBuffer(AUDIO_SRC.shooshy2);
     }catch(e){} }, 2500); }catch(e){}
   }
-  try{ if(actx && actx.state==='suspended') actx.resume(); if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
+  try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
 function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
 let voices=[];
@@ -279,16 +279,46 @@ function lpMusicUpdate(dt){
     return;
   }
   if(cur.paused) return;   // intentionally stopped (menu/death) — don't resurrect it here
-  const dur=cur.duration||0, ct=cur.currentTime||0;
-  if(lpMxNext<0 && dur>0 && ct>dur-LP_MX_FADE){    // near the end → start the next track fading in
+  // Use the WAVEFORM end (trailing silence trimmed), not the file duration, so the next track fades
+  // in as the audible music ends instead of after seconds of dead air.
+  const dur=trackEnd(cur), ct=cur.currentTime||0;
+  if(lpMxNext<0 && dur>0 && ct>dur-LP_MX_FADE){    // near the audible end → start the next track fading in
     lpMxNext=(lpMxIdx+1)%lpMx.length; const nx=lpMx[lpMxNext];
     try{ nx.currentTime=0; nx.volume=0; nx.play().catch(()=>{}); }catch(e){}
   }
   if(lpMxNext>=0){
-    const nx=lpMx[lpMxNext], remain=Math.max(0,(cur.duration||0)-(cur.currentTime||0)), f=clamp(1-remain/LP_MX_FADE,0,1);
+    const nx=lpMx[lpMxNext], remain=Math.max(0,dur-(cur.currentTime||0)), f=clamp(1-remain/LP_MX_FADE,0,1);
     try{ cur.volume=LP_MX_VOL*musicVol*(1-f); nx.volume=LP_MX_VOL*musicVol*f; }catch(e){}
     if(cur.ended || remain<=0.06){ try{ cur.pause(); cur.currentTime=0; }catch(e){} lpMxIdx=lpMxNext; lpMxNext=-1; try{ nx.volume=LP_MX_VOL*musicVol; }catch(e){} }
   } else { try{ cur.volume=LP_MX_VOL*musicVol; }catch(e){} }
+}
+// ---- Waveform end-detection: decode a track once and find where the audible content stops, so we
+// loop/crossfade at the end of the MUSIC instead of the end of the FILE (mp3s carry trailing silence
+// that otherwise sounds like a long gap before the song comes back). Async + cached; falls back to
+// the element's duration until the decode lands. ----
+const _audioEnd={};   // _src -> audible-length seconds (or a sentinel while measuring)
+function measureAudioEnd(src){
+  if(!src) return 0;
+  if(src in _audioEnd){ const v=_audioEnd[src]; return (typeof v==='number')?v:0; }
+  _audioEnd[src]='pending';
+  try{
+    if(!actx || !window.fetch){ _audioEnd[src]=0; return 0; }
+    fetch(src).then(r=>r.arrayBuffer()).then(buf=>actx.decodeAudioData(buf)).then(ab=>{
+      const ch=ab.getChannelData(0), thresh=0.01; let i=ab.length-1;
+      for(; i>0; i--){ if(Math.abs(ch[i])>thresh) break; }
+      const t=i/ab.sampleRate;
+      // only trust a sane trim: at least 3s of content and it actually shaves off ≥0.15s of tail
+      _audioEnd[src]=(t>3 && t<ab.duration-0.15)?t:0;
+    }).catch(()=>{ _audioEnd[src]=0; });
+  }catch(e){ _audioEnd[src]=0; }
+  return 0;
+}
+function trackEnd(el){ if(!el) return 0; const e=measureAudioEnd(el._src); return e>0 ? e : (el.duration||0); }
+// Skip the silent tail on the looping single-file tracks: when the audible content ends, jump back to
+// the top instead of waiting out the file's trailing silence.
+function musicLoopTrim(){
+  const list=[bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,menuMusic,losAndesMusic];
+  for(const el of list){ if(!el||el.paused) continue; const end=measureAudioEnd(el._src); if(end>0 && (el.currentTime||0)>=end-0.04){ try{ el.currentTime=0; }catch(e){} } }
 }
 function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; playSfx(AUDIO_SRC.wow, 0.4); }
 function playPickup(){
@@ -816,8 +846,11 @@ function tinted(img, key, color){
 
 // ---------- Input ----------
 const keys = {};
-const NET = { role:'local', peer:null, conn:null, conns:[], link:'', hosting:false,   // host: conns = up to 3 guests
+const NET = { role:'local', peer:null, conn:null, conns:[], link:'', hosting:false,   // host: conns = up to (lobbyCap-1) guests
   guestReady:false, slot:1, snap:null, guestKeys:null, waitState:'' };                 // guest: replicated-state fields
+// Max players in the current online session: Modo Infinito (Las Palmas) and PVP go up to 5; the
+// classic Horda maps stay at 4 (their roster only has 4 distinct characters).
+function lobbyCap(){ return (currentMap==='laspalmas'||currentMap==='pvp') ? 5 : 4; }
 addEventListener('keydown', e => {
   initAudio();
   // Las Palmas intro is playing: swallow all input; Space/Enter/Esc skip the clip, nothing drives the menu behind it
@@ -1310,15 +1343,21 @@ function placeApu(type){
 // Modo Infinito ground pickups: 'shoe' = speed (reuses the Tierra speed multiplier). Weapons get
 // added here with the inventory system.
 const lpItems=[];
+// Enemy-dropped pickups don't linger forever: they last a few seconds, blink faster as they run out,
+// then vanish so the field never fills up with un-grabbed loot. (Applied in Modo Infinito only.)
+const LP_PICKUP_LIFE=13, LP_PICKUP_BLINK=3.2;
+function pickupBlinkHide(life){ return life!=null && life<LP_PICKUP_BLINK && Math.floor(time*(life<1?14:7))%2===0; }
 function lpMaybeDrop(e){
   const big=(e.type==='large');
   // health hearts: uncommon from any enemy, much likelier from the big ones. Heal is partial
   // (~25%, see updateHearts) so you're never fully safe.
-  if(Math.random() < (big?0.22:0.05)) hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:16});
+  if(Math.random() < (big?0.22:0.05)) hearts.push({x:e.x,y:e.y,bob:Math.random()*TAU,spin:Math.random()*TAU,life:LP_PICKUP_LIFE});
   // speed shoe: rare, small permanent stack until you die
-  if(lpItems.length<24 && Math.random() < (big?0.06:0.03)) lpItems.push({id:_entId++, kind:'shoe', x:e.x+rand(-8,8), y:e.y+rand(-8,8), bob:Math.random()*TAU, spawn:0});
+  if(lpItems.length<24 && Math.random() < (big?0.06:0.03)) lpItems.push({id:_entId++, kind:'shoe', x:e.x+rand(-8,8), y:e.y+rand(-8,8), bob:Math.random()*TAU, spawn:0, life:LP_PICKUP_LIFE});
 }
 function updateLpItems(dt){
+  // fade out shoe / power-up drops that sit un-grabbed (weapon crates have no life → they persist)
+  for(let i=lpItems.length-1;i>=0;i--){ const it=lpItems[i]; if(it.life!=null){ it.life-=dt; if(it.life<=0){ lpItems.splice(i,1); } } }
   for(const it of lpItems){ it.bob+=dt*6; if(it.spawn<1) it.spawn=Math.min(1,it.spawn+dt*3); }
   for(const p of players){ if(!p.alive) continue;
     for(let i=lpItems.length-1;i>=0;i--){ const it=lpItems[i];
@@ -1349,15 +1388,16 @@ function drawWeaponCrate(x,y,kind){   // wooden ammo crate stamped with the weap
   const IN={rapid:'R',fire:'F',grenade:'G',mine:'M',block:'B',torreta:'T'};
   ctx.fillText(IN[kind]||'?', x, y+1); ctx.textBaseline='alphabetic'; ctx.textAlign='left';
 }
-function drawLpItems(){
-  for(const it of lpItems){ const bob=Math.abs(Math.sin(it.bob))*6, cy=it.y-bob, pop=clamp(it.spawn,0,1);
-    ctx.save(); ctx.globalAlpha=pop;
-    ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(it.x,it.y+8,11,3.6,0,0,TAU); ctx.fill();
-    if(it.kind==='shoe'){ ctx.shadowColor='#dfeaff'; ctx.shadowBlur=8+4*Math.sin(time*5); drawShoe(it.x,cy); ctx.shadowBlur=0; }
-    else if(WEAPONS[it.kind]){ ctx.shadowColor=WEAPONS[it.kind].col; ctx.shadowBlur=6+3*Math.sin(time*4); drawWeaponCrate(it.x,cy,it.kind); ctx.shadowBlur=0; }
-    ctx.restore();
-  }
+function drawLpItem(it){
+  if(pickupBlinkHide(it.life)) return;
+  const bob=Math.abs(Math.sin(it.bob))*6, cy=it.y-bob, pop=clamp(it.spawn,0,1);
+  ctx.save(); ctx.globalAlpha=pop;
+  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(it.x,it.y+8,11,3.6,0,0,TAU); ctx.fill();
+  if(it.kind==='shoe'){ ctx.shadowColor='#dfeaff'; ctx.shadowBlur=8+4*Math.sin(time*5); drawShoe(it.x,cy); ctx.shadowBlur=0; }
+  else if(WEAPONS[it.kind]){ ctx.shadowColor=WEAPONS[it.kind].col; ctx.shadowBlur=6+3*Math.sin(time*4); drawWeaponCrate(it.x,cy,it.kind); ctx.shadowBlur=0; }
+  ctx.restore();
 }
+function drawLpItems(){ for(const it of lpItems) drawLpItem(it); }
 let lpCrateT=10;
 // weighted crate loot table — common ammo drops often, the powerful placeables are rare
 const CRATE_LOOT=[['rapid',5],['fire',3],['grenade',3],['mine',2],['block',3],['torreta',1]];
@@ -1473,7 +1513,11 @@ const WEAPONS={
 };
 const WEAPON_ORDER=['pistol','rapid','fire','grenade','mine','block','torreta'];   // number keys 1..N map to this order
 function weaponOwned(p,k){ return k==='pistol' || !!(p.ammo && p.ammo[k]>0); }
-function giveWeapon(p,k){ const W=WEAPONS[k]; if(!W) return; if(!p.ammo) p.ammo={}; p.ammo[k]=Math.min(W.ammoMax*3,(p.ammo[k]||0)+W.ammoMax); p.weapon=k; floatText(p.x,p.y-30,W.name,W.col); playCoin(); }
+function giveWeapon(p,k){ const W=WEAPONS[k]; if(!W) return; if(!p.ammo) p.ammo={};
+  // Turrets are powerful — a crate grants just ONE, but you can stockpile up to 3 from multiple crates.
+  if(k==='torreta'){ p.ammo[k]=Math.min(W.ammoMax,(p.ammo[k]||0)+1); }
+  else { p.ammo[k]=Math.min(W.ammoMax*3,(p.ammo[k]||0)+W.ammoMax); }
+  p.weapon=k; floatText(p.x,p.y-30,W.name,W.col); playCoin(); }
 function switchWeapon(p,k){ if(weaponOwned(p,k)) p.weapon=k; }
 function cycleWeapon(p,dir){ const own=WEAPON_ORDER.filter(k=>weaponOwned(p,k)); if(!own.length) return; let i=own.indexOf(p.weapon); if(i<0)i=0; p.weapon=own[(i+dir+own.length)%own.length]; }
 function consumeAmmo(p,k){ if(k==='pistol') return; if(!p.ammo) p.ammo={}; p.ammo[k]=(p.ammo[k]||0)-1; if(p.ammo[k]<=0){ p.ammo[k]=0; p.weapon='pistol'; floatText(p.x,p.y-26,'SIN MUNICIÓN','#ffd0a0'); } }
@@ -1537,7 +1581,7 @@ function drawMines(){
 }
 function placeBlockLP(p){
   const c=wallCellFor(p);
-  const rect={x:c.x, y:c.y, w:GRID, h:GRID, t:'incaWall', hp:WALL_HP, maxhp:WALL_HP, id:_entId++};
+  const rect={x:c.x, y:c.y, w:GRID, h:GRID, t:'incaWall', hp:LP_BLOCK_HP, maxhp:LP_BLOCK_HP, id:_entId++};
   if(!wallAreaFree(rect,p)){ floatText(p.x,p.y-26,'¡AQUÍ NO!','#d8d2c2'); return false; }
   incaWalls.push(rect); obstacles.push(rect);   // obstacles is empty on Las Palmas; lpResolve reads incaWalls directly
   resolveCollision(p);
@@ -1803,10 +1847,11 @@ const hearts=[];
 const nuggets=[];
 let _gnBag=[];
 function nextGN(){ if(_gnBag.length===0){ _gnBag=[1,2,3,4,5]; for(let i=_gnBag.length-1;i>0;i--){ const j=randi(0,i); const t=_gnBag[i]; _gnBag[i]=_gnBag[j]; _gnBag[j]=t; } } return 'gn'+_gnBag.pop(); }
-function dropNugget(x,y){ nuggets.push({x, y, vx:rand(-40,40), vy:rand(-60,-15), img:nextGN(), bob:Math.random()*TAU, pull:0}); }
+function dropNugget(x,y){ nuggets.push({x, y, vx:rand(-40,40), vy:rand(-60,-15), img:nextGN(), bob:Math.random()*TAU, pull:0, life:survival?LP_PICKUP_LIFE:null}); }
 function updateNuggets(dt){
   for(let i=nuggets.length-1;i>=0;i--){
     const g=nuggets[i]; g.bob+=dt*8;
+    if(g.life!=null){ g.life-=dt; if(g.life<=0){ nuggets.splice(i,1); continue; } }   // un-grabbed gold fades out (Modo Infinito)
     let nearest=null, nd=1e9;
     for(const p of players){ if(!p.alive) continue; const dd=dist(p.x,p.y,g.x,g.y); if(dd<nd){nd=dd;nearest=p;} }
     const blocked = nearest ? segBlocked(g.x,g.y,nearest.x,nearest.y) : true;
@@ -1823,21 +1868,22 @@ function updateNuggets(dt){
     }
   }
 }
-function drawNuggets(){
-  for(const g of nuggets){
-    const oy=(currentMap==='machu')?machuElev(g.x):0;
-    const img=PROP[g.img], y=g.y+Math.sin(g.bob)*2.5+oy;
-    ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(g.x,g.y+6+oy,5,2,0,0,TAU); ctx.fill();
-    ctx.save(); ctx.shadowColor='#ffd23a'; ctx.shadowBlur=8+4*Math.sin(g.bob);
-    if(img && img.naturalWidth){ const h=14, w=h*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, g.x-w/2, y-h/2, w, h); }
-    else { ctx.fillStyle='#ffd21a'; ctx.beginPath(); ctx.arc(g.x,y,6,0,TAU); ctx.fill(); }
-    ctx.restore();
-    if(Math.sin(g.bob*1.7)>0.85){ spark(g.x+rand(-8,8), g.y+rand(-8,8), '#fff8c0', 1, 20); }
-  }
+function drawNugget(g){
+  if(pickupBlinkHide(g.life)) return;
+  const oy=(currentMap==='machu')?machuElev(g.x):0;
+  const img=PROP[g.img], y=g.y+Math.sin(g.bob)*2.5+oy;
+  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(g.x,g.y+6+oy,5,2,0,0,TAU); ctx.fill();
+  ctx.save(); ctx.shadowColor='#ffd23a'; ctx.shadowBlur=8+4*Math.sin(g.bob);
+  if(img && img.naturalWidth){ const h=14, w=h*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, g.x-w/2, y-h/2, w, h); }
+  else { ctx.fillStyle='#ffd21a'; ctx.beginPath(); ctx.arc(g.x,y,6,0,TAU); ctx.fill(); }
+  ctx.restore();
+  if(Math.sin(g.bob*1.7)>0.85){ spark(g.x+rand(-8,8), g.y+rand(-8,8), '#fff8c0', 1, 20); }
 }
+function drawNuggets(){ for(const g of nuggets) drawNugget(g); }
 function updateHearts(dt){
   for(let i=hearts.length-1;i>=0;i--){
     const h=hearts[i]; h.spin+=dt*5; h.bob+=dt*4;
+    if(survival && h.life!=null){ h.life-=dt; if(h.life<=0){ hearts.splice(i,1); continue; } }   // Modo Infinito hearts fade out if left
     let taken=false;
     for(const p of players){ if(!p.alive) continue;
       if(dist(p.x,p.y,h.x,h.y)<p.radius+14){ p.hp=clamp(p.hp+p.maxhp*0.25,0,p.maxhp); floatText(p.x,p.y-24,'+VIDA','#ff7ab0'); spark(h.x,h.y,'#ff7ab0',12,140); playPickup(); taken=true; break; }
@@ -1846,6 +1892,7 @@ function updateHearts(dt){
   }
 }
 function drawHeart(h){
+  if(survival && pickupBlinkHide(h.life)) return;
   const oy=(currentMap==='machu')?machuElev(h.x):0;
   const y=h.y+Math.sin(h.bob)*4+oy, sx=Math.abs(Math.cos(h.spin))*0.8+0.2;
   ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(h.x,h.y+9+oy,8,3,0,0,TAU); ctx.fill();
@@ -2023,6 +2070,10 @@ const GRID = 40;                 // invisible placement grid for the Inca wall b
 // fast 5, large 20), projectiles for their l.dmg, bosses smash 80 per touch. 240 HP = 30 hits
 // from a base normal enemy (double the original 15-hit prototype).
 const WALL_HP = 240;
+// Modo Infinito concrete blocks are meant to build a refuge that actually lasts — give them a much
+// bigger pool than the Horda Paredes Incas so a walled base survives several waves before crumbling.
+const LP_BLOCK_HP = 900;         // ~112 hits from a base normal enemy (8 dmg); a swarm still grinds it down
+function wallMaxHp(){ return currentMap==='laspalmas' ? LP_BLOCK_HP : WALL_HP; }
 const bossDrops = [];            // {id,type,x,y,bob}
 const bombs = [];                // Rata Blanca dynamite: {id,owner(player idx),x,y,t}
 const incaWalls = [];            // wall blocks; each is ALSO pushed into `obstacles` so collision/pathing just work
@@ -2193,7 +2244,9 @@ function updateGear(dt){
     if(aim) t.ang=Math.atan2(aim.y-(t.y-26), aim.x-t.x);
     if(t.cd<=0 && aim && ad<trange){
       let best=null, bd=1e9;
-      for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<bd && dd<trange && !segBlocked(t.x,t.y-26,e.x,e.y)){bd=dd;best=e;} }
+      // Modo Infinito: turrets shoot OVER the player's concrete blocks, so a base with a turret inside
+      // can still fire out (survival skips the line-of-sight wall check; other maps keep it).
+      for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<bd && dd<trange && (survival || !segBlocked(t.x,t.y-26,e.x,e.y))){bd=dd;best=e;} }
       if(best){
         const a=Math.atan2(best.y-(t.y-26), best.x-t.x);
         turretArrows.push({x:t.x, y:t.y-26, vx:Math.cos(a)*tspd, vy:Math.sin(a)*tspd, life:2.2, spin:a, beef:t.beef});
@@ -2205,7 +2258,9 @@ function updateGear(dt){
   for(let i=turretArrows.length-1;i>=0;i--){
     const r=turretArrows[i]; r.x+=r.vx*dt; r.y+=r.vy*dt; r.life-=dt;
     let gone=r.life<=0||r.x<-30||r.x>WORLD_W+30||r.y<-30||r.y>WORLD_H+30;
-    if(!gone){ for(const o of obstacles){ if(circleRectCollide(r.x,r.y,4,o)){gone=true; spark(r.x,r.y,'#bfa77a',4,60); break;} } }
+    // survival: skip obstacle collision entirely — on Las Palmas `obstacles` holds only the player's
+    // own concrete blocks, and turret arrows are meant to fly over them (terrain isn't in obstacles).
+    if(!gone && !survival){ for(const o of obstacles){ if(circleRectCollide(r.x,r.y,4,o)){gone=true; spark(r.x,r.y,'#bfa77a',4,60); break;} } }
     if(!gone) for(const e of enemies){ if(e.dead) continue;
       if(dist(r.x,r.y,e.x,e.y)<e.radius+6){
         if(e.boss){ e.hp-=30; }                                    // bosses take it like a regular player hit
@@ -2336,7 +2391,10 @@ function drawConcreteBlock(w,f){
 function drawWallGrid(){
   if(state!==STATE.PLAY && state!==STATE.BREAK) return;
   for(const p of players){
-    if(!p.alive || p.pending || p.gear!=='muro' || !(p.gearCount>0)) continue;
+    // Horda: carrying the Paredes Incas boss drop. Modo Infinito: the concrete-block weapon selected
+    // (with ammo) — same placement grid so players can line up a base.
+    const carrying=(p.gear==='muro'&&p.gearCount>0)||(survival&&p.weapon==='block'&&weaponOwned(p,'block'));
+    if(!p.alive || p.pending || !carrying) continue;
     const oy=(currentMap==='machu')?machuElev(p.x):0;
     ctx.save(); if(oy) ctx.translate(0,oy);
     const c0x=(Math.floor(p.x/GRID)-3)*GRID, c0y=(Math.floor(p.y/GRID)-3)*GRID, span=7*GRID;
@@ -2749,6 +2807,20 @@ function startBreak(){
 // the map, then hands off to the round. Skippable. If the asset is missing it silently starts the game,
 // so the mode always works even before the video file is added.
 let introPlaying=false, introSkip=null;   // introSkip: call to end the clip early (SALTAR button or a key)
+// Silence EVERY music element — the intro clip is the only thing that should be audible.
+function silenceAllMusic(){ try{ lpMusicStop(); [menuMusic,bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,deathMusic,losAndesMusic].forEach(m=>{ if(m) m.pause(); }); }catch(e){} }
+// The intro's baked-in audio (Alfredo) was recorded quiet; route the <video> through a Web Audio
+// gain > 1 so it plays back noticeably louder. A MediaElementSource can be created only once per
+// element, so cache it.
+let _introSrcNode=null, _introGain=null;
+function boostIntroAudio(v){
+  try{
+    if(!actx) return;
+    if(actx.state==='suspended') actx.resume();   // routed audio is silent if the context is parked
+    if(!_introSrcNode){ _introSrcNode=actx.createMediaElementSource(v); _introGain=actx.createGain(); _introSrcNode.connect(_introGain); _introGain.connect(actx.destination); }
+    _introGain.gain.value=3.0;   // ~+9.5dB over the raw track
+  }catch(e){}
+}
 function playLasPalmasIntro(onDone){
   const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
   if(!v){ onDone(); return; }
@@ -2759,8 +2831,9 @@ function playLasPalmasIntro(onDone){
     onDone();   // caller decides what plays next (character select re-starts the map music)
   };
   introSkip=finish;
-  try{ lpMusicStop(); }catch(e){}      // duck the map music while the clip plays
-  introPlaying=true;
+  introPlaying=true;                   // set BEFORE silencing so any stray initAudio() stays muted
+  try{ silenceAllMusic(); }catch(e){}  // hard-stop all music while the clip plays
+  boostIntroAudio(v);
   v.muted=false; v.volume=1;
   v.style.display='block'; if(skip){ skip.style.display='block'; skip.onclick=finish; }
   v.onended=finish; v.onerror=finish;   // decode error → just start the round
@@ -4251,8 +4324,11 @@ function drawHUD(){
   ctx.fillStyle='#ffd24a'; ctx.fillText('PUNTOS '+score, W-14, 22);
   ctx.textAlign='left';
   let px=14;
+  // 5-player online sessions won't fit five 200px bars across the top — shrink the bar + stride so
+  // every player's health/ammo strip stays on-screen (≤4 players keep the roomy original layout).
+  const _np=players.length, _bw=_np>=5?160:200, _stride=_np>=5?176:240;
   for(const p of players){
-    const w=200;
+    const w=_bw;
     ctx.fillStyle=p.color; ctx.font='bold 12px Courier New';
     ctx.fillText(p.name, px, 14);
     if(p.pending){
@@ -4261,7 +4337,7 @@ function drawHUD(){
       ctx.strokeStyle='#ffe14a'; ctx.lineWidth=1; ctx.strokeRect(px,19,w,12);
       ctx.fillStyle='#ffe14a'; ctx.font='9px Courier New'; ctx.textAlign='center';
       ctx.fillText('ENTRA EN LA PR\u00d3XIMA RONDA', px+w/2, 29); ctx.textAlign='left';
-      px += w+40; continue;
+      px += _stride; continue;
     }
     drawBar(px, 19, w, 12, p.alive?p.hp/p.maxhp:0, '#ff5a4a');
     ctx.fillStyle='#fff'; ctx.font='10px Courier New';
@@ -4287,7 +4363,7 @@ function drawHUD(){
     ctx.textAlign='left';
     if(survival) drawPlayerWeapons(p, px, 35, w);
     else drawApuStatus(p, px, 48);
-    px += w+40;
+    px += _stride;
   }
 }
 
@@ -4393,6 +4469,31 @@ function ensureMapThumb(){
   mapThumb3=renderArenaThumb(OBST_TEMPLO,'templo');
   mapThumb4=renderArenaThumb(OBST_MACHU,'machu');
 }
+// Las Palmas (Modo Infinito) menu/select backdrop: a wide crop of the town terrain centred on the
+// spawn, with the same apocalyptic red wash as in-game. Rebuilt until the terrain image has loaded
+// so it never sticks on the green fallback.
+let mapThumbLp=null, _lpThumbHasImg=false;
+function renderLpThumb(){
+  const oc=document.createElement('canvas'); oc.width=W; oc.height=H; const g=oc.getContext('2d');
+  const img=LP_TERRAIN_IMG;
+  if(img && img.naturalWidth){
+    const cw=Math.min(img.naturalWidth, Math.round(img.naturalHeight*(W/H))||img.naturalWidth);
+    const ch=Math.round(cw*H/W);
+    const cx=clamp(Math.round(LP_SPAWN.x-cw/2),0,img.naturalWidth-cw);
+    const cy=clamp(Math.round(LP_SPAWN.y-ch/2),0,img.naturalHeight-ch);
+    g.drawImage(img, cx,cy,cw,ch, 0,0,W,H);
+    _lpThumbHasImg=true;
+  } else { g.fillStyle='#4f8a3a'; g.fillRect(0,0,W,H); _lpThumbHasImg=false; }
+  g.save();
+  g.globalCompositeOperation='multiply'; g.fillStyle='rgba(255,105,85,0.34)'; g.fillRect(0,0,W,H);
+  g.globalCompositeOperation='source-over'; g.fillStyle='rgba(150,25,15,0.14)'; g.fillRect(0,0,W,H);
+  const grd=g.createRadialGradient(W/2,H*0.46,H*0.26,W/2,H*0.55,H*1.02);
+  grd.addColorStop(0,'rgba(40,0,0,0)'); grd.addColorStop(1,'rgba(48,0,0,0.5)');
+  g.fillStyle=grd; g.fillRect(0,0,W,H);
+  g.restore();
+  return oc;
+}
+function lpThumb(){ if(!mapThumbLp || !_lpThumbHasImg) mapThumbLp=renderLpThumb(); return mapThumbLp; }
 
 const BUILD='v2026-07-16.10';   // bump on every push — shown on the main menu so stale copies are obvious
 function drawMainMenu(){
@@ -4563,17 +4664,18 @@ function drawArrowIcon(cx,cy,s){
 
 // ---------- Menus ----------
 function drawMenu(){
+  const _lp=(currentMap==='laspalmas');
   ensureMapThumb();
-  const _th=(currentMap==='stonebridge')?mapThumb2:(currentMap==='templo')?mapThumb3:(currentMap==='machu')?mapThumb4:mapThumb;
+  const _th=_lp?lpThumb():(currentMap==='stonebridge')?mapThumb2:(currentMap==='templo')?mapThumb3:(currentMap==='machu')?mapThumb4:mapThumb;
   if(_th){ ctx.drawImage(_th,0,0,W,H); } else { drawArena(); }
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 40px Courier New';
-  ctx.fillText('FREDDY & MICHI', W/2, 150);
-  ctx.fillStyle='#8cc24a'; ctx.font='bold 22px Courier New';
-  ctx.fillText(currentMap==='stonebridge'?'Stonebridge':currentMap==='templo'?'Templo de la Jarjacha':currentMap==='machu'?'Machu Picchu':'Esp\u00edritu del Amazonas', W/2, 188);
+  ctx.fillText(_lp?'MODO INFINITO':'FREDDY & MICHI', W/2, 150);
+  ctx.fillStyle=_lp?'#ff8a6a':'#8cc24a'; ctx.font='bold 22px Courier New';
+  ctx.fillText(_lp?'Las Palmas':currentMap==='stonebridge'?'Stonebridge':currentMap==='templo'?'Templo de la Jarjacha':currentMap==='machu'?'Machu Picchu':'Esp\u00edritu del Amazonas', W/2, 188);
   ctx.fillStyle='#cdbf9a'; ctx.font='14px Courier New';
-  ctx.fillText(currentMap==='stonebridge'?'Sobrevive 20 rondas y derrota a la Bruja Blanca':currentMap==='templo'?'Sobrevive 20 rondas y derrota a la Jarjacha':currentMap==='machu'?'Sobrevive 20 rondas y derrota a Evan y Brian':'Sobrevive 20 rondas y derrota a Teddington', W/2, 224);
+  ctx.fillText(_lp?'Sobrevive oleadas infinitas \u2014 arma tu refugio y resiste':currentMap==='stonebridge'?'Sobrevive 20 rondas y derrota a la Bruja Blanca':currentMap==='templo'?'Sobrevive 20 rondas y derrota a la Jarjacha':currentMap==='machu'?'Sobrevive 20 rondas y derrota a Evan y Brian':'Sobrevive 20 rondas y derrota a Teddington', W/2, 224);
 
   const opts=['UN JUGADOR','CO-OP LOCAL  (2 jugadores)'];
   opts.forEach((o,i)=>{
@@ -4793,14 +4895,14 @@ function drawLobby(){
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText(lobbyMode==='pvp'?'SALA ONLINE — PVP':'SALA ONLINE', W/2, 96);
   ctx.fillStyle='#8cc24a'; ctx.font='16px Courier New';
-  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-4 jugadores · comparte el enlace (hasta 3 amigos)':'Comparte el enlace con tus amigos (hasta 3)', W/2, 134);
+  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-5 jugadores · comparte el enlace (hasta 4 amigos)':('Comparte el enlace con tus amigos (hasta '+(lobbyCap()-1)+')'), W/2, 134);
   ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
   ctx.fillText(NET.link || 'Generando enlace…', W/2, 178);
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
   ctx.fillText('Cópialo con el botón "Copiar" del recuadro arriba a la derecha ↗', W/2, 202);
   const n = 1 + NET.conns.length;
   const rows = [{t:'J1 — anfitrión', on:true}];
-  for(let i=0;i<3;i++){ const c = i < NET.conns.length; rows.push({t:'J'+(i+2)+' — '+(c?'conectado':'esperando…'), on:c}); }
+  for(let i=0;i<lobbyCap()-1;i++){ const c = i < NET.conns.length; rows.push({t:'J'+(i+2)+' — '+(c?'conectado':'esperando…'), on:c}); }
   rows.forEach((r,i)=>{
     const yy=276+i*44;
     ctx.fillStyle = r.on ? 'rgba(120,200,90,0.16)' : 'rgba(255,255,255,0.05)';
@@ -4984,7 +5086,7 @@ function drawSelect(){
     if(PROP.machubg && PROP.machubg.naturalWidth) drawImageCover(PROP.machubg);
     else { ctx.fillStyle='#7ec3e8'; ctx.fillRect(0,0,W,H); }
     pvpEnsureBG(); ctx.drawImage(pvp.bgc,0,0);
-  } else drawArena();
+  } else if(currentMap==='laspalmas'){ ctx.drawImage(lpThumb(),0,0,W,H); } else drawArena();
   ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 30px Courier New'; ctx.fillText(pvpPending?'VERSUS — ELIGE TU PERSONAJE':'ELIGE TU PERSONAJE', W/2, 78);
@@ -5029,7 +5131,7 @@ let netSelT=0, netSelPicks=null;
 function enterNetSelect(){
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-  const total=Math.min(4, 1+NET.conns.length);
+  const total=Math.min(lobbyCap(), 1+NET.conns.length);
   players=[];
   for(let i=0;i<total;i++){ const pl=makePlayer('freddy', 0,0, i===0?P1:REMOTE); pvpInitChooser(pl,i); players.push(pl); }
   for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; }
@@ -5063,7 +5165,7 @@ function startGame(){
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   if(NET.hosting){
     const sy0=sy0base;
-    const total=Math.min(4, Math.max(1, 1+NET.conns.length));
+    const total=Math.min(lobbyCap(), Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
     for(let i=0;i<total;i++){ const R=hordaRoster(); players.push(makePlayer(R[i]||R[0], sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
@@ -5153,7 +5255,7 @@ function startPvpOnline(){
   pvpResetWorld();
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-  const total=Math.min(4, 1+NET.conns.length);
+  const total=Math.min(lobbyCap(), 1+NET.conns.length);
   players=[];
   for(let i=0;i<total;i++){ const pl=makePlayer('freddy', 0,0, i===0?P1:REMOTE); pvpInitChooser(pl,i); players.push(pl); }
   for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
@@ -6039,6 +6141,7 @@ function _frameBody(now){
   if(mapLockShake>0) mapLockShake-=dt;
   safe('particles-upd',()=>updateParticles(dt));
   if(cameraShake>0) cameraShake-=dt*30;
+  safe('musictrim',musicLoopTrim);   // loop the single-file tracks at their audible end (skip trailing silence)
   if(currentMap==='laspalmas') safe('lpmusic',()=>lpMusicUpdate(dt));
   if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE) safe('camera',updateCamera);
   else if(state!==STATE.DYING && state!==STATE.OVER && state!==STATE.VICTORY){ camX=0; camY=0; }
@@ -6080,7 +6183,14 @@ function _frameBody(now){
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
   if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
   if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
-    if(_LP) safe('lpitems',drawLpItems);   // shoe / power-up pickups
+    if(_LP){
+      // Modo Infinito pickups join the depth sort so they hide BEHIND trees/houses just like the
+      // player (the tennis court is a flat ground decal drawn earlier, so loot resting on it always
+      // shows on top of the court).
+      for(const it of lpItems) drawables.push({y:it.y,x:it.x,sy:it.y,zt:0,f:()=>drawLpItem(it)});
+      for(const h of hearts)   drawables.push({y:h.y,x:h.x,sy:h.y,zt:0,f:()=>drawHeart(h)});
+      for(const g of nuggets)  drawables.push({y:g.y,x:g.x,sy:g.y,zt:0,f:()=>drawNugget(g)});
+    }
     else for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
   }
   drawables.forEach((d,i)=>d._i=i);   // stable-sort tiebreak
@@ -6101,8 +6211,7 @@ function _frameBody(now){
   if(survival){ safe('mines',drawMines); safe('bullets',drawBullets); safe('grenades',drawGrenades); safe('nadecharge',drawNadeCharges); }
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
-  safe('hearts',drawHearts);
-  safe('nuggets',drawNuggets);
+  if(!_LP){ safe('hearts',drawHearts); safe('nuggets',drawNuggets); }   // Modo Infinito draws these in the depth sort above (behind trees)
   safe('wallets',drawWallets);
   safe('tarrows',drawTurretArrows);
   safe('bombs',drawBombs);
@@ -6579,7 +6688,7 @@ function netApplyGuest(dt){
     if(sig!==gWallSig){
       gWallSig=sig;
       incaWalls.length=0;
-      for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:WALL_HP, id:w2.id});
+      for(const w2 of cur.incaW||[]) incaWalls.push({x:w2.x, y:w2.y, w:GRID, h:GRID, t:'incaWall', hp:w2.hp, maxhp:wallMaxHp(), id:w2.id});
       const base=(currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS;
       obstacles=base.concat(incaWalls);
     } }
@@ -6804,13 +6913,13 @@ requestAnimationFrame(frame);
     peer.on('open', id => {
       NET.link = location.origin + location.pathname + '?r=' + id;
       if(linkBox) linkBox.value = NET.link;
-      setStatus('Comparte el enlace con hasta 3 amigos. Cuando estén conectados, empieza la partida.');
+      setStatus('Comparte el enlace con hasta '+(lobbyCap()-1)+' amigos. Cuando estén conectados, empieza la partida.');
     });
     peer.on('connection', conn => {
       // lowest free slot 1-3, so a leaver's spot can be re-taken by a new (or returning) guest
       const used=new Set(NET.conns.map(g=>g.slot));
       let slot=1; while(used.has(slot)) slot++;
-      if(slot>3){ try{ conn.close(); }catch(e){} return; }   // 4-player max (host + 3)
+      if(slot>=lobbyCap()){ try{ conn.close(); }catch(e){} return; }   // host + (lobbyCap-1) guests
       const guest = { conn, keys:{}, slot };
       NET.conns.push(guest);
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(slot+1)+' listo)');
@@ -6835,7 +6944,7 @@ requestAnimationFrame(frame);
       if(inGame()){
         guest.grace=0.6;   // hold host-authoritative pos briefly until the guest's pose stream catches up
         if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc = guest.keys; rp.netRemote = guest; }   // returning guest counts (and revives at break) again
-        else if(players.length<4){
+        else if(players.length<lobbyCap()){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
           // mid-game joiner: random character, but NEVER one already taken by another player
           const taken=new Set(players.map(pp=>pp.kind));
@@ -6854,7 +6963,7 @@ requestAnimationFrame(frame);
       else if(state===STATE.PVP && pvpOnline && pvp.sub!=='off' && pvp.sub!=='matchend'){
         guest.grace=0.6;
         if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }   // returning player keeps their character, revives next round
-        else if(players.length<4){
+        else if(players.length<lobbyCap()){
           const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
           pl.keysrc=guest.keys; pl.netRemote=guest;
           pvpInitChooser(pl, players.length);
@@ -6865,7 +6974,7 @@ requestAnimationFrame(frame);
       // joining while everyone is on the horda pick screen: grab a cursor and pick too
       else if(state===STATE.NETSELECT){
         if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }
-        else if(players.length<4){
+        else if(players.length<lobbyCap()){
           const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
           pl.keysrc=guest.keys; pl.netRemote=guest;
           pvpInitChooser(pl, players.length);
