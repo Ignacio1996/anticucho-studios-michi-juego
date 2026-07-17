@@ -191,7 +191,7 @@ function playSfxElement(src, vol, rate){
       else { a=pool.shift(); pool.push(a); try{ a.pause(); }catch(e){} }   // all busy → steal oldest
     }
     try{ a.currentTime=0; }catch(e){}
-    a.volume=vol*sfxVol;
+    a.volume=Math.min(1, vol*sfxVol);   // element volume caps at 1 (boosted voices only amplify on the Web Audio path)
     a.preservesPitch=a.mozPreservesPitch=a.webkitPreservesPitch=!rate;
     a.playbackRate=rate||1;
     a.play().catch(()=>{});
@@ -237,12 +237,17 @@ let voices=[];
 function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
 function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
 function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); }
-// Alfredo & Mati recorded their voice takes quieter than the rest of the roster — lift their
-// select/death/hit volume a notch. Clamped to 1 so the <audio> element fallback never throws.
-const CHAR_VOL_BOOST={ alfredo:1.35, mati:1.35 };
-function charVol(kind, base){ return Math.min(1, base*(CHAR_VOL_BOOST[kind]||1)); }
-function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], charVol(kind,0.95)); }
-function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], charVol(kind,0.95)); }
+// Alfredo & Mati recorded their voice takes quieter than the rest of the roster — and each CLIP by a
+// different amount (Alfredo's select is ~7× quieter than Vannucci's, his death only ~2×). Boosts are
+// per-clip, calibrated from measured RMS to land every take at Vannucci/Flash loudness. NOT clamped
+// to 1: the Web Audio path amplifies past full volume (which quiet recordings need); only the <audio>
+// element fallback clamps, inside playSfxElement. (The old per-character min(1,…) clamp made the
+// boost a no-op: 0.95×1.35 just clipped back to 1.0 — that's why Alfredo never got louder.)
+const VOICE_BOOST={ alfredo_sel:4.5, alfredo_die:1.6, alfredo_hit1:2.8, alfredo_hit2:2.8,
+                    mati_sel:3.0, mati_die:1.6, mati_hit1:2.1, mati_hit2:2.0 };
+function voiceVol(clip, base){ return base*(VOICE_BOOST[clip]||1); }
+function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], voiceVol(kind+'_sel',0.95)); }
+function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], voiceVol(kind+'_die',0.95)); }
 function playRoundStart(r){
   const boss=(r%5===0);
   if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
@@ -1626,7 +1631,7 @@ function fireBullet(p,fire){
   const mz=18, bx=p.x+cx*mz, by=p.y+cy*mz;
   bullets.push({ id:_entId++, x:bx, y:by, vx:cx*(fire?BULLET_SPD*0.7:BULLET_SPD), vy:cy*(fire?BULLET_SPD*0.7:BULLET_SPD),
                  life:fire?0.5:0.62, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra], fire:!!fire });   // damage = maxhp/shots, boosted by Piedra
-  spark(bx+cx*6, by+cy*6, fire?'#ff9a2a':'#fff2c0', fire?5:3, 130);
+  spark(bx+cx*6, by+cy*6, fire?'#ff9a2a':'#bfe4ff', fire?5:3, 130);
 }
 function tryShoot(p){
   if(!p.alive || p.cooldown>0) return;
@@ -1750,7 +1755,7 @@ function updateBullets(dt){
     const ax=b.x, ay=b.y;                       // segment start (for swept collision — bullets are fast)
     b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
     // walls (check the segment's midpoint + end so a fast bullet can't tunnel a thin wall/net)
-    if(currentMap==='laspalmas' && !lpBulletPass(b.x,b.y) && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,'#fff2c0',3,70); bullets.splice(i,1); continue; }
+    if(currentMap==='laspalmas' && !lpBulletPass(b.x,b.y) && (lpSolidAt(b.x,b.y)||lpSolidAt((ax+b.x)/2,(ay+b.y)/2))){ spark(b.x,b.y,b.fire?'#fff2c0':'#bfe4ff',3,70); bullets.splice(i,1); continue; }
     let hit=false;
     for(const e of enemies){ if(e.dead) continue;
       const rr=(e.footR||e.radius)+6;
@@ -1782,15 +1787,20 @@ function updateBurns(dt){
     }
   }
 }
-function drawBullets(){
+function drawBullet(b){   // one tracer — depth-sorted with the world so trees/houses cover shots
   ctx.save(); ctx.lineCap='round';
-  for(const b of bullets){
-    const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
+  const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
+  if(b.fire){   // incendiary rounds keep their fiery look
     ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
     ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+  } else {      // water-gun squirt: translucent blue jet with a paler core (saturated enough to
+                // stay clearly blue under the map's red apocalyptic tint)
+    ctx.strokeStyle='rgba(30,140,255,0.6)'; ctx.lineWidth=6.5; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='rgba(140,210,255,0.95)'; ctx.lineWidth=2.8; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
   }
   ctx.restore();
 }
+function drawBullets(){ for(const b of bullets) drawBullet(b); }
 function updateEffects(dt){ for(let i=fx_effects.length-1;i>=0;i--){ fx_effects[i].life-=dt; if(fx_effects[i].life<=0) fx_effects.splice(i,1); } }
 function drawEffects(){
   for(const e of fx_effects){
@@ -1888,7 +1898,7 @@ function playPunchSound(p){
     const horStep=(k==='vannucci')?3:(k==='sebas')?4:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
-      playOne(AUDIO_SRC[k+'_hit'+n2], charVol(k,0.6));
+      playOne(AUDIO_SRC[k+'_hit'+n2], voiceVol(k+'_hit'+n2,0.6));
     }
     return;
   }
@@ -3097,14 +3107,15 @@ function drawLasPalmasTint(){
 }
 // ---------- Modo Infinito NPC helpers ----------
 // The roster characters nobody is playing wander the map IDLE + hidden; walk into one to TAG it and
-// it joins as an AI ally that hunts enemies until it dies. Max 2 active at once; random order; a delay
+// it joins as an AI ally that hunts enemies until it dies. ONE ally at a time; random order; a delay
 // before the next appears; the pool loops once everyone has fallen. Host-authoritative + replicated.
 const npcs=[];
-let npcQueue=[], npcSpawnT=14, npcDeadWait=0;
+let npcQueue=[], npcSpawnT=14;
 function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k && !p.departed)); }   // chars no player picked
 function refillNpcQueue(){ npcQueue=npcRoster(); for(let i=npcQueue.length-1;i>0;i--){ const j=randi(0,i); const t=npcQueue[i]; npcQueue[i]=npcQueue[j]; npcQueue[j]=t; } }
 function makeNpc(kind,x,y){
   const n=makePlayer(kind,x,y,null);   // reuse the player shape so drawPlayer/charFrame just work
+  n.id=_entId++;                       // stable id for cross-snapshot matching (online replication)
   n.isNpc=true; n.npcState='idle'; n.tagBob=Math.random()*TAU;
   n.maxhp*=2; n.hp=n.maxhp; n.weapon='pistol';   // double HP, always a pistol
   n.aiShootCd=0; n.aiRepathT=0; n.aiWX=x; n.aiWY=y;
@@ -3134,31 +3145,31 @@ function npcSteer(n,tx,ty){
   return base+Math.PI;   // fully boxed in — back straight out
 }
 function spawnIdleNpc(){
-  if(npcs.length>=2 || !npcQueue.length) return;
+  if(npcs.length>=1 || !npcQueue.length) return;   // ONE ally at a time — the next appears after this one falls
   const kind=npcQueue.pop();
-  for(let t=0;t<60;t++){                     // a walkable spot FAR from every player, so you must explore
-    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);
+  for(let t=0;t<60;t++){                     // anywhere walkable on the map (a corner, behind a house…),
+    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);   // just never inside the current view (no pop-in)
     if(lpSolidAt(x,y)) continue;
-    let far=true; for(const p of players){ if(p.alive && dist(x,y,p.x,p.y)<950){ far=false; break; } }
-    if(far){ npcs.push(makeNpc(kind,Math.round(x),Math.round(y))); return; }
+    if(x>camX-60 && x<camX+W+60 && y>camY-60 && y<camY+H+60) continue;
+    npcs.push(makeNpc(kind,Math.round(x),Math.round(y))); return;
   }
   npcQueue.push(kind);                       // no spot found — retry next tick
 }
-function tagNpc(n){ n.npcState='active'; n.hp=n.maxhp; try{ playCharSelect(n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
+function tagNpc(n){ n.npcState='active'; n.hp=n.maxhp; try{ playCharSelect(n.kind); netQSnd('sel',n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
 function fireNpcBullet(n, tx, ty){
   const dx=tx-n.x, dy=ty-n.y, ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4), cx=Math.cos(ang), cy=Math.sin(ang);
   n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
   const mz=18, bx=n.x+cx*mz, by=n.y+cy*mz;
   bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, npc:n});
-  spark(bx,by,'#fff2c0',3,130); try{ sfxGun(false); }catch(e){}
+  spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(false); }catch(e){}
 }
 function updateNpcs(dt){
-  if(npcDeadWait>0) npcDeadWait-=dt;
+  // one timer drives the cycle: game start → first ally at ~14s; ally death → next EXACTLY 60s later
   npcSpawnT-=dt;
-  if(npcSpawnT<=0){
-    npcSpawnT=rand(8,14);
-    if(!npcQueue.length && npcs.length===0 && npcDeadWait<=0) refillNpcQueue();   // loop restart once everyone's gone
-    if(npcDeadWait<=0 && npcs.length<2 && npcQueue.length) spawnIdleNpc();
+  if(npcSpawnT<=0 && npcs.length<1){
+    npcSpawnT=1.5;                                              // placement attempt failed → retry shortly
+    if(!npcQueue.length) refillNpcQueue();                      // loop restart once everyone's gone
+    if(npcQueue.length) spawnIdleNpc();
   }
   const alive=players.filter(p=>p.alive), host=alive[0]||players[0];
   for(let i=npcs.length-1;i>=0;i--){
@@ -3242,7 +3253,7 @@ function updateNpcs(dt){
       }
     }
     // (enemies deal contact damage to the ally through their own attack path — see nearestTarget)
-    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcDeadWait=rand(11,18); }
+    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); npcs.splice(i,1); npcSpawnT=60; }
   }
 }
 function drawNpc(n){
@@ -3258,7 +3269,7 @@ function drawNpc(n){
 }
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
-  npcs.length=0; refillNpcQueue(); npcSpawnT=14; npcDeadWait=0;
+  npcs.length=0; refillNpcQueue(); npcSpawnT=14;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
 }
@@ -3269,7 +3280,7 @@ function updateSurvival(dt){
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(30,55); spawnWeaponCrate(); }
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(18,34); spawnWeaponCrate(); }
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
@@ -6640,6 +6651,7 @@ function _frameBody(now){
   const drawables=[...enemies.map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
+                   ...(survival?bullets:[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
                    ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
   if(_LP && survival) drawables.push({y:LP_VENDING.y+LP_VENDING.h, x:LP_VENDING.x, sy:LP_VENDING.y+LP_VENDING.h, zt:0, f:drawVending});   // vending machine z-sorts like a prop
@@ -6671,7 +6683,7 @@ function _frameBody(now){
   safe('amuleto',()=>{ if(_MO && amuleto){ ctx.save(); ctx.translate(0,machuElev(amuleto.x)); try{drawAmuleto();}finally{ctx.restore();} } else drawAmuleto(); });
   safe('effects',drawEffects);
   safe('leaves',drawLeaves);
-  if(survival){ safe('mines',drawMines); safe('bullets',drawBullets); safe('grenades',drawGrenades); safe('nadecharge',drawNadeCharges); }
+  if(survival){ safe('mines',drawMines); safe('grenades',drawGrenades); safe('nadecharge',drawNadeCharges); }   // bullets moved into the depth sort
   safe('rays',drawRays);
   safe('ice',drawIceBeams);
   if(!_LP){ safe('hearts',drawHearts); safe('nuggets',drawNuggets); }   // Modo Infinito draws these in the depth sort above (behind trees)
@@ -6819,6 +6831,9 @@ function netSerializeSnapshot(){
     players: players.map(netSerPlayer),
     enemies: enemies.map(netSerEnemyDyn), estatic,
     apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
+    npcs: npcs.map(n=>({id:n.id, kind:n.kind, x:Math.round(n.x*10)/10, y:Math.round(n.y*10)/10,
+      st:n.npcState==='active'?1:0, hp:Math.round(n.hp), maxhp:n.maxhp, dir:n.dir, mv:n.moving?1:0,
+      pa:n.punchAnim, hf:n.hitFlash, fx:n.facing.x, fy:n.facing.y})),
     lpItems: lpItems.map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: amuleto?{x:amuleto.x, y:amuleto.y, item:amuleto.item}:null,
@@ -6867,6 +6882,7 @@ function netBroadcast(dt){
 let gBuf=[];                 // recent snapshots, each stamped with local receive time .rt
 const gEnemMap={};           // enemy id -> persistent render object (keeps locally-advanced anim clocks)
 const gApuMap={};            // apuchi id -> persistent render object
+const gNpcMap={};            // AI-ally id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
@@ -7125,6 +7141,20 @@ function netApplyGuest(dt){
     seenA[sa.id]=1; apuchis.push(o);
   }
   for(const id in gApuMap){ if(!seenA[id]) delete gApuMap[id]; }
+  // AI allies — persistent objects (anim clocks tick locally), positions interpolated like enemies'
+  { const aN = interp ? _byId(a.npcs||[]) : null; const seenN={};
+    npcs.length=0;
+    for(const sn of (src.npcs||[])){
+      let o=gNpcMap[sn.id]; if(!o){ o=makeNpc(sn.kind, sn.x, sn.y); o.id=sn.id; gNpcMap[sn.id]=o; }
+      o.npcState=sn.st?'active':'idle'; o.hp=sn.hp; o.maxhp=sn.maxhp; o.dir=sn.dir||o.dir; o.moving=!!sn.mv;
+      o.punchAnim=sn.pa||0; o.hitFlash=sn.hf||0; if(typeof sn.fx==='number'){ o.facing.x=sn.fx; o.facing.y=sn.fy; }
+      o.animTime+=dt; o.tagBob+=dt*3;
+      if(interp && aN && aN[sn.id]){ const pn2=aN[sn.id]; o.x=pn2.x+(sn.x-pn2.x)*alpha; o.y=pn2.y+(sn.y-pn2.y)*alpha; }
+      else { o.x=sn.x; o.y=sn.y; }
+      seenN[sn.id]=1; npcs.push(o);
+    }
+    for(const id in gNpcMap){ if(!seenN[id]) delete gNpcMap[id]; }
+  }
   lpItems.length=0; for(const it of (cur.lpItems||[])) lpItems.push({id:it.id, kind:it.kind, x:it.x, y:it.y, bob:time*6, spawn:1});
   hearts.length=0; for(const h of cur.hearts) hearts.push({x:h.x, y:h.y, bob:time*4, spin:time*3, life:16});
   if(cur.amuleto){ if(!amuleto) amuleto={bob:0, spin:0}; amuleto.x=cur.amuleto.x; amuleto.y=cur.amuleto.y; amuleto.item=cur.amuleto.item; amuleto.bob+=dt*4; amuleto.spin+=dt*2; }
