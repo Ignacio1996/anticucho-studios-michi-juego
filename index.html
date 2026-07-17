@@ -1201,8 +1201,13 @@ function updateParticles(dt){
 }
 
 // ---------- Players ----------
+// Modo Infinito: everyone uses GUNS, so strength/weight is irrelevant and every character shares the
+// exact same agile stats — the only difference between characters is cosmetic. (Horda keeps each
+// character's own archetype.)
+const SURV_BASE={maxhp:170, dmg:20, knock:150, speed:156, cd:0.26, radius:15};
+function charBase(kind){ return currentMap==='laspalmas' ? {...SURV_BASE} : {...CHARS[kind].base}; }
 function makePlayer(kind, x, y, controls){
-  const C=CHARS[kind]; const base={...C.base};
+  const C=CHARS[kind]; const base=charBase(kind);
   return {
     kind, name: C.name,
     x, y, controls, color:C.color,
@@ -1229,7 +1234,7 @@ let players = [];
 // anyone can end up as any character. Swap the character identity + base combat stats but keep the
 // player's earned progress (shields / special / oro) and their current health as a fraction.
 function reassignKind(p, kind){
-  const C=CHARS[kind]; const base={...C.base};
+  const C=CHARS[kind]; const base=charBase(kind);
   const frac = (p.maxhp>0) ? clamp(p.hp/p.maxhp,0,1) : 1;
   p.kind=kind; p.name=C.name; p.color=C.color; p.radius=base.radius; p.base=base;
   p.maxhp=base.maxhp; p.hp=Math.max(1, Math.round(base.maxhp*frac));
@@ -5325,7 +5330,7 @@ function drawSelect(){
     drawCardArt(k, cx+12, cyR+14, cw-24, ch-112);
     ctx.restore();
     ctx.fillStyle=CHARS[k].color; ctx.font=(rows>1)?'bold 16px Courier New':'bold 20px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cyR+ch-58);
-    ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido'), cx+cw/2, cyR+ch-38);
+    if(currentMap!=='laspalmas'){ ctx.fillStyle='#bdb190'; ctx.font='12px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'\u00c1gil / R\u00e1pido'), cx+cw/2, cyR+ch-38); }   // Modo Infinito: all identical, no archetype tag
     if(takenBy1){ ctx.fillStyle='#ffd24a'; ctx.font='bold 15px Courier New'; ctx.fillText(selMode===2?'JUGADOR 1':'ELEGIDO', cx+cw/2, cyR+ch-14); }
     if(takenBy2){ ctx.fillStyle='#5ad0ff'; ctx.font='bold 15px Courier New'; ctx.fillText('JUGADOR 2', cx+cw/2, cyR+ch-14); }
     if(taken){ ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(cx,cyR,cw,ch); }
@@ -6131,7 +6136,7 @@ function drawCharsPick(roster, entries, mySlot, overlay, opts){
     ctx.fillStyle='rgba(18,14,8,0.85)'; ctx.fillRect(cx,cyR,cw,chh);
     drawCardArt(k, cx+10, cyR+12, cw-20, chh-112);
     ctx.fillStyle=CHARS[k].color; ctx.font='bold 15px Courier New'; ctx.fillText(CHARS[k].name, cx+cw/2, cyR+chh-64);
-    ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido'), cx+cw/2, cyR+chh-46);
+    if(currentMap!=='laspalmas'){ ctx.fillStyle='#bdb190'; ctx.font='11px Courier New'; ctx.fillText(CHARS[k].tag||(CHARS[k].heavy?'Fuerte / Lento':'Ágil / Rápido'), cx+cw/2, cyR+chh-46); }
     if(takenBy>=0){   // first come, first served — grey it out for everyone else
       ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(cx,cyR,cw,chh);
       ctx.fillStyle=PVP_SEL_COLS[takenBy%4]; ctx.font='bold 15px Courier New';
@@ -7165,7 +7170,10 @@ requestAnimationFrame(frame);
       if(inGame()){
         guest.grace=0.6;   // hold host-authoritative pos briefly until the guest's pose stream catches up
         if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc = guest.keys; rp.netRemote = guest; }   // returning guest counts (and revives at break) again
-        else if(players.length<lobbyCap()){
+        // Modo Infinito: NO new players mid-run (join only at the start) — this also prevents a late
+        // joiner picking a character that's currently walking around as an NPC helper. Returning
+        // guests (above) still reconnect to their own slot.
+        else if(!survival && players.length<lobbyCap()){
           const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
           // mid-game joiner: random character, but NEVER one already taken by another player
           const taken=new Set(players.map(pp=>pp.kind));
