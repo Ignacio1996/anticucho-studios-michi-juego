@@ -18,6 +18,9 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style id="netcss">
   #remotevideo{ display:none; position:fixed; inset:0; width:100vw; height:100vh; object-fit:contain; background:#000; image-rendering:pixelated; z-index:50; }
+  #introvideo{ display:none; position:fixed; inset:0; width:100vw; height:100vh; object-fit:contain; background:#000; z-index:80; }
+  #introskip{ display:none; position:fixed; bottom:22px; right:22px; z-index:81; background:rgba(0,0,0,.55); color:#fff; font:bold 15px 'Courier New',monospace; padding:9px 18px; border:2px solid rgba(255,255,255,.7); border-radius:8px; cursor:pointer; letter-spacing:1px; }
+  #introskip:hover{ background:rgba(0,0,0,.8); }
   #netbanner{ display:none; position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:60; background:#2a1f14; color:#e8dcc0; font:13px 'Courier New',monospace; padding:8px 14px; border:2px solid #c0504a; border-radius:6px; }
   #netui{ display:none; position:fixed; top:8px; right:8px; z-index:40; background:rgba(26,20,16,.92); color:#e8dcc0; font:12px 'Courier New',monospace; padding:8px 10px; border:1px solid #5a4632; border-radius:6px; max-width:320px; }
   #netstatus{ margin-bottom:6px; line-height:1.35; }
@@ -43,6 +46,11 @@
 </div>
 <div class="hint">J1: WASD + Espacio &nbsp;|&nbsp; J2: Flechas + Coma &nbsp;|&nbsp; Esc: Pausa</div>
 <video id="remotevideo" autoplay playsinline muted></video>
+<video id="introvideo" playsinline preload="none">
+  <source src="assets/laspalmas_intro.mp4" type="video/mp4">
+  <source src="assets/laspalmas_intro.webm" type="video/webm">
+</video>
+<button id="introskip">SALTAR ▶▶</button>
 <div id="netbanner"></div>
 <div id="netui">
   <div id="netstatus">Iniciando red…</div>
@@ -2732,6 +2740,33 @@ function startBreak(){
 }
 
 // ---------- Las Palmas survival: endless spawner (no rounds/breaks) ----------
+// Las Palmas cinematic intro: fullscreen video (with its own audio) that plays every time you enter
+// the map, then hands off to the round. Skippable. If the asset is missing it silently starts the game,
+// so the mode always works even before the video file is added.
+let introPlaying=false;
+function playLasPalmasIntro(onDone){
+  const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
+  if(!v){ onDone(); return; }
+  let done=false, watchdog=0;
+  const finish=()=>{ if(done) return; done=true; introPlaying=false; if(watchdog) clearTimeout(watchdog);
+    try{ v.pause(); v.onended=v.onerror=v.onplaying=null; }catch(e){}
+    v.style.display='none'; if(skip){ skip.style.display='none'; skip.onclick=null; }
+    try{ lpMusicStart(); }catch(e){}   // restore the map music after the clip's own audio
+    onDone();
+  };
+  try{ lpMusicStop(); }catch(e){}      // duck the map music while the clip plays
+  introPlaying=true;
+  v.muted=false; v.volume=1;
+  v.style.display='block'; if(skip){ skip.style.display='block'; skip.onclick=finish; }
+  v.onended=finish; v.onerror=finish;   // decode error → just start the round
+  // <source> children don't reliably bubble an 'error' to the video, so a watchdog covers a total
+  // failure (missing files / stalled). 'playing' means it started fine and cancels the watchdog.
+  v.onplaying=()=>{ if(watchdog){ clearTimeout(watchdog); watchdog=0; } };
+  watchdog=setTimeout(()=>{ if(!done && v.paused && (v.currentTime||0)<0.05) finish(); }, 8000);
+  try{ v.load(); }catch(e){}            // reset to the start + pick a playable <source> (mp4 or webm)
+  try{ v.currentTime=0; }catch(e){}
+  const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>finish());   // autoplay blocked → start the round
+}
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
@@ -5010,7 +5045,10 @@ function startGame(){
     players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
-  else if(survival){ startSurvival(); }   // Modo Infinito drops you straight into the action — no Cóndor, no countdown
+  else if(survival){                       // Modo Infinito — no Cóndor / countdown; offline gets the cinematic intro
+    if(NET.role==='local'){ state=STATE.PLAY; playLasPalmasIntro(startSurvival); }   // hold on PLAY under the video, then start
+    else startSurvival();                  // online: skip the video so guests aren't left waiting
+  }
   else startIntro();
 }
 
@@ -5943,6 +5981,9 @@ function _frameBody(now){
   time+=dt;
   for(let _i=0;_i<40;_i++) ctx.restore();
   ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+
+  // Las Palmas cinematic intro is on top of the canvas — freeze the sim (no spawning/dying behind it)
+  if(introPlaying){ requestAnimationFrame(frame); return; }
 
   // online guest: replicate the host's world from snapshots instead of simulating locally
   if(NET.role==='guest'){
