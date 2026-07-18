@@ -456,12 +456,20 @@ function _tone(t,dur,amp,type,f0,f1){
   o.onended=()=>{ try{ g.disconnect(); }catch(e){} };
 }
 let _lastGunT=0;
-function sfxGun(rapid){ if(!actx) return; try{ const t=actx.currentTime; if(t-_lastGunT<0.02) return; _lastGunT=t;
-  _tone(t,rapid?0.06:0.09,rapid?0.14:0.2,'square',rapid?820:640,rapid?260:150);
-  _noise(t,0.045,rapid?0.14:0.2,'highpass',rapid?1400:900);
+// Proximity audio for the constant-fire sounds: full volume near MY camera, fading out with
+// distance, silent past ~1.3 screens — someone spraying on the other side of the map is quiet.
+// Every machine computes this against its OWN camera (Modo Infinito cameras are per-player).
+function _proxGain(x,y){
+  if(x==null || !Number.isFinite(x)) return 1;   // positionless call → old global behavior
+  const d=Math.hypot(x-(camX+W/2), y-(camY+H/2));
+  return clamp(1 - Math.max(0,d-380)/900, 0, 1);
+}
+function sfxGun(rapid,x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime; if(t-_lastGunT<0.02) return; _lastGunT=t;
+  _tone(t,rapid?0.06:0.09,(rapid?0.14:0.2)*g,'square',rapid?820:640,rapid?260:150);
+  _noise(t,0.045,(rapid?0.14:0.2)*g,'highpass',rapid?1400:900);
 }catch(e){} }
-function sfxFireShot(){ if(!actx) return; try{ const t=actx.currentTime;   // whooshy incendiary round
-  _tone(t,0.12,0.16,'sawtooth',520,120); _noise(t,0.16,0.14,'bandpass',1200,300);
+function sfxFireShot(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime;   // whooshy incendiary round
+  _tone(t,0.12,0.16*g,'sawtooth',520,120); _noise(t,0.16,0.14*g,'bandpass',1200,300);
 }catch(e){} }
 function sfxLaunch(){ if(!actx) return; try{ const t=actx.currentTime;   // grenade launcher thunk
   _tone(t,0.14,0.32,'sine',190,60); _noise(t,0.06,0.16,'lowpass',700);
@@ -1663,11 +1671,11 @@ function tryShoot(p){
   const wk=(p.weapon&&WEAPONS[p.weapon])?p.weapon:'pistol', W=WEAPONS[wk];
   p.cooldown=W.cd; p.punchAnim=CHARS[p.kind].pd;
   if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxLaunch(); return; }
-  if(wk==='fire'){ fireBullet(p,true); consumeAmmo(p,'fire'); sfxFireShot(); return; }
+  if(wk==='fire'){ fireBullet(p,true); consumeAmmo(p,'fire'); sfxFireShot(p.x,p.y); return; }
   if(wk==='mine'){ if(placeMine(p)) consumeAmmo(p,'mine'); return; }
   if(wk==='block'){ if(placeBlockLP(p)) consumeAmmo(p,'block'); else p.cooldown=0.1; return; }
   if(wk==='torreta'){ if(placeTurretLP(p)) consumeAmmo(p,'torreta'); else p.cooldown=0.1; return; }
-  fireBullet(p); sfxGun(wk==='rapid');
+  fireBullet(p); sfxGun(wk==='rapid', p.x, p.y);
   if(wk!=='pistol') consumeAmmo(p,wk);
 }
 // --- Modo Infinito placeables: mines, concrete blocks, beefed turrets ---
@@ -2121,6 +2129,9 @@ function updateDeathAnims(dt){
     if(p.deathAnim==null) continue; p.deathAnim+=dt; if(p.deathAnim>=4.6) p.deathAnim=null;
   }
 }
+// Modo Infinito revives are snappier (the endless swarm rarely gives you 5 clear seconds);
+// Horda keeps the original 5s hold. The revive ring in drawPlayer uses the same value.
+function reviveNeed(){ return survival ? 3.2 : 5; }
 function updateRevive(dt){
   if(players.length<2) return;
   for(const dead of players){ if(dead.alive) continue; if(dead.fell) continue; if(dead.deathAnim!=null) continue; if(dead.departed) continue;   // can't revive a disconnected guest
@@ -2128,7 +2139,7 @@ function updateRevive(dt){
     for(const q of players){ if(!q.alive) continue; if(dist(q.x,q.y,dead.x,dead.y)<q.radius+24){ reviver=q; break; } }
     if(reviver){
       dead.reviveProgress=(dead.reviveProgress||0)+dt;
-      if(dead.reviveProgress>=5){ dead.x=reviver.x+(reviver.facing&&reviver.facing.x<0?38:-38); dead.y=reviver.y; dead.alive=true; dead.fell=false; dead.hp=Math.round(dead.maxhp*0.5); dead.reviveProgress=0; dead.shieldFlash=0; resolveCollision(dead); spark(dead.x,dead.y,'#aef7c2',22,170); floatText(dead.x,dead.y-30,'\u00a1REVIVIDO!','#aef7c2'); }
+      if(dead.reviveProgress>=reviveNeed()){ dead.x=reviver.x+(reviver.facing&&reviver.facing.x<0?38:-38); dead.y=reviver.y; dead.alive=true; dead.fell=false; dead.hp=Math.round(dead.maxhp*0.5); dead.reviveProgress=0; dead.shieldFlash=0; resolveCollision(dead); spark(dead.x,dead.y,'#aef7c2',22,170); floatText(dead.x,dead.y-30,'\u00a1REVIVIDO!','#aef7c2'); }
     } else dead.reviveProgress=0;
   }
 }
@@ -3222,7 +3233,7 @@ function fireNpcBullet(n, tx, ty){
   n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
   const mz=18, bx=n.x+cx*mz, by=n.y+cy*mz;
   bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, npc:n});
-  spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(false); }catch(e){}
+  spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(false, n.x, n.y); }catch(e){}
 }
 function updateNpcs(dt){
   // one timer drives the cycle: game start → first ally at ~14s; ally death → next EXACTLY 60s later
@@ -3997,7 +4008,7 @@ function drawPlayer(p){
     if(survival && DP_IMG[p.kind] && DP_IMG[p.kind].naturalWidth){
       drawDeathPose(p.kind, p.x, p.y, p.y+p.radius+4, Math.min(p.deadT||0, CORPSE_LIFE-CORPSE_FADE));
       if((p.reviveProgress||0)>0){
-        const fr2=clamp(p.reviveProgress/5,0,1);
+        const fr2=clamp(p.reviveProgress/reviveNeed(),0,1);
         ctx.strokeStyle='#aef7c2'; ctx.lineWidth=3;
         ctx.beginPath(); ctx.arc(p.x,p.y-3,19,-Math.PI/2,-Math.PI/2+fr2*TAU); ctx.stroke();
       }
@@ -4032,7 +4043,7 @@ function drawPlayer(p){
     ctx.beginPath(); ctx.moveTo(p.x-11,p.y-7); ctx.lineTo(p.x+11,p.y-7); ctx.stroke();
     ctx.lineCap='butt';
     if((p.reviveProgress||0)>0){
-      const fr=clamp(p.reviveProgress/5,0,1);
+      const fr=clamp(p.reviveProgress/reviveNeed(),0,1);
       ctx.strokeStyle='#aef7c2'; ctx.lineWidth=3;
       ctx.beginPath(); ctx.arc(p.x,p.y-3,19,-Math.PI/2,-Math.PI/2+fr*TAU); ctx.stroke();
     }
@@ -4837,6 +4848,15 @@ function drawTeammateArrows(){
     ctx.fillStyle=p.alive?(p.color||'#ffffff'):'#ff8a7a';
     ctx.fillText(label, tx, ty);
     ctx.restore();
+  }
+  // dead + spectating a teammate: say whose view this is (the camera snaps back when you're revived)
+  const meP=players[meIdx];
+  if(meP && !meP.departed && !meP.alive && gSpecIdx!=null && players[gSpecIdx]){
+    const sp=players[gSpecIdx], msg='VIENDO A '+(sp.name||'')+' — espera a que te revivan';
+    ctx.font='bold 14px Courier New';
+    const tw2=ctx.measureText(msg).width;
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-tw2/2-9, H-98, tw2+18, 24);
+    ctx.fillStyle=sp.color||'#ffe9b0'; ctx.fillText(msg, W/2, H-81);
   }
   ctx.textAlign='left'; ctx.restore();
 }
@@ -5771,6 +5791,11 @@ function startGame(){
   round=0; score=0; particles.length=0; enemies.length=0;
   apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
   bossDrops.length=0; bombs.length=0; mines.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
+  // remember who played WHICH character this game (host + each connection) BEFORE the reset:
+  // REINTENTAR must keep every person on the character they chose — the old code re-randomized
+  // (netSelPicks was consumed by the first start), swapping people's characters on every retry
+  const prevKindSelf=(players[0] && players[0].kind)||null;
+  const prevKindByConn=NET.conns.map(c=>{ const pl=players[c.slot]; return (pl && pl.kind)||null; });
   players=[];
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
@@ -5780,10 +5805,16 @@ function startGame(){
     const total=Math.min(lobbyCap(), Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
     const span=Math.max(0,total-1)*44, REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
-    for(let i=0;i<total;i++){ const R=hordaRoster(); players.push(makePlayer(R[i]||R[0], sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE)); }
+    // seat characters: explicit picks (fresh lobby start) → what each person played last game
+    // (REINTENTAR) → first free roster character. The used-set makes duplicates impossible.
+    const R=hordaRoster(), usedK=new Set();
+    const seatKind=want=>{ let k=(want && !usedK.has(want))?want:null; if(!k) k=R.find(kk=>!usedK.has(kk))||R[0]; usedK.add(k); return k; };
+    for(let i=0;i<total;i++){
+      const want=netSelPicks ? netSelPicks[i] : (i===0 ? prevKindSelf : prevKindByConn[i-1]);
+      players.push(makePlayer(seatKind(want), sx0 - span/2 + i*44, sy0, i===0?P1:REMOTE));
+    }
+    netSelPicks=null;
     for(let g=0; g<NET.conns.length && g+1<total; g++){ NET.conns[g].slot=g+1; players[g+1].keysrc=NET.conns[g].keys; players[g+1].netRemote=NET.conns[g]; NET.conns[g].grace=0.4; }
-    if(netSelPicks){ for(let i=0;i<players.length && i<netSelPicks.length;i++){ if(netSelPicks[i]) reassignKind(players[i], netSelPicks[i]); } netSelPicks=null; }
-    else randomizeOnlineChars();   // fallback only — the lobby now goes through the NETSELECT pick screen
   } else if(mode===1){
     players.push(makePlayer(selChar1||'freddy', sx0, sy0base, P1));
   } else {
@@ -6706,6 +6737,7 @@ function drawSnow(dt){
   }
   ctx.globalAlpha=1; ctx.restore();
 }
+let gSpecIdx=null;   // Modo Infinito online: index of the living teammate a dead player is spectating
 function updateCamera(){
   if(WORLD_W<=W && WORLD_H<=H){ camX=0; camY=0; return; }
   // Modo Infinito ONLINE: every machine's camera follows ITS OWN player — the host's screen is just
@@ -6716,8 +6748,21 @@ function updateCamera(){
   if(survival && (NET.role==='guest' || NET.hosting)){
     const me=players[NET.role==='guest'?NET.slot:0];
     if(me && !me.departed){
-      camX=clamp(me.x - W/2, 0, Math.max(0,WORLD_W - W));
-      camY=clamp(me.y - H/2, 0, Math.max(0,WORLD_H - H));
+      let anchor=me;
+      if(!me.alive){
+        // Dead: spectate a RANDOM living teammate, and stick with them until they fall too (then
+        // hop to another). The moment you're revived the camera snaps back to your own character.
+        // Nobody left alive → hold on your own body (the game-over is a frame away anyway).
+        let sp=(gSpecIdx!=null && players[gSpecIdx])?players[gSpecIdx]:null;
+        if(!sp || sp===me || !sp.alive || sp.departed){
+          const opts=[]; for(let i=0;i<players.length;i++){ const q=players[i]; if(q && q!==me && q.alive && !q.departed) opts.push(i); }
+          gSpecIdx = opts.length ? opts[randi(0,opts.length-1)] : null;
+          sp = (gSpecIdx!=null) ? players[gSpecIdx] : null;
+        }
+        if(sp) anchor=sp;
+      } else gSpecIdx=null;
+      camX=clamp(anchor.x - W/2, 0, Math.max(0,WORLD_W - W));
+      camY=clamp(anchor.y - H/2, 0, Math.max(0,WORLD_H - H));
       if(!Number.isFinite(camX)) camX=0; if(!Number.isFinite(camY)) camY=0;
       return;
     }
@@ -6798,8 +6843,12 @@ function _frameBody(now){
   if(state===STATE.SELECT){ drawSelect(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.LOBBY){ drawLobby(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.PVP){ safe('drawPvp',drawPvp); ctx.restore(); requestAnimationFrame(frame); return; }
-  if(state===STATE.DYING){ ctx.save(); ctx.translate(-camX,-camY); drawDeathScene(); ctx.restore(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); ctx.restore(); requestAnimationFrame(frame); return; }
-  if(state===STATE.OVER){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); if(dying) drawDeathScene(); else drawArena(); ctx.restore(); drawOver(); ctx.restore(); requestAnimationFrame(frame); return; }
+  // survival end-screens keep the FULL world visible (death poses, houses, enemies): the host's zoom
+  // cinematic still plays (it has `dying`), but guests — who have no local cinematic — and the FIN
+  // panel fall through to the normal world render below, with their overlays drawn at the end.
+  const _endFall = (state===STATE.DYING && !dying) || (state===STATE.OVER && survival);
+  if(state===STATE.DYING && dying){ ctx.save(); ctx.translate(-camX,-camY); drawDeathScene(); ctx.restore(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); ctx.restore(); requestAnimationFrame(frame); return; }
+  if(state===STATE.OVER && !_endFall){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); if(dying) drawDeathScene(); else drawArena(); ctx.restore(); drawOver(); ctx.restore(); requestAnimationFrame(frame); return; }
   if(state===STATE.VICTORY){ if(currentMap==='machu') drawMachuSky(); ctx.save(); ctx.translate(-camX,-camY); drawArena(); ctx.restore(); drawVictory(); ctx.restore(); requestAnimationFrame(frame); return; }
 
   if(currentMap==='machu') drawMachuSky();
@@ -6811,24 +6860,29 @@ function _frameBody(now){
   // Las Palmas the map's background props join this same list so the player passes BEHIND a tree
   // whose feet are lower on screen and IN FRONT of one whose feet are higher. zt breaks ties.
   const _MO=(currentMap==='machu'), _LP=(currentMap==='laspalmas');
-  const drawables=[...enemies.map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
+  // Modo Infinito view culling: the endless swarm reaches ~240 enemies and the map has hundreds of
+  // props, but each camera sees only a corner of the huge world — skip everything comfortably off
+  // screen BEFORE it enters the depth sort. Margins are generous (sprites are bottom-anchored, so a
+  // tree whose feet are below the screen can still poke its crown in — hence the big bottom margin).
+  const inV=_LP ? ((x,y)=> x>camX-180 && x<camX+W+180 && y>camY-70 && y<camY+H+360) : (()=>true);
+  const drawables=[...(_LP?enemies.filter(e=>inV(e.x,e.y)):enemies).map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
-                   ...(survival?corpses:[]).map(c=>({y:c.y,x:c.x,sy:c.y,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat (lose z-ties to the living)
-                   ...(survival?bullets:[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
-                   ...incaWalls.map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
-                   ...turrets.map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
-  if(_LP && survival) drawables.push({y:LP_VENDING.y+LP_VENDING.h, x:LP_VENDING.x, sy:LP_VENDING.y+LP_VENDING.h, zt:0, f:drawVending});   // vending machine z-sorts like a prop
+                   ...(survival?corpses.filter(c=>inV(c.x,c.y)):[]).map(c=>({y:c.y,x:c.x,sy:c.y,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat (lose z-ties to the living)
+                   ...(survival?bullets.filter(b=>inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
+                   ...(_LP?incaWalls.filter(w=>inV(w.x,w.y)):incaWalls).map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
+                   ...(_LP?turrets.filter(t=>inV(t.x,t.y)):turrets).map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
+  if(_LP && survival && inV(LP_VENDING.x,LP_VENDING.y)) drawables.push({y:LP_VENDING.y+LP_VENDING.h, x:LP_VENDING.x, sy:LP_VENDING.y+LP_VENDING.h, zt:0, f:drawVending});   // vending machine z-sorts like a prop
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
-  if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
+  if(_LP){ for(const pr of LP_PROPS){ if(!pr.fg && LP_GROUND_FI.indexOf(pr.fi)<0 && inV(pr.x,pr.sy)) drawables.push({y:pr.sy, x:pr.x, sy:pr.sy, zt:pr.zt, f:()=>drawLpProp(pr)}); } }   // background-plane props (flat ground decals draw under entities instead)
   if(state===STATE.BREAK || (survival && state===STATE.PLAY)){
     if(_LP){
       // Modo Infinito pickups join the depth sort so they hide BEHIND trees/houses just like the
       // player (the tennis court is a flat ground decal drawn earlier, so loot resting on it always
       // shows on top of the court).
-      for(const it of lpItems) drawables.push({y:it.y,x:it.x,sy:it.y,zt:0,f:()=>drawLpItem(it)});
-      for(const h of hearts)   drawables.push({y:h.y,x:h.x,sy:h.y,zt:0,f:()=>drawHeart(h)});
-      for(const g of nuggets)  drawables.push({y:g.y,x:g.x,sy:g.y,zt:0,f:()=>drawNugget(g)});
+      for(const it of lpItems) if(inV(it.x,it.y)) drawables.push({y:it.y,x:it.x,sy:it.y,zt:0,f:()=>drawLpItem(it)});
+      for(const h of hearts)   if(inV(h.x,h.y)) drawables.push({y:h.y,x:h.x,sy:h.y,zt:0,f:()=>drawHeart(h)});
+      for(const g of nuggets)  if(inV(g.x,g.y)) drawables.push({y:g.y,x:g.x,sy:g.y,zt:0,f:()=>drawNugget(g)});
     }
     else for(const a of apuchis){ if(_MO){ ctx.save(); ctx.translate(0,machuElev(a.x)); drawApuchi(a); ctx.restore(); } else drawApuchi(a); }
   }
@@ -6868,7 +6922,9 @@ function _frameBody(now){
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
   if(state===STATE.INTRO) safe('introui',drawIntroUI);
   if(state===STATE.PAUSE) safe('pause',drawPause);
-  if(NET.role==='guest'){
+  if(state===STATE.DYING){ ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); }   // fell-through guest death phase: live world, dimmed
+  if(state===STATE.OVER) safe('over',drawOver);                                          // fell-through survival FIN panel over the real world
+  if(NET.role==='guest' && state===STATE.PLAY){
     const meP=players[NET.slot];
     const lpSpectator = survival && NET.guestReady && (!meP || meP.departed);   // Modo Infinito: no mid-run joins — watching until the next game
     if(lpSpectator || (meP && meP.pending && !meP.departed)) safe('joinwait',()=>drawGuestJoinWaiting(lpSpectator));
@@ -6941,8 +6997,10 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   playHee=wrapSnd('hee',playHee);               playHeeGiant=wrapSnd('heeg',playHeeGiant);
   playBrujaAttack=wrapSnd('bruja',playBrujaAttack); playCharDeath=wrapSnd('die',playCharDeath);
   // Modo Infinito weapon sounds are host-side synthesized (WebAudio) — replicate them as events too,
-  // or guests fight in silence: no gunfire, no explosions, no turret/mine placement feedback
-  sfxGun=wrapSnd('gun',sfxGun);       sfxFireShot=wrapSnd('fshot',sfxFireShot);
+  // or guests fight in silence: no gunfire, no explosions, no turret/mine placement feedback.
+  // Gun/fire shots carry the SHOOTER's position so every machine applies its own proximity falloff.
+  const _sg=sfxGun; sfxGun=function(r,x,y){ netQSnd('gun',{r:r?1:0, x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sg(r,x,y); };
+  const _sf=sfxFireShot; sfxFireShot=function(x,y){ netQSnd('fshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sf(x,y); };
   sfxLaunch=wrapSnd('lnch',sfxLaunch); sfxBoom=wrapSnd('boom',sfxBoom);
   sfxPlace=wrapSnd('plc',sfxPlace);   sfxTurretShot=wrapSnd('tshot',sfxTurretShot);
   const _pps=playPunchSound;   // punch voices key off the puncher's character
@@ -6955,8 +7013,9 @@ const NET_SND={
   hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
   die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k})),
   sel:k=>playCharSelect(k), pboom:()=>playPvpBoom(),
-  gun:a=>sfxGun(a), fshot:()=>sfxFireShot(), lnch:()=>sfxLaunch(),
-  boom:()=>sfxBoom(), plc:()=>sfxPlace(), tshot:()=>sfxTurretShot()
+  gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxGun(a),
+  fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
+  lnch:()=>sfxLaunch(), boom:()=>sfxBoom(), plc:()=>sfxPlace(), tshot:()=>sfxTurretShot()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
@@ -7081,6 +7140,8 @@ const gApuMap={};            // apuchi id -> persistent render object
 const gNpcMap={};            // AI-ally id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
+let gCopiedSeq=-1;                  // last snapshot seq whose enemy fields were merged (skip re-copying between snapshots)
+const gAById={seq:-1, m:null};      // memoized by-id map of the older interpolation bracket snapshot
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
 let gLastSeq=0, gIntroCutSeq=0;                    // highest seq seen / seq watermark when the intro clip started
 // keep the guest's map in lockstep with the host — the pick-screen roster (hordaRoster), its title,
@@ -7101,7 +7162,7 @@ function netOnSnapshot(d){
   if(introPlaying){ if(d._snap || (d._nsel && (d.seq||0)>gIntroCutSeq)) endIntroGuest(); else return; }
   if(typeof d.seq==='number' && d.seq>gLastSeq) gLastSeq=d.seq;
   if(d._wait){ NET.snap=null; NET.nsel=null; NET.guestReady=false; NET.waitState=d.state; pvpInfo=false; return; }
-  if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; if(typeof d.you==='number') NET.slot=d.you; netSetMap(d.map); netPlayEvts(d); return; }
+  if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; gPred.init=false; gSpecIdx=null; if(typeof d.you==='number') NET.slot=d.you; netSetMap(d.map); netPlayEvts(d); return; }
   if(!d._snap) return;
   NET.nsel=null;
   d.rt = performance.now();
@@ -7122,6 +7183,9 @@ function netApplyMeta(s){
     if(mi>=0 && isMapUnlocked(mi)) saveMapBeaten(s.currentMap);
   }
   if(s.state===STATE.PAUSE && state!==STATE.PAUSE){ pauseView='main'; pauseSel=0; }   // fresh local menu each time the host pauses
+  // host restarted (REINTENTAR / new game): wipe the local prediction + spectator state so our
+  // player doesn't materialize at its previous game's position for everyone
+  if(s.state===STATE.PLAY && (state===STATE.OVER || state===STATE.VICTORY || state===STATE.DYING)){ gPred.init=false; gSpecIdx=null; gPrevRound=-999; }
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
   survival=!!s.survival; kills=s.kills||0;
   netSetMap(s.currentMap);
@@ -7320,16 +7384,23 @@ function netApplyGuest(dt){
   let interp=false, alpha=0;
   if(a && b && b.rt>a.rt){ interp=true; alpha=clamp((renderT-a.rt)/(b.rt-a.rt),0,1); }
   const src = interp ? b : cur;                    // field values matched to the render time
-  const aEnem = interp ? _byId(a.enemies) : null;
+  // memoize the by-id map of the older bracket snapshot — rebuilding it (and re-copying every
+  // enemy's fields below) 60×/s instead of only when a NEW snapshot arrives was real per-frame CPU
+  // once the swarm reached ~200+ enemies, and it grew with the swarm (the guests' "progressive lag")
+  if(interp){ if(gAById.seq!==a.seq){ gAById.seq=a.seq; gAById.m=_byId(a.enemies); } }
+  const aEnem = interp ? gAById.m : null;
   const estatic = cur.estatic || {};               // constant fields arrive on their own cadence
+  const freshE = (gCopiedSeq!==src.seq); if(freshE) gCopiedSeq=src.seq;   // field values change only per snapshot
 
   // enemies (incl. bosses) — merge static+dynamic tiers, interpolate x/y by id, advance clocks locally
   enemies.length=0; const seen={};
   for(const se of src.enemies){
     let o=gEnemMap[se.id];
     if(!o){ o={animTime:Math.random()*2, wob:Math.random()*6.28}; gEnemMap[se.id]=o; }
-    const st=estatic[se.id]; if(st){ for(const kk in st) o[kk]=st[kk]; o._hasStatic=true; }   // sticky once received
-    for(const kk in se){ if(kk==='animTime'||kk==='wob') continue; o[kk]=se[kk]; }
+    if(freshE){
+      const st=estatic[se.id]; if(st){ for(const kk in st) o[kk]=st[kk]; o._hasStatic=true; }   // sticky once received
+      for(const kk in se){ if(kk==='animTime'||kk==='wob') continue; o[kk]=se[kk]; }
+    }
     o.animTime=(o.animTime||0)+dt; o.wob=(o.wob||0)+dt*6;
     if(interp && aEnem[se.id]){ const pa=aEnem[se.id]; o.x=pa.x+(se.x-pa.x)*alpha; o.y=pa.y+(se.y-pa.y)*alpha; }
     else { o.x=se.x; o.y=se.y; }
@@ -7689,7 +7760,9 @@ requestAnimationFrame(frame);
       const now=performance.now();
       for(let i=NET.conns.length-1;i>=0;i--){
         const g=NET.conns[i];
-        const dead = g.lastData ? (now-g.lastData>9000) : (now-g.bornT>8000);
+        // guests stream input ~30×/s (≥1×/s from a hidden tab), so 5s of silence = gone; that's
+        // also how long a closed-without-goodbye guest's character lingers before it vanishes
+        const dead = g.lastData ? (now-g.lastData>5000) : (now-g.bornT>6000);
         if(dead) hostDropGuest(g);
       }
     };
@@ -7731,9 +7804,12 @@ requestAnimationFrame(frame);
         // enter normally when the next game starts.
         if(!survival){
           const sy=(currentMap==='stonebridge')?344:WORLD_H/2;
-          // mid-game joiner: random character, but NEVER one held by a present (non-departed) player
+          // a slot's character is LOCKED for the whole game: whoever fills this slot again (a
+          // dropped player reconnecting) gets the SAME character they chose — never a reshuffle.
+          // Only a brand-new slot (first-time joiner) rolls a character nobody present holds.
+          const old=players[guest.slot];
           const taken=new Set(players.filter(pp=>!pp.departed).map(pp=>pp.kind));
-          const kind=shuffledChars().find(k=>!taken.has(k))||'michi';
+          const kind=(old && old.kind) ? old.kind : (shuffledChars().find(k=>!taken.has(k))||'michi');
           const p=makePlayer(kind, WORLD_W/2 + (guest.slot-1)*44, sy, REMOTE);
           p.keysrc=guest.keys; p.netRemote=guest;
           // Joining mid-round? Sit them out (dead/hidden) until the next round starts, so nobody can
@@ -7747,12 +7823,16 @@ requestAnimationFrame(frame);
       // character first (first-come-first-serve vs the ones already taken) and spawn next round
       else if(state===STATE.PVP && pvpOnline && pvp.sub!=='off' && pvp.sub!=='matchend'){
         guest.grace=0.6;
-        const pl=makePlayer('freddy', 0,0, REMOTE);
+        // slot had a character this game (a dropped player's) → the returner resumes THAT character
+        // (and its win count) and spawns next round; a brand-new slot picks via the chooser
+        const old=players[guest.slot];
+        const pl=makePlayer((old && old.kind)||'freddy', 0,0, REMOTE);
         pl.keysrc=guest.keys; pl.netRemote=guest;
-        pvpInitChooser(pl, guest.slot);
-        if(guest.slot<players.length){ players[guest.slot]=pl; pvp.wins[guest.slot]=0; }   // fresh joiner: never inherit a leaver's score
+        if(old && old.kind){ pl.selKind=old.kind; pl.alive=false; pl.pending=true; pl.hp=0; pl.deathAnim=null; }
+        else pvpInitChooser(pl, guest.slot);
+        if(guest.slot<players.length){ players[guest.slot]=pl; if(!(old && old.kind)) pvp.wins[guest.slot]=0; }
         else { players.push(pl); pvp.wins.push(0); }
-        floatText(W/2, PVP_OY+70, '¡J'+(guest.slot+1)+' se une! Eligiendo personaje…', '#aef7c2');
+        floatText(W/2, PVP_OY+70, (old && old.kind) ? ('¡J'+(guest.slot+1)+' vuelve como '+pl.name+'!') : ('¡J'+(guest.slot+1)+' se une! Eligiendo personaje…'), '#aef7c2');
       }
       // joining while everyone is on the horda pick screen: grab a cursor and pick too
       else if(state===STATE.NETSELECT){
