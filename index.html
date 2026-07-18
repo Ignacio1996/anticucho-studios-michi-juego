@@ -3065,7 +3065,8 @@ function playIntroGuest(){
   if(introPlaying) return;   // idempotent — repeated heartbeats mustn't restart the clip
   const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
   if(!v) return;
-  NET.nsel=null; NET.snap=null; NET.guestReady=false;   // leave the pick screen; wait for gameplay after
+  NET.nsel=null; NET.snap=null; NET.guestReady=false;   // leave the pick screen; wait for the pick screen / gameplay after
+  gIntroCutSeq=gLastSeq;                                // only packets NEWER than this may end the clip
   introPlaying=true; introSkip=null;                    // guests can't skip — the host controls the clip
   try{ silenceAllMusic(); }catch(e){}
   boostIntroAudio(v);
@@ -3081,12 +3082,9 @@ function endIntroGuest(){
   try{ if(v){ v.pause(); v.onended=v.onerror=null; v.style.display='none'; } }catch(e){}
   if(skip) skip.style.display='none';
 }
-// Host path from startGame(): roll the intro (with a working SALTAR), telling guests to roll theirs,
-// then drop into the survival round once the clip ends or the host skips.
-function hostIntroThenSurvival(){
-  netIntroAccum=0;
-  playLasPalmasIntro(()=>{ startSurvival(); });   // netBroadcastIntro (host frame) cues guests while introPlaying
-}
+// Online host path (lobby ENTER): playLasPalmasIntro rolls the clip (with a working SALTAR) while
+// netBroadcastIntro (host frame loop) cues every guest to roll theirs; when the clip ends or the host
+// skips, the room lands on the character pick screen (see handleMenuKey's STATE.LOBBY branch).
 // Las Palmas apocalyptic atmosphere: a subtle warm-red multiply + faint red mist + soft dark-red
 // vignette, matching the alien-invasion intro. Kept light so the map stays readable.
 function drawLasPalmasTint(){
@@ -3131,7 +3129,10 @@ function updateCorpses(dt){ for(let i=corpses.length-1;i>=0;i--){ corpses[i].t+=
 // before the next appears; the pool loops once everyone has fallen. Host-authoritative + replicated.
 const npcs=[];
 let npcQueue=[], npcSpawnT=14;
-function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k && !p.departed)); }   // chars no player picked
+// Allies come ONLY from this mode's playable roster, minus every character a player picked — a
+// departed (disconnected) player still owns theirs, since reconnecting puts them back in that slot.
+// E.g. 4 players online and nobody chose Flash → Flash is the only ally that game.
+function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k)); }
 function refillNpcQueue(){ npcQueue=npcRoster(); for(let i=npcQueue.length-1;i>0;i--){ const j=randi(0,i); const t=npcQueue[i]; npcQueue[i]=npcQueue[j]; npcQueue[j]=t; } }
 function makeNpc(kind,x,y){
   const n=makePlayer(kind,x,y,null);   // reuse the player shape so drawPlayer/charFrame just work
@@ -3168,6 +3169,7 @@ function npcSteer(n,tx,ty){
 function spawnIdleNpc(){
   if(npcs.length>=1 || !npcQueue.length) return;   // ONE ally at a time — the next appears after this one falls
   const kind=npcQueue.pop();
+  if(players.some(p=>p.kind===kind)) return;       // stale queue entry (a player owns it) — drop it, retry next tick
   for(let t=0;t<60;t++){                     // anywhere walkable on the map (a corner, behind a house…),
     const x=rand(240,LP_W-240), y=rand(240,LP_H-240);   // just never inside the current view (no pop-in)
     if(lpSolidAt(x,y)) continue;
@@ -5468,6 +5470,13 @@ function handleMenuKey(code){
   } else if(state===STATE.LOBBY){
     if(code==='Enter'||code==='Space'){
       if(lobbyMode==='pvp'){ if(NET.conns.length) startPvpOnline(); else mapLockShake=0.45; }   // a duel needs at least 2 players
+      else if(currentMap==='laspalmas'){
+        // Modo Infinito online: the cinematic intro rolls for the whole room FIRST (the host frame
+        // loop cues guests via netBroadcastIntro while introPlaying), THEN everyone lands on the
+        // pick screen with the Las Palmas playlist underneath.
+        stopMenuMusic(); netIntroAccum=0;
+        playLasPalmasIntro(()=>{ enterNetSelect(); lpMusicStart(); });
+      }
       else enterNetSelect();   // horda: everyone picks a character first (first come, first served)
     }
     else if(code==='Escape') exitLobby();
@@ -5691,10 +5700,9 @@ function startGame(){
     players.push(makePlayer(selChar2||'michi', sx0+40, sy0base, P2));
   }
   if(modTest){ for(const p of players){ p.maxhp*=2; p.hp=p.maxhp; p.special='morganita'; p.specialCharges=12; p.oro=0; } round=19; startRound(); }
-  // Online host: the intro didn't play at map-select (that path went straight to the lobby), so play it
-  // here for everyone — the host watches + can skip, and guests mirror it (netBroadcastIntro / netOnSnapshot).
-  else if(survival && NET.hosting){ hostIntroThenSurvival(); }
-  else if(survival){ startSurvival(); }    // offline Modo Infinito — intro already played at map select
+  // Modo Infinito: the cinematic intro already played (offline: at mode select · online: on the
+  // lobby's ENTER, before the pick screen) — go straight into the survival round.
+  else if(survival){ startSurvival(); }
   else startIntro();
 }
 
@@ -6636,6 +6644,9 @@ function _frameBody(now){
   if(NET.role==='guest'){
     // horda pre-game pick phase: replicated as its own packet type ({_nsel}) — render and return
     if(NET.nsel){
+      // Modo Infinito: the map playlist plays under the pick screen (kicks in once a key press has
+      // unlocked audio — lpMusicStart is a no-op while a track is already rolling, so this self-heals)
+      if(currentMap==='laspalmas') safe('nselMusic',()=>{ lpMusicStart(); lpMusicUpdate(dt); });
       const L=(NET.nsel.list||[]).map(e=>({kind:e.kind, selKind:e.skd?e.kind:null, selCur:e.sc||0, departed:!!e.dp}));
       safe('nselDraw',()=>drawCharsPick(hordaRoster(), L, NET.slot, false, {bg:'banner', title:(currentMap==='laspalmas'?'MODO INFINITO':'HORDA')+' — ELIGE TU PERSONAJE'}));
       requestAnimationFrame(frame); return;
@@ -6913,7 +6924,7 @@ function netSerializePvp(){
 function netSerializeNsel(){
   const seq=++netSeq;
   while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();
-  return { _nsel:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
+  return { _nsel:1, seq, evts:(netEvtQ.length?netEvtQ:undefined), map:currentMap,
     list:players.map(p=>({kind:p.kind, skd:p.selKind?1:0, sc:p.selCur||0, dp:p.departed?1:0})) };
 }
 function netBroadcast(dt){
@@ -6932,13 +6943,26 @@ const gNpcMap={};            // AI-ally id -> persistent render object
 let gPred={init:false, x:0, y:0, animTime:0, punchAnim:0, cd:0, wasPunch:false};
 let gPrevRound=-999, gProjSeq=-1, gWallSig=null;   // gWallSig: last replicated wall set (id:hp,…) — obstacles rebuild only when it changes
 let gIntroSeq=-1;                                  // last snapshot seq the intro countdown was resynced from
+let gLastSeq=0, gIntroCutSeq=0;                    // highest seq seen / seq watermark when the intro clip started
+// keep the guest's map in lockstep with the host — the pick-screen roster (hordaRoster), its title,
+// and the map music all read currentMap, so it must be right BEFORE the world exists
+function netSetMap(m){
+  if(!m || currentMap===m) return;
+  currentMap=m;
+  obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS).slice();
+  cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
+  gWallSig=null;   // force the wall/obstacle rebuild on the fresh map
+}
 function netOnSnapshot(d){
   if(d._introNet){ playIntroGuest(); return; }                 // host is rolling the Modo Infinito intro — mirror it
-  // while our clip is up, ONLY the first real gameplay snapshot ends it (a late/out-of-order pick-screen
-  // or wait packet from just before the intro must NOT cut it short on the unreliable channel)
-  if(introPlaying){ if(d._snap) endIntroGuest(); else return; }
+  // while our clip is up, only packets from AFTER the clip started may end it: the first real gameplay
+  // snapshot, or a pick-screen packet (the online flow is now intro → pick screen → game). The seq
+  // watermark keeps a late/out-of-order pick-screen packet from just before the intro (host backed out
+  // to the SALA and re-entered) from cutting the clip short on the unreliable channel.
+  if(introPlaying){ if(d._snap || (d._nsel && (d.seq||0)>gIntroCutSeq)) endIntroGuest(); else return; }
+  if(typeof d.seq==='number' && d.seq>gLastSeq) gLastSeq=d.seq;
   if(d._wait){ NET.snap=null; NET.nsel=null; NET.guestReady=false; NET.waitState=d.state; pvpInfo=false; return; }
-  if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; if(typeof d.you==='number') NET.slot=d.you; netPlayEvts(d); return; }
+  if(d._nsel){ NET.nsel=d; NET.snap=null; NET.guestReady=false; if(typeof d.you==='number') NET.slot=d.you; netSetMap(d.map); netPlayEvts(d); return; }
   if(!d._snap) return;
   NET.nsel=null;
   d.rt = performance.now();
@@ -6961,12 +6985,7 @@ function netApplyMeta(s){
   if(s.state===STATE.PAUSE && state!==STATE.PAUSE){ pauseView='main'; pauseSel=0; }   // fresh local menu each time the host pauses
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
   survival=!!s.survival; kills=s.kills||0;
-  if(currentMap!==s.currentMap){
-    currentMap=s.currentMap;
-    obstacles=((currentMap==='stonebridge')?OBST_STONEBRIDGE:(currentMap==='templo')?OBST_TEMPLO:(currentMap==='machu')?OBST_MACHU:(currentMap==='laspalmas')?[]:OBST_AMAZONAS).slice();
-    cliffs=(currentMap==='templo')?CLIFFS_TEMPLO:[];
-    gWallSig=null;   // force the wall/obstacle rebuild on the fresh map
-  }
+  netSetMap(s.currentMap);
   WORLD_W=s.worldW; WORLD_H=s.worldH;
 }
 function netRenderPlayer(sp){
