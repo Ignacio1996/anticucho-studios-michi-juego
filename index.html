@@ -3963,10 +3963,11 @@ function drawPlayer(p){
       if(p.fallT>0){ const k=clamp(p.fallT/0.5,0,1), C=CHARS[p.kind]; if(C.loaded()){ const fr=charFrame(p), CELL=C.cell, DH=C.dh*k, scale=DH/CELL.h, DW=CELL.w*scale, top=p.y-DH+p.radius+(1-k)*30, dx=p.x-DW/2; ctx.save(); ctx.globalAlpha=k; if(fr.flip){ctx.translate(p.x,0);ctx.scale(-1,1);ctx.translate(-p.x,0);} ctx.drawImage(fr.img,dx,top,DW,DH); ctx.restore(); } }
       return;
     }
-    // Modo Infinito: fallen players lie in their bespoke death pose ~30s (fading out at the end)
-    // instead of the tip-over animation + wooden cross. The revive ring still draws on top.
+    // Modo Infinito: fallen players lie in their bespoke death pose for the REST OF THE RUN (no
+    // fade — the body stays until a teammate revives them; only NPC ally corpses fade after ~30s).
+    // The revive ring still draws on top. The clock is clamped clear of drawDeathPose's fade window.
     if(survival && DP_IMG[p.kind] && DP_IMG[p.kind].naturalWidth){
-      drawDeathPose(p.kind, p.x, p.y, p.y+p.radius+4, p.deadT||0);
+      drawDeathPose(p.kind, p.x, p.y, p.y+p.radius+4, Math.min(p.deadT||0, CORPSE_LIFE-CORPSE_FADE));
       if((p.reviveProgress||0)>0){
         const fr2=clamp(p.reviveProgress/5,0,1);
         ctx.strokeStyle='#aef7c2'; ctx.lineWidth=3;
@@ -3979,14 +3980,13 @@ function drawPlayer(p){
       if(img && img.naturalWidth){ const sc=m.dh/m.h, dw=m.w*sc, dh=m.h*sc; const dx=p.x-m.d1cx*sc, dy=(p.y+p.radius+5)-m.d1by*sc; ctx.drawImage(img,dx,dy,dw,dh); }
       else{
         // PVP-only kinds (Teddington / Cóndor) have no bespoke KO frames: tip the standing sprite
-        // over and fade it out, then hold the fallen pose like the drawn death frames do
+        // over and hold the fallen pose at FULL opacity, like the drawn death frames do
         const C=CHARS[p.kind];
         if(C && C.loaded()){
           const t=clamp(p.deathAnim/0.9,0,1), fr=charFrame(p);
           const DH=(C.natScale&&fr.img&&fr.img.naturalHeight)?C.dh*(fr.img.naturalHeight/C.cell.h):C.dh;
           const DW=(C.natAspect&&fr.img&&fr.img.naturalWidth)?DH*(fr.img.naturalWidth/fr.img.naturalHeight):C.cell.w*(DH/C.cell.h);
           ctx.save(); ctx.translate(p.x, p.y+p.radius-4); ctx.rotate((fr.flip?-1:1)*t*Math.PI/2);
-          ctx.globalAlpha=1-0.7*t;
           if(fr.img && fr.img.naturalWidth) ctx.drawImage(fr.img,-DW/2,-DH,DW,DH);
           ctx.restore();
         }
@@ -5778,7 +5778,9 @@ function pvpSolid(c,r,forP){
 
 function enterPvpSelect(){ currentMap='pvp'; NET.hosting=false; selMode=2; mode=2; modTest=false; pvp.sub='off'; enterSelect(); pvpPending=true; stopMenuMusic(); resumeCumbia(); }   // PVP music starts here, alone
 function pvpResetWorld(){
-  currentMap='pvp'; obstacles=[]; cliffs=[]; WORLD_W=W; WORLD_H=H; camX=0; camY=0;
+  // survival must NOT leak in from a previous Modo Infinito session — it gates Modo Infinito-only
+  // art (water-gun death poses) and logic that would otherwise bleed into the duel
+  currentMap='pvp'; survival=false; obstacles=[]; cliffs=[]; WORLD_W=W; WORLD_H=H; camX=0; camY=0;
   stopMenuMusic(); resumeCumbia();
   particles.length=0; enemies.length=0; apuchis.length=0; fx_effects.length=0; leaves.length=0; hearts.length=0;
 }
@@ -6895,8 +6897,16 @@ function netPlayEvts(d){
 function netSerEnt(e){  // copy primitive fields only → drops object refs / functions so BinaryPack never chokes
   const o={}; for(const k in e){ const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
 }
-function netSerEnemyDyn(e){    // dynamic tier: everything primitive EXCEPT the known-constant static fields (id stays)
-  const o={}; for(const k in e){ if(NET_ESTATIC_SET.has(k)) continue; const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
+// Host-only AI scratch (steering velocities, attack cooldowns, anim clocks guests tick locally) —
+// never read by any renderer, so it must not ride the snapshot. Modo Infinito runs up to ~240
+// concurrent enemies at ~18 snapshots/s per guest: shedding these fields is what keeps long runs
+// from lagging guests more and more as the swarm grows.
+const NET_DYN_SKIP=new Set(['vx','vy','atkcd','chargeCd','shootCd','shotDone','stagger','wob','animTime']);
+function netSerEnemyDyn(e){    // dynamic tier: everything primitive EXCEPT static fields + AI scratch (id stays)
+  // dead enemies only play out their death animation — position/pose fields froze at death and the
+  // guest's persistent per-id object keeps the last received values, so ship the bare minimum
+  if(e.dead) return { id:e.id, x:e.x, y:e.y, dead:true, deathT:e.deathT };
+  const o={}; for(const k in e){ if(NET_ESTATIC_SET.has(k)||NET_DYN_SKIP.has(k)) continue; const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
 }
 function netSerEnemyStatic(e){ // static tier: only the constant fields the renderers need
   const o={}; for(const k of NET_ESTATIC){ const v=e[k], t=typeof v; if(t==='number'||t==='string'||t==='boolean') o[k]=v; } return o;
@@ -7101,6 +7111,7 @@ const gPvpItems={};
 const gPvpWalk={};   // bomb id -> still walkable for the local player (host's walker rule, replicated)
 function netApplyGuestPvp(cur,dt){
   state=STATE.PVP;
+  survival=false;   // a guest coming from a Modo Infinito run must not keep its survival-only art/logic active
   if(currentMap!=='pvp'){ currentMap='pvp'; obstacles=[]; cliffs=[]; WORLD_W=W; WORLD_H=H; camX=0; camY=0; enemies.length=0; }
   pvp.sub=cur.sub; pvp.count=cur.count; pvp.roundN=cur.roundN; pvp.wins=cur.wins||[]; pvp.paused=!!cur.paused;
   pvp.banner=cur.banner; pvp.bannerC=cur.bannerC; pvp.winner=cur.winner;
