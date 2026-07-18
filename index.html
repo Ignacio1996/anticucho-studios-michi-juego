@@ -279,6 +279,10 @@ function lpMusicStart(){
 }
 function lpMusicUpdate(dt){
   if(!lpMx.length) return; const cur=lpMx[lpMxIdx]; if(!cur) return;
+  // hard invariant: the Las Palmas playlist NEVER shares the stage with the menu track. Some join
+  // orderings (a guest unlocked audio on the waiting screen, then the room moved into the intro /
+  // pick screen) left the menu song running underneath — pause it the moment any lp track plays.
+  try{ if(menuMusic && !menuMusic.paused && lpMx.some(t=>t && !t.paused)) menuMusic.pause(); }catch(e){}
   // Safety net / loop: if the active track played to its END with no crossfade queued (e.g. the last
   // track), jump straight to the next one (wrapping 3→1). `ended` distinguishes a natural finish from
   // an intentional pause (menu/stop), which leaves ended=false.
@@ -3200,14 +3204,19 @@ function spawnIdleNpc(){
   const kind=npcQueue.pop();
   if(players.some(p=>p.kind===kind && !p.departed)) return;   // stale queue entry (a present player owns it) — drop it, retry next tick
   for(let t=0;t<60;t++){                     // anywhere walkable on the map (a corner, behind a house…),
-    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);   // just never inside the current view (no pop-in)
+    const x=rand(240,LP_W-240), y=rand(240,LP_H-240);   // just never inside ANY player's view (no pop-in on any screen)
     if(lpSolidAt(x,y)) continue;
-    if(x>camX-60 && x<camX+W+60 && y>camY-60 && y<camY+H+60) continue;
+    let seen=false;
+    for(const p of players){ if(p.departed) continue;
+      const px=clamp(p.x-W/2,0,Math.max(0,WORLD_W-W)), py=clamp(p.y-H/2,0,Math.max(0,WORLD_H-H));
+      if(x>px-60 && x<px+W+60 && y>py-60 && y<py+H+60){ seen=true; break; } }
+    if(seen) continue;
     npcs.push(makeNpc(kind,Math.round(x),Math.round(y))); return;
   }
   npcQueue.push(kind);                       // no spot found — retry next tick
 }
-function tagNpc(n){ n.npcState='active'; n.hp=n.maxhp; try{ playCharSelect(n.kind); netQSnd('sel',n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
+function tagNpc(n,tagger){ n.npcState='active'; n.hp=n.maxhp; n.ownIdx=players.indexOf(tagger);   // the ally belongs to whoever tagged it: it fights inside THAT player's view
+  try{ playCharSelect(n.kind); netQSnd('sel',n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
 function fireNpcBullet(n, tx, ty){
   const dx=tx-n.x, dy=ty-n.y, ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4), cx=Math.cos(ang), cy=Math.sin(ang);
   n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
@@ -3223,15 +3232,23 @@ function updateNpcs(dt){
     if(!npcQueue.length) refillNpcQueue();                      // loop restart once everyone's gone
     if(npcQueue.length) spawnIdleNpc();
   }
-  const alive=players.filter(p=>p.alive), host=alive[0]||players[0];
+  const alive=players.filter(p=>p.alive);
   for(let i=npcs.length-1;i>=0;i--){
     const n=npcs[i]; n.animTime+=dt; if(n.hitFlash>0) n.hitFlash-=dt; if(n.punchAnim>0) n.punchAnim-=dt;
-    n.tierra = host ? host.tierra : 0;   // match the host's speed boosts (shoes)
     if(n.npcState==='idle'){
       n.tagBob+=dt*3; n.moving=false;
-      for(const p of players){ if(p.alive && dist(p.x,p.y,n.x,n.y) < p.radius+n.radius+6){ tagNpc(n); break; } }
+      for(const p of players){ if(p.alive && dist(p.x,p.y,n.x,n.y) < p.radius+n.radius+6){ tagNpc(n,p); break; } }
       continue;   // idle NPCs are invulnerable until tagged
     }
+    // The ally belongs to its TAGGER: it behaves exactly like in singleplayer, but everything that
+    // used to reference "the screen" (visible enemies, screen-edge return, off-screen catch-up) uses
+    // a virtual camera centred on its owner. Owner dead/gone → adopt the nearest living player.
+    let own=(n.ownIdx!=null && players[n.ownIdx] && players[n.ownIdx].alive && !players[n.ownIdx].departed) ? players[n.ownIdx] : null;
+    if(!own && alive.length){ let bd=1e18; for(const p of alive){ const d0=dist(p.x,p.y,n.x,n.y); if(d0<bd){ bd=d0; own=p; } } n.ownIdx=players.indexOf(own); }
+    const host=own || players[0];
+    const camX=host?clamp(host.x-W/2,0,Math.max(0,WORLD_W-W)):0,   // shadow the globals: every screen-rect
+          camY=host?clamp(host.y-H/2,0,Math.max(0,WORLD_H-H)):0;   // check below is in the OWNER's view
+    n.tierra = host ? host.tierra : 0;   // match the owner's speed boosts (shoes)
     // ---- active: fight only what's ON SCREEN, and prefer enemies with a CLEAR LINE OF FIRE ----
     // Off-screen enemies are ignored entirely: when the player walks away and the ally ends up at
     // the screen edge, it commits to returning to the middle (hysteresis below) instead of jittering
@@ -4787,6 +4804,41 @@ function drawApuStatus(p,x,y){
   ctx.fillStyle=p.shields>0?'#7fd4ff':'#6b6253'; ctx.fillText('ESC'+pips(p.shields),cx,y); cx+=70;
   if(p.special!=='none'){ const sc=p.special==='morganita'?'#ff7ab0':(p.special==='oro'?'#ff9a2a':'#5aa0ff'); ctx.fillStyle=sc;
     ctx.fillText('\u2605'+(p.special==='morganita'?'MORGANITA':(p.special==='oro'?'ORO':'SAFIRO'))+' x'+p.specialCharges,cx,y); }
+}
+// Modo Infinito edge arrows: with every player on their own camera, teammates roam out of view —
+// draw a small arrow pinned to the screen edge pointing at each off-screen player, labeled with
+// their character name (dimmed + ✝ while they're down, so you can go revive them).
+function drawTeammateArrows(){
+  if(!survival || state!==STATE.PLAY) return;
+  const meIdx=(NET.role==='guest')?NET.slot:0;
+  const mX=52, mTop=104, mBot=64;                       // margins: clear the HUD strip and screen borders
+  ctx.save(); ctx.textAlign='center';
+  for(let i=0;i<players.length;i++){
+    if(i===meIdx) continue;
+    const p=players[i]; if(!p || p.departed || p.pending) continue;
+    if(p.x>camX+24 && p.x<camX+W-24 && p.y>camY+24 && p.y<camY+H-24) continue;   // on my screen — no arrow
+    let dx=p.x-(camX+W/2), dy=p.y-(camY+H/2); const len=Math.hypot(dx,dy)||1; dx/=len; dy/=len;
+    // slide along the direction until the screen-rect (minus margins) is hit
+    let t=1e9;
+    if(dx>0) t=Math.min(t,(W/2-mX)/dx); else if(dx<0) t=Math.min(t,(W/2-mX)/-dx);
+    if(dy>0) t=Math.min(t,(H/2-mBot)/dy); else if(dy<0) t=Math.min(t,(H/2-mTop)/-dy);
+    const ax=W/2+dx*t, ay=H/2+dy*t, ang=Math.atan2(dy,dx);
+    ctx.save(); ctx.translate(ax,ay);
+    ctx.globalAlpha=p.alive?0.92:0.8;
+    ctx.rotate(ang);
+    ctx.fillStyle=p.color||'#ffffff'; ctx.strokeStyle='rgba(0,0,0,0.65)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(12,0); ctx.lineTo(-8,-8); ctx.lineTo(-4,0); ctx.lineTo(-8,8); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.rotate(-ang);
+    const label=(p.name||String(p.kind).toUpperCase())+(p.alive?'':' ✝');
+    ctx.font='bold 11px Courier New';
+    const tw=ctx.measureText(label).width, tx=-dx*20, ty=-dy*20+4;
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(tx-tw/2-3, ty-11, tw+6, 14);
+    ctx.fillStyle=p.alive?(p.color||'#ffffff'):'#ff8a7a';
+    ctx.fillText(label, tx, ty);
+    ctx.restore();
+  }
+  ctx.textAlign='left'; ctx.restore();
 }
 function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,52);
@@ -6656,6 +6708,20 @@ function drawSnow(dt){
 }
 function updateCamera(){
   if(WORLD_W<=W && WORLD_H<=H){ camX=0; camY=0; return; }
+  // Modo Infinito ONLINE: every machine's camera follows ITS OWN player — the host's screen is just
+  // another player's view and guests render their own — so nobody drags anyone across the map, and
+  // players are NOT clamped into a shared view (they roam the whole map; edge arrows point at the
+  // others). Dead: the camera holds on your body (the revive marker). No own player (late-join
+  // spectator): fall through to the group camera. Local co-op (one shared screen) keeps the old rule.
+  if(survival && (NET.role==='guest' || NET.hosting)){
+    const me=players[NET.role==='guest'?NET.slot:0];
+    if(me && !me.departed){
+      camX=clamp(me.x - W/2, 0, Math.max(0,WORLD_W - W));
+      camY=clamp(me.y - H/2, 0, Math.max(0,WORLD_H - H));
+      if(!Number.isFinite(camX)) camX=0; if(!Number.isFinite(camY)) camY=0;
+      return;
+    }
+  }
   const al=players.filter(p=>p.alive);
   let cx,cy;
   if(al.length){ let sx=0,sy=0; for(const p of al){sx+=p.x;sy+=p.y;} cx=sx/al.length; cy=sy/al.length; if(currentMap==='machu'){ let se=0; for(const p of al) se+=machuElev(p.x); cy+=se/al.length; } }
@@ -6797,6 +6863,7 @@ function _frameBody(now){
   if(currentMap==='templo' && state!==STATE.PAUSE) safe('debris',()=>drawDebris(dt));
   if(_LP) safe('lptint',drawLasPalmasTint);   // post-apocalyptic reddish haze over the whole scene
   safe('hud',drawHUD);
+  if(_LP) safe('mates',drawTeammateArrows);
   safe('bossbars',drawBossBars);
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
   if(state===STATE.INTRO) safe('introui',drawIntroUI);
