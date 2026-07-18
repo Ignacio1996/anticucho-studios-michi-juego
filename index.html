@@ -944,6 +944,9 @@ addEventListener('keydown', e => {
     if(NET.role!=='guest' && players[1] && (e.code==='Slash'||e.code==='ShiftRight')){ cycleWeapon(players[1], 1); }
     // P1 can also cycle with Q / E without reaching for the number row
     if(NET.role!=='guest' && players[0] && (e.code==='KeyQ'||e.code==='KeyE')){ cycleWeapon(players[0], e.code==='KeyQ'?-1:1); }
+    // dead online host: A / D hop between the teammates still fighting
+    if(NET.hosting && lp && !lp.alive && !lp.departed && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight'))
+      specCycle((e.code==='KeyA'||e.code==='ArrowLeft')?-1:1);
   }
   // menu/shop interactions
   handleMenuKey(e.code);
@@ -1882,8 +1885,8 @@ const _aleEls={};
 function aleEl(k){ let a=_aleEls[k]; if(!a){ try{ a=new Audio(ALE_AUD_SRC[k]); a.preload='metadata'; _aleEls[k]=a; }catch(e){ return null; } } return a; }
 function playAle(k){ try{ const a=aleEl(k); if(a){ a.currentTime=0; a.volume=0.95; a.play().catch(()=>{}); } }catch(e){} }
 function aleDur(k,fb){ const a=_aleEls[k]; return (a && isFinite(a.duration) && a.duration>0.5) ? a.duration : fb; }
-const DECOY_LURE_R=460;    // enemies inside this radius drop the players and mob Alessito (outside: unaware, still shootable)
-const ALE_ALERT_R=300;     // enemies this close trigger his panic (and the countdown to the blast)
+const DECOY_LURE_R=280;    // enemies inside this radius drop the players and mob Alessito (outside: unaware, still shootable)
+const ALE_ALERT_R=230;     // enemies this close trigger his panic (and the countdown to the blast) — inside the lure ring
 const ALE_BOOM_R=340;      // the goodbye explosion
 function throwDecoy(p,power){
   power=(power==null?1:clamp(power,0,1));
@@ -1960,6 +1963,18 @@ function drawDecoy(d){
   const img=ALE_IMG[d.pose], dead=(d.pose==='DEATH');
   ctx.save();
   if(d.phase==='dead' && d.t>13) ctx.globalAlpha=clamp((15-d.t)/2,0,1);   // fade out the last 2s
+  if(d.phase!=='dead'){
+    // faint rotating dashed ring = the lure radius, so players can read exactly which enemies
+    // he'll pull (and which stay theirs to shoot)
+    const tks=performance.now()/1000;
+    ctx.save();
+    ctx.globalAlpha=0.20+0.10*Math.sin(tks*4.5);   // slow blink
+    ctx.strokeStyle='#ffffff'; ctx.lineWidth=2.5;
+    ctx.setLineDash([16,13]); ctx.lineDashOffset=-tks*45;   // rotating dashes
+    ctx.beginPath(); ctx.arc(d.x,d.y,DECOY_LURE_R,0,TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
   ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(d.x,d.y+10,10,4,0,0,TAU); ctx.fill();
   const tb=img && img.naturalWidth ? aleTrimBox(d.pose) : null;
   if(tb){
@@ -5250,7 +5265,7 @@ function drawTeammateArrows(){
   // dead + spectating a teammate: say whose view this is (the camera snaps back when you're revived)
   const meP=players[meIdx];
   if(meP && !meP.departed && !meP.alive && gSpecIdx!=null && players[gSpecIdx]){
-    const sp=players[gSpecIdx], msg='VIENDO A '+(sp.name||'')+' — espera a que te revivan';
+    const sp=players[gSpecIdx], msg='VIENDO A '+(sp.name||'')+' — A / D: cambiar · espera a que te revivan';
     ctx.font='bold 14px Courier New';
     const tw2=ctx.measureText(msg).width;
     ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-tw2/2-9, H-98, tw2+18, 24);
@@ -5715,25 +5730,30 @@ function drawOver(){
   ctx.fillText('FIN DEL JUEGO', W/2, 150);
   ctx.fillStyle='#ffe9b0'; ctx.font='20px Courier New';
   if(survival){
-    ctx.fillText('Llegaste a la RONDA '+round+' — '+kills+' eliminados', W/2, 210);
-    ctx.fillStyle=(kills>=lpBestScore&&kills>0)?'#ffd24a':'#aef7c2'; ctx.font='18px Courier New';
-    ctx.fillText((round>lpBestRound||(round===lpBestRound&&kills>=lpBestScore&&kills>0))?('¡NUEVO RÉCORD!  Ronda '+lpBestRound):('Mejor: Ronda '+lpBestRound), W/2, 240);
+    // the run's result IS the round — give it the whole screen (host, co-op and guests all render this)
+    ctx.fillText('LLEGASTE A LA', W/2, 200);
+    ctx.fillStyle='#ffd24a'; ctx.font='bold 62px Courier New';
+    ctx.fillText('RONDA '+round, W/2, 258);
+    ctx.fillStyle='#ffe9b0'; ctx.font='17px Courier New';
+    ctx.fillText(kills+' eliminados', W/2, 288);
+    ctx.fillStyle=(kills>=lpBestScore&&kills>0)?'#ffd24a':'#aef7c2'; ctx.font='15px Courier New';
+    ctx.fillText((round>lpBestRound||(round===lpBestRound&&kills>=lpBestScore&&kills>0))?('¡NUEVO RÉCORD!  Ronda '+lpBestRound):('Mejor: Ronda '+lpBestRound), W/2, 312);
   } else {
     ctx.fillText('Ronda alcanzada: '+round, W/2, 210);
     ctx.fillText('Puntos totales: '+score, W/2, 244);
   }
   // per player summary
-  let yy=300;
+  let yy=survival?344:300;
   ctx.font='15px Courier New';
   for(const p of players){
     ctx.fillStyle=p.color;
     const sp = p.special!=='none' ? ('  ['+p.special.toUpperCase()+']') : '';
     ctx.fillText(p.name+(p.alive?' \u2014 sobrevivi\u00f3':' \u2014 cay\u00f3')+sp, W/2, yy);
-    yy+=28;
+    yy+=survival?24:28;
   }
   const opts=['REINTENTAR','VOLVER AL MEN\u00da'];
   opts.forEach((o,i)=>{
-    const oy=400+i*48;
+    const oy=(survival?Math.max(468,yy+34):400)+i*48;
     if(i===menuSel){ ctx.fillStyle='rgba(255,210,74,0.18)'; ctx.fillRect(W/2-160,oy-26,320,38);
       ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(W/2-160,oy-26,320,38); }
     ctx.fillStyle= i===menuSel?'#fff':'#bdb190'; ctx.font='bold 18px Courier New';
@@ -7158,6 +7178,15 @@ function drawSnow(dt){
   ctx.globalAlpha=1; ctx.restore();
 }
 let gSpecIdx=null;   // Modo Infinito online: index of the living teammate a dead player is spectating
+// dead spectator taps A / D (or arrows) to hop between the teammates still fighting
+function specCycle(dir){
+  const me=players[NET.role==='guest'?NET.slot:0];
+  if(!me || me.alive || me.departed) return;
+  const opts=[]; for(let i=0;i<players.length;i++){ const q=players[i]; if(q && q!==me && q.alive && !q.departed) opts.push(i); }
+  if(!opts.length) return;
+  const cur=opts.indexOf(gSpecIdx);
+  gSpecIdx = opts[cur<0 ? 0 : (cur+dir+opts.length)%opts.length];
+}
 function updateCamera(){
   if(WORLD_W<=W && WORLD_H<=H){ camX=0; camY=0; return; }
   // Modo Infinito ONLINE: every machine's camera follows ITS OWN player — the host's screen is just
@@ -7289,7 +7318,8 @@ function _frameBody(now){
   const drawables=[...(_LP?enemies.filter(e=>inV(e.x,e.y)):enemies).map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
-                   ...(survival?decoys.filter(dc=>inV(dc.x,dc.y)):[]).map(dc=>({y:dc.y,x:dc.x,sy:dc.y+12,zt:0,f:()=>drawDecoy(dc)})),
+                   // decoys cull with a lure-ring-sized margin so the radius circle doesn't pop at screen edges
+                   ...(survival?decoys.filter(dc=> dc.x>camX-DECOY_LURE_R-40 && dc.x<camX+W+DECOY_LURE_R+40 && dc.y>camY-DECOY_LURE_R-40 && dc.y<camY+H+DECOY_LURE_R+40):[]).map(dc=>({y:dc.y,x:dc.x,sy:dc.y+12,zt:0,f:()=>drawDecoy(dc)})),
                    ...(survival?corpses.filter(c=>inV(c.x,c.y)):[]).map(c=>({y:c.y,x:c.x,sy:c.y,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat (lose z-ties to the living)
                    ...(survival?bullets.filter(b=>inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
                    ...(_LP?incaWalls.filter(w=>inV(w.x,w.y)):incaWalls).map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
@@ -8122,6 +8152,8 @@ requestAnimationFrame(frame);
             if(n>=0 && n<own.length){ lp.weapon=own[n]; NET.guestWeapon=lp.weapon; sendInput(true); }
           } else if(e.code==='KeyQ'||e.code==='KeyE'){
             cycleWeapon(lp, e.code==='KeyQ'?-1:1); NET.guestWeapon=lp.weapon; sendInput(true);
+          } else if(!lp.alive && !lp.departed && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight')){
+            specCycle((e.code==='KeyA'||e.code==='ArrowLeft')?-1:1);   // dead: hop between living teammates
           }
         }
       }
