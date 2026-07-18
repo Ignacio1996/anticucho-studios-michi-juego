@@ -1843,7 +1843,7 @@ function drawGrenades(){
 // Assets expected in assets/: Ale_<POSE>.png and Ale_<CLIP>.mp3 (see keys below). Everything
 // degrades gracefully if a file is missing (placeholder sprite / fallback timers).
 const decoys=[];
-const ALE_KEYS=['TOSS','LAND','SOUTH_IDLE','EAST_IDLE','EAST_SCARED1','EARS','WEST_SCARED1','SOUTH_SCARED1','DEATH'];
+const ALE_KEYS=['TOSS','LAND','SOUTH_IDLE','EAST_IDLE','EAST_SCARED1','EARS','WEST_SCARED1','SOUTH_SCARED1','NORTH_SCARED1','DEATH'];
 const ALE_IMG={}; for(const k of ALE_KEYS){ const im=new Image(); im.src='assets/Ale_'+k+'.png'; ALE_IMG[k]=im; }
 const ALE_AUD_SRC={FELICIDAD:'assets/Ale_FELICIDAD.mp3', NERVIOSandCRY:'assets/Ale_NERVIOSandCRY.mp3', DEATHLONG:'assets/Ale_DEATHLONG.mp3'};
 const _aleEls={};
@@ -1885,7 +1885,7 @@ function updateDecoys(dt){
       if(d.t>=15){ d.phase='doom'; d.t=0; d.boomT=aleDur('DEATHLONG',7); d.nextP=0; playAle('DEATHLONG'); netQSnd('aleD'); }
     } else if(d.phase==='doom'){
       // scared poses shuffle at random beats until Ale_DEATHLONG runs out — then the big goodbye
-      if(d.t>=d.nextP){ d.nextP=d.t+rand(1.4,2.6); d.pose=['EAST_SCARED1','EARS','WEST_SCARED1','SOUTH_SCARED1'][randi(0,3)]; d.flip=false; }
+      if(d.t>=d.nextP){ d.nextP=d.t+rand(1.4,2.6); d.pose=['EAST_SCARED1','EARS','WEST_SCARED1','SOUTH_SCARED1','NORTH_SCARED1'][randi(0,4)]; d.flip=false; }
       if(d.t>=(d.boomT||7)) decoyBoom(d);
     } else if(d.phase==='dead'){
       if(d.t>=15) decoys.splice(i,1);   // the DEATH pose lingers 15s, then he's gone
@@ -1900,14 +1900,38 @@ function decoyBoom(d){
   for(const e of enemies){ if(e.dead||e.boss) continue;
     if(dist(d.x,d.y,e.x,e.y)<ALE_BOOM_R+(e.footR||e.radius)){ e.dcLock=false; e.hp=0; killEnemy(e, ow); } }
 }
+// The Ale art ships on a 1077x976 canvas with lots of transparent padding that varies per pose,
+// so each sprite is trimmed to its visible pixels once (cached) and every pose is drawn at ONE
+// uniform scale — otherwise he'd render half-size and jump around between poses.
+const _aleTrim={};
+function aleTrimBox(k){
+  let t=_aleTrim[k]; if(t!==undefined) return t;
+  const im=ALE_IMG[k]; if(!im || !im.naturalWidth) return null;   // not loaded yet — retry later
+  try{
+    const c=document.createElement('canvas'); c.width=im.naturalWidth; c.height=im.naturalHeight;
+    const g=c.getContext('2d'); g.drawImage(im,0,0);
+    const px=g.getImageData(0,0,c.width,c.height).data;
+    let x0=c.width,y0=c.height,x1=-1,y1=-1;
+    for(let y=0;y<c.height;y+=2) for(let x=0;x<c.width;x+=2){
+      if(px[(y*c.width+x)*4+3]>10){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+    t=(x1<0)?null:{x:x0,y:y0,w:x1-x0+2,h:y1-y0+2};
+  }catch(e){ t=null; }   // tainted canvas (file:// run) — fall back to the untrimmed draw
+  _aleTrim[k]=t; return t;
+}
+const ALE_H=36;      // standing height on screen (~half a playable character)
+const ALE_REF=560;   // SOUTH_IDLE's visible pixel height — the uniform-scale reference
 function drawDecoy(d){
   const img=ALE_IMG[d.pose], dead=(d.pose==='DEATH');
-  const DH2=dead?22:34;   // ~half a playable character
   ctx.save();
   if(d.phase==='dead' && d.t>13) ctx.globalAlpha=clamp((15-d.t)/2,0,1);   // fade out the last 2s
   ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(d.x,d.y+10,10,4,0,0,TAU); ctx.fill();
-  if(img && img.naturalWidth){
-    const DW2=DH2*img.naturalWidth/img.naturalHeight;
+  const tb=img && img.naturalWidth ? aleTrimBox(d.pose) : null;
+  if(tb){
+    const s=ALE_H/ALE_REF, DW2=tb.w*s, DH2=tb.h*s;
+    if(d.flip){ ctx.translate(d.x,0); ctx.scale(-1,1); ctx.translate(-d.x,0); }
+    ctx.drawImage(img, tb.x, tb.y, tb.w, tb.h, d.x-DW2/2, d.y+10-DH2, DW2, DH2);
+  } else if(img && img.naturalWidth){
+    const DH2=dead?22:34, DW2=DH2*img.naturalWidth/img.naturalHeight;
     if(d.flip){ ctx.translate(d.x,0); ctx.scale(-1,1); ctx.translate(-d.x,0); }
     ctx.drawImage(img, d.x-DW2/2, d.y+10-DH2, DW2, DH2);
   } else {
