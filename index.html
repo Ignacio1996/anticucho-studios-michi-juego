@@ -233,6 +233,22 @@ function initAudio(){
   try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState() || (NET.role==='guest' && NET.nsel)){ if(currentMap==='laspalmas' && (state===STATE.NETSELECT || (NET.role==='guest' && NET.nsel))){ /* Las Palmas playlist owns the pick screen — don't mix the menu track in */ } else if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
 function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
+// "locked" clunk for the enhance machine: two short falling square blips, synthesized so it needs no
+// asset and can't be mistaken for the plin (plin = "no money", lock = "this can NEVER be bought")
+function playLock(){
+  try{
+    if(!actx){ playPlin(); return; }
+    const t0=actx.currentTime;
+    for(const [dt,f] of [[0,150],[0.085,92]]){
+      const o=actx.createOscillator(), g=actx.createGain();
+      o.type='square'; o.frequency.value=f;
+      g.gain.setValueAtTime(0.0001,t0+dt);
+      g.gain.exponentialRampToValueAtTime(0.4,t0+dt+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+dt+0.1);
+      o.connect(g); g.connect(sfxGain||actx.destination); o.start(t0+dt); o.stop(t0+dt+0.12);
+    }
+  }catch(e){}
+}
 let voices=[];
 function playOne(src,vol){ const h=playSfx(src,vol); if(h){ voices.push(h); h.onended(()=>{ const k=voices.indexOf(h); if(k>=0) voices.splice(k,1); }); } return h; }
 function stopVoices(){ for(const a of voices){ try{ a.stop(); }catch(e){} } voices.length=0; }
@@ -1096,8 +1112,22 @@ const LP_VEND_ENH ={x:1235, y:470,  w:VEND_W, h:VEND_H, r:VEND_R, type:'enh'};  
 const LP_VENDS=[LP_VENDING, LP_VEND_HEAL, LP_VEND_ENH];
 // Base prices per machine; every round past the 1st adds +10% (rounded to 5) so the shop stays
 // "equally hard" as kills (and soles income) grow with the rounds.
-const VEND_BASE={weapon:50, heal:60, enh:100};
-function vendCost(v){ const b=VEND_BASE[v.type]||50; return Math.max(b, Math.round(b*(1+0.10*Math.max(0,round-1))/5)*5); }
+// The enhance machine prices by TIER of the weapon you're holding (0→1, 1→2, 2→3), so vendCost
+// needs the near player; it returns null when that weapon can't be enhanced (maxed out, or a
+// weapon with no upgrade path like the Distracción) — callers show it locked + play the lock clunk.
+const VEND_BASE={weapon:50, heal:60};
+const ENH_COSTS=[50,90,110];
+function vendCost(v,p){
+  let b=VEND_BASE[v.type]||50;
+  if(v.type==='enh'){
+    if(p){
+      const wk=p.weapon||'pistol', lvl=(p.enh&&p.enh[wk])||0;
+      if(!ENHANCEABLE.has(wk) || lvl>=ENH_MAX) return null;
+      b=ENH_COSTS[Math.min(lvl,ENH_COSTS.length-1)];
+    } else b=ENH_COSTS[0];
+  }
+  return Math.max(b, Math.round(b*(1+0.10*Math.max(0,round-1))/5)*5);
+}
 const VENDING_COST=50;                     // legacy constant (some help text) — real prices come from vendCost()
 let vendFlash=0;
 const LP_TERRAIN_IMG=new Image(); LP_TERRAIN_IMG.src='assets/laspalmas_terrain.png';   // prop-free ground (background layers flattened)
@@ -2242,7 +2272,12 @@ function nearVending(p){ return !!vendNear(p); }   // kept for callers that only
 function bumpPlacedTurrets(pi,lvl){ for(const t of turrets){ if(t.owner===pi) t.enh=lvl; } }
 function tryVend(p){
   const v=vendNear(p); if(!v) return false;
-  const cost=vendCost(v);
+  const cost=vendCost(v,p);
+  if(cost==null){   // enhance machine, but the held weapon has no next level — locked, hard stop
+    const wk=p.weapon||'pistol', nm=(WEAPONS[wk]?WEAPONS[wk].name:wk);
+    floatText(v.x, v.y-40, ENHANCEABLE.has(wk) ? nm+' al máximo' : nm+' no se puede mejorar', '#9aa4b0');
+    playLock(); return true;
+  }
   if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡Sigues misio! ('+cost+' S/.)', '#ff9a7a'); playPlin(); return true; }
   if(v.type==='heal'){
     if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playPlin(); return true; }
@@ -2250,9 +2285,7 @@ function tryVend(p){
     floatText(p.x, p.y-30, '¡VIDA LLENA!', '#ff7ab0'); playPickup();
   } else if(v.type==='enh'){
     const wk=p.weapon||'pistol';
-    if(!ENHANCEABLE.has(wk)){ floatText(v.x, v.y-40, 'Nada que mejorar', '#ffcf9a'); playPlin(); return true; }
     if(!p.enh) p.enh={};
-    if((p.enh[wk]||0)>=ENH_MAX){ floatText(v.x, v.y-40, (WEAPONS[wk]?WEAPONS[wk].name:wk)+' al máximo', '#ffcf9a'); playPlin(); return true; }
     p.soles-=cost; vendFlash=0.5; p.enh[wk]=(p.enh[wk]||0)+1;
     if(wk==='torreta') bumpPlacedTurrets(players.indexOf(p), p.enh[wk]);   // already-placed turrets upgrade too
     floatText(p.x, p.y-30, (WEAPONS[wk]?WEAPONS[wk].name:wk)+' NIVEL '+p.enh[wk], '#7fd4ff'); playCoin();
@@ -2288,20 +2321,28 @@ function drawVend(v){
   ctx.fillStyle='#ffe14a'; ctx.fillRect(x+w/2-13, top+28, 6, 2);
   ctx.fillStyle=lit?'#7dffb0':'#0e3b28'; rrect(x+w/2-15, top+38, 10, 14, 1); ctx.fill();
   ctx.fillStyle=lit?'#0e3b28':'#7dffb0'; ctx.font='bold 7px Courier New'; ctx.textAlign='center'; ctx.fillText('S/', x+w/2-10, top+48);
-  // price plate (prices climb with the round)
-  ctx.fillStyle='#0d1218'; rrect(x-w/2+6, top+h-18, w-12, 13, 2); ctx.fill();
-  ctx.fillStyle='#ffe14a'; ctx.font='bold 9px Courier New'; ctx.textAlign='center'; ctx.fillText(vendCost(v)+' S/.', x, top+h-8);
-  // proximity prompt
+  // price plate — enhance machine prices by the near player's held weapon tier, and greys out
+  // (MÁX / no-upgrade) when that weapon has no next level to buy
   let near=null; for(const p of players){ if(vendNear(p)===v){ near=p; break; } }
+  const cost=vendCost(v, near);
+  ctx.fillStyle='#0d1218'; rrect(x-w/2+6, top+h-18, w-12, 13, 2); ctx.fill();
+  ctx.font='bold 9px Courier New'; ctx.textAlign='center';
+  if(cost==null){ ctx.fillStyle='#5a6570'; ctx.fillText(ENHANCEABLE.has(near.weapon||'pistol')?'MÁX':'✕', x, top+h-8); }
+  else { ctx.fillStyle='#ffe14a'; ctx.fillText(cost+' S/.', x, top+h-8); }
+  // proximity prompt
   if(near){
-    const canBuy=(near.soles||0)>=vendCost(v), key=(players.indexOf(near)===0?'F':'.');
-    const hint=v.type==='heal'?'Vida llena':v.type==='enh'?'Mejorar arma':'Comprar';
+    const key=(players.indexOf(near)===0?'F':'.');
     ctx.font='bold 11px Courier New';
-    const txt=canBuy?(hint+'  ['+key+']'):'Sigues misio';
+    let txt, col;
+    if(cost==null){ const wk=near.weapon||'pistol';
+      txt=ENHANCEABLE.has(wk)?(WEAPONS[wk]?WEAPONS[wk].name:wk)+' al máximo':'No se puede mejorar'; col='#9aa4b0'; }
+    else if((near.soles||0)<cost){ txt='Sigues misio'; col='#ffcf9a'; }
+    else { const hint=v.type==='heal'?'Vida llena':v.type==='enh'?'Mejorar arma':'Comprar';
+      txt=hint+'  ['+key+']'; col='#aef7c2'; }
     const tw=ctx.measureText(txt).width+16;
     ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(x-tw/2, top-26, tw, 18, 4); ctx.fill();
     ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-    ctx.fillStyle=canBuy?'#aef7c2':'#ffcf9a'; ctx.fillText(txt, x, top-13);
+    ctx.fillStyle=col; ctx.fillText(txt, x, top-13);
   }
   ctx.textAlign='left';
 }
@@ -3108,6 +3149,12 @@ function updateEnemies(dt){
         e.dir = Math.abs(adx)>Math.abs(ady)*1.05 ? (adx<0?'w':'e') : (ady<0?'n':'s');
         e.aimRight = adx>0;
         if(!e.shotDone && e.aiming<=(e.supay?0.9:e.llama?0.6:0.7)){ if(e.supay) fireSupayballs(e,tgt); else if(e.llama) fireSpit(e,tgt); else fireArrow(e,tgt); e.shotDone=true; }
+      } else if(tgt.isDecoy && d < e.radius+34){
+        // mobbing Alessito: hold a small ring around him instead of stacking on his exact spot —
+        // he stays visible mid-tantrum and the mob still looks like it's beating on him
+        const hx=tgt.x-e.x, hy=tgt.y-e.y;
+        e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.faceRight=hx>0;
+        e.moving=false;
       } else {
         let dx,dy;
         if(turTgt){
@@ -3191,7 +3238,10 @@ function updateEnemies(dt){
     // while locked on, the players CANNOT damage this enemy (see dcLock guards) so the blast gets it
     if(tgt && tgt.isDecoy){
       e.dcLock=true;
-      if(d < e.radius+tgt.radius+8 && e.atkcd<=0){
+      // never let anything sit ON him (dashing slimes overshoot the hold ring) — nudge back out
+      const d2=dist(e.x,e.y,tgt.x,tgt.y), minR=e.radius+18;
+      if(d2>0.01 && d2<minR){ const k=(minR-d2)/d2; e.x+=(e.x-tgt.x)*k; e.y+=(e.y-tgt.y)*k; }
+      if(d2 < e.radius+60 && e.atkcd<=0){   // generous swing range: crowd pressure widens the ring
         e.atkcd=0.6;
         if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); }
         spark(tgt.x,tgt.y-8,'#ffcf9a',3,70);
@@ -3604,7 +3654,9 @@ function startSurvival(){
   npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; lpCrateT=6;
-  for(const p of players){ p._vend1=false; }   // fresh run → the first-buy Distracción test hook re-arms
+  // TEST HOOKS (remove when done testing): first weapon-machine buy re-arms to hand out the
+  // Distracción, and everyone starts with 60 soles so it can be bought right away
+  for(const p of players){ p._vend1=false; p.soles=60; }
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
@@ -5080,7 +5132,9 @@ function drawEnemy(e){
   } else {
     ctx.fillStyle=e.hitFlash>0?'#fff':(e.color||'#6fae35'); ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   }
-  if(e.charge && e.charging>0){ ctx.strokeStyle='#ff3b2b'; ctx.globalAlpha=0.6; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(e.x,e.y,r+4,0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
+  // charge telegraph ring — but not in Modo Infinito: the slime alien's dash reads fine on its own
+  // and the red circle looked like a stray artifact around it
+  if(e.charge && e.charging>0 && !survival){ ctx.strokeStyle='#ff3b2b'; ctx.globalAlpha=0.6; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(e.x,e.y,r+4,0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
   if(e.hp<e.maxhp && !e.dead){
     const by=top-7;
     ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(e.x-r,by,r*2,3);
@@ -5783,18 +5837,29 @@ function drawPauseSurvival(){
   ctx.fillStyle='#c8d2da'; ctx.font='10px Courier New'; ctx.textAlign='center';
   ctx.fillText('S/.1', mx+44, coinY+30); ctx.fillText('S/.5', mx+104, coinY+30); ctx.fillText('S/.10', mx+178, coinY+26);
   ctx.textAlign='left';
-  ctx.fillStyle='#aef7c2'; ctx.font='11px Courier New';
-  wrapText('Junta soles: ARMAS al azar (clubhouse), VIDA llena (piscina) y MEJORAS de arma (parque). Los precios suben cada ronda \u2014 pulsa F / .', mx+18, py+128, mw-32, 14);
+  // the three vending machines \u2014 what each sells, where it sits, and how prices work
+  ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('M\u00c1QUINAS  \u00b7 compra: F / .', mx+18, py+132);
+  const VM=[['#e05a5a','ARMAS','arma al azar \u00b7 clubhouse'],
+            ['#e05a9a','VIDA','vida llena \u00b7 piscina'],
+            ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque']];
+  let vy=py+154;
+  for(const m of VM){
+    ctx.fillStyle=m[0]; rrectPath(mx+18,vy-10,13,13,3); ctx.fill();
+    ctx.fillStyle=m[0]; ctx.font='bold 13px Courier New'; ctx.fillText(m[1], mx+40, vy+1);
+    ctx.fillStyle='#c8d2da'; ctx.font='10px Courier New'; ctx.fillText(m[2], mx+40, vy+15);
+    vy+=34;
+  }
+  ctx.fillStyle='#8a97a4'; ctx.font='10px Courier New';
+  wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Todos los precios suben cada ronda.', mx+18, vy+4, mw-32, 13);
   const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
-             ['#8ac24a','CAJAS','arma al azar (aparecen a veces)']];
-  let my=py+206;
+             ['#8ac24a','CAJAS','arma al azar']];
+  let my=vy+72;
   for(const g of POW){
-    ctx.fillStyle=g[0]; ctx.beginPath(); ctx.arc(mx+26,my-4,7,0,TAU); ctx.fill();
-    ctx.fillStyle=g[0]; ctx.font='bold 14px Courier New'; ctx.fillText(g[1], mx+40, my);
-    ctx.fillStyle='#c8d2da'; ctx.font='11px Courier New';
-    wrapText(g[2], mx+40, my+16, mw-56, 14);
-    my+=46;
+    ctx.fillStyle=g[0]; ctx.beginPath(); ctx.arc(mx+26,my-4,6,0,TAU); ctx.fill();
+    ctx.fillStyle=g[0]; ctx.font='bold 13px Courier New'; ctx.fillText(g[1], mx+38, my);
+    ctx.fillStyle='#c8d2da'; ctx.font='10px Courier New'; ctx.fillText(g[2], mx+128, my);
+    my+=22;
   }
   ctx.fillStyle='#ff7a7a'; ctx.font='bold 12px Courier New'; ctx.fillText('\u26a0 Al morir pierdes TODO', mx+18, py+ph-20);
 
@@ -7343,6 +7408,7 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   const _sf=sfxFireShot; sfxFireShot=function(x,y){ netQSnd('fshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sf(x,y); };
   sfxLaunch=wrapSnd('lnch',sfxLaunch); sfxBoom=wrapSnd('boom',sfxBoom);
   sfxPlace=wrapSnd('plc',sfxPlace);   sfxTurretShot=wrapSnd('tshot',sfxTurretShot);
+  playLock=wrapSnd('lock',playLock);   // enhance-machine "locked" clunk reaches guest buyers too
   const _pps=playPunchSound;   // punch voices key off the puncher's character
   playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
 }
@@ -7356,7 +7422,8 @@ const NET_SND={
   gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxGun(a),
   fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
   lnch:()=>sfxLaunch(), boom:()=>sfxBoom(), plc:()=>sfxPlace(), tshot:()=>sfxTurretShot(),
-  aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG')
+  aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
+  lock:()=>playLock()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
