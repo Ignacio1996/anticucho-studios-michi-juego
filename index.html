@@ -3147,10 +3147,10 @@ function updateCorpses(dt){ for(let i=corpses.length-1;i>=0;i--){ corpses[i].t+=
 // before the next appears; the pool loops once everyone has fallen. Host-authoritative + replicated.
 const npcs=[];
 let npcQueue=[], npcSpawnT=14;
-// Allies come ONLY from this mode's playable roster, minus every character a player picked — a
-// departed (disconnected) player still owns theirs, since reconnecting puts them back in that slot.
-// E.g. 4 players online and nobody chose Flash → Flash is the only ally that game.
-function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k)); }
+// Allies come ONLY from this mode's playable roster, minus every character a PRESENT player holds.
+// E.g. 4 players online and nobody chose Flash → Flash is the only ally that game. A leaver's
+// character returns to the pool: their model vanished and Modo Infinito has no mid-run rejoins.
+function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k && !p.departed)); }
 function refillNpcQueue(){ npcQueue=npcRoster(); for(let i=npcQueue.length-1;i>0;i--){ const j=randi(0,i); const t=npcQueue[i]; npcQueue[i]=npcQueue[j]; npcQueue[j]=t; } }
 function makeNpc(kind,x,y){
   const n=makePlayer(kind,x,y,null);   // reuse the player shape so drawPlayer/charFrame just work
@@ -3187,7 +3187,7 @@ function npcSteer(n,tx,ty){
 function spawnIdleNpc(){
   if(npcs.length>=1 || !npcQueue.length) return;   // ONE ally at a time — the next appears after this one falls
   const kind=npcQueue.pop();
-  if(players.some(p=>p.kind===kind)) return;       // stale queue entry (a player owns it) — drop it, retry next tick
+  if(players.some(p=>p.kind===kind && !p.departed)) return;   // stale queue entry (a present player owns it) — drop it, retry next tick
   for(let t=0;t<60;t++){                     // anywhere walkable on the map (a corner, behind a house…),
     const x=rand(240,LP_W-240), y=rand(240,LP_H-240);   // just never inside the current view (no pop-in)
     if(lpSolidAt(x,y)) continue;
@@ -4847,8 +4847,10 @@ function drawHUD(){
   let px=14;
   // 5-player online sessions won't fit five 200px bars across the top — shrink the bar + stride so
   // every player's health/ammo strip stays on-screen (≤4 players keep the roomy original layout).
-  const _np=players.length, _bw=_np>=5?160:200, _stride=_np>=5?176:240;
-  for(const p of players){
+  // Departed (disconnected) players have left the game — no bar, no model, nothing.
+  const _act=players.filter(p=>!p.departed);
+  const _np=_act.length, _bw=_np>=5?160:200, _stride=_np>=5?176:240;
+  for(const p of _act){
     const w=_bw;
     ctx.fillStyle=p.color; ctx.font='bold 12px Courier New';
     ctx.fillText(p.name, px, 14);
@@ -5682,7 +5684,13 @@ function updateNetSelect(dt){
   const act=players.filter(pl=>!pl.departed);
   if(act.length && act.every(pl=>pl.selKind)){
     netSelT+=dt;
-    if(netSelT>1.1){ netSelPicks=players.map(pl=>pl.selKind); startGame(); }
+    if(netSelT>1.1){
+      // capture picks in the order startGame seats people (host, then NET.conns) — a leaver's
+      // hidden placeholder must not shift everyone else's pick onto the wrong slot
+      netSelPicks=[players[0] && !players[0].departed ? players[0].selKind : null]
+        .concat(NET.conns.map(c=>{ const pl=players[c.slot]; return (pl && !pl.departed) ? pl.selKind : null; }));
+      startGame();
+    }
   } else netSelT=0;
 }
 function startGame(){
@@ -6779,7 +6787,11 @@ function _frameBody(now){
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
   if(state===STATE.INTRO) safe('introui',drawIntroUI);
   if(state===STATE.PAUSE) safe('pause',drawPause);
-  if(NET.role==='guest' && players[NET.slot] && players[NET.slot].pending) safe('joinwait',drawGuestJoinWaiting);
+  if(NET.role==='guest'){
+    const meP=players[NET.slot];
+    const lpSpectator = survival && NET.guestReady && (!meP || meP.departed);   // Modo Infinito: no mid-run joins — watching until the next game
+    if(lpSpectator || (meP && meP.pending && !meP.departed)) safe('joinwait',()=>drawGuestJoinWaiting(lpSpectator));
+  }
 
   ctx.restore();
   requestAnimationFrame(frame);
@@ -6896,7 +6908,7 @@ function netSerPlayer(p){
     punchAnim:p.punchAnim, hitFlash:p.hitFlash, shieldFlash:p.shieldFlash, shields:p.shields,
     special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0, soles:p.soles||0,
     gear:p.gear||'none', gearCount:p.gearCount||0,
-    tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, fx:p.facing.x, fy:p.facing.y,
+    tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, departed:!!p.departed, fx:p.facing.x, fy:p.facing.y,
     weapon:p.weapon||'pistol', ammo:p.ammo||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0 };
 }
 function netSerializeSnapshot(){
@@ -7019,7 +7031,7 @@ function netApplyMeta(s){
 function netRenderPlayer(sp){
   return { kind:sp.kind, name:sp.name, color:sp.color, radius:sp.radius, x:sp.x, y:sp.y,
     dir:sp.dir, moving:sp.moving, animTime:sp.animTime, hp:sp.hp, maxhp:sp.maxhp, speed:sp.speed, cd:sp.cd,
-    alive:sp.alive, pending:sp.pending, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, deadT:sp.deadT||0, reviveProgress:sp.reviveProgress,
+    alive:sp.alive, pending:sp.pending, departed:!!sp.departed, fell:sp.fell, fallT:sp.fallT, deathAnim:sp.deathAnim, deadT:sp.deadT||0, reviveProgress:sp.reviveProgress,
     punchAnim:sp.punchAnim, hitFlash:sp.hitFlash, shieldFlash:sp.shieldFlash, shields:sp.shields,
     special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge, soles:sp.soles||0,
     gear:sp.gear, gearCount:sp.gearCount,
@@ -7322,16 +7334,17 @@ function drawGuestWaiting(){
   ctx.textAlign='left';
 }
 // Guest joined while a round was in progress: show a banner until the next round brings them in.
-function drawGuestJoinWaiting(){
+// lpSpectator: Modo Infinito has no mid-run joins — they watch until the next game starts.
+function drawGuestJoinWaiting(lpSpectator){
   ctx.save();
   const bw=Math.min(460,W-40), bh=74, bx=(W-bw)/2, by=H-bh-24;
   ctx.fillStyle='rgba(15,11,8,0.82)'; ctx.strokeStyle='#ffe14a'; ctx.lineWidth=2;
   ctx.beginPath(); ctx.rect(bx,by,bw,bh); ctx.fill(); ctx.stroke();
   ctx.textAlign='center';
   ctx.fillStyle='#ffe14a'; ctx.font='bold 18px Courier New';
-  ctx.fillText('ENTRARÁS EN LA PRÓXIMA RONDA', W/2, by+30);
+  ctx.fillText(lpSpectator?'MODO INFINITO EN CURSO':'ENTRARÁS EN LA PRÓXIMA RONDA', W/2, by+30);
   ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
-  ctx.fillText('Espera a que termine esta ronda para unirte…', W/2, by+52);
+  ctx.fillText(lpSpectator?'Entrarás cuando empiece la próxima partida…':'Espera a que termine esta ronda para unirte…', W/2, by+52);
   ctx.textAlign='left';
   ctx.restore();
 }
@@ -7556,8 +7569,11 @@ requestAnimationFrame(frame);
       if(p && p.netRemote===guest){
         p.netRemote=null; p.keysrc={};
         if(!soft){
+          // the leaver's character VANISHES (no corpse, no death pose, no revive prompt, no HUD bar)
+          // and stops counting as a player — their slot and character free up for the next joiner
           p.departed=true;
-          if(p.alive){ p.alive=false; p.hp=0; p.deathAnim=0; spark(p.x,p.y,p.color,20,180); }
+          if(p.alive) spark(p.x,p.y,p.color,20,180);
+          p.alive=false; p.hp=0; p.deathAnim=null; p.deadT=0; p.fell=false; p.pending=true;   // pending → drawPlayer draws nothing
         }
       }
       if(!soft) setStatus('J'+(guest.slot+1)+' se desconectó.');
@@ -7598,24 +7614,29 @@ requestAnimationFrame(frame);
       });
       conn.on('close', () => hostDropGuest(guest));
       // (snapshots are broadcast from the main loop via netBroadcast — nothing to set up per-connection)
+      // Every (re)connect is a FRESH join: a leaver's character vanished when they dropped, so a
+      // returning player never resumes the old body — they enter like anyone else, with a character
+      // nobody currently holds. players[] keeps one entry per slot (departed leavers stay as hidden
+      // placeholders so slot numbers == array indices), so joiners REPLACE their slot's placeholder.
+      const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
+      const seatPlayer=p=>{ if(guest.slot<players.length) players[guest.slot]=p; else players.push(p); };
       // if a game is already running, slot this guest in live
       if(inGame()){
         guest.grace=0.6;   // hold host-authoritative pos briefly until the guest's pose stream catches up
-        if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc = guest.keys; rp.netRemote = guest; }   // returning guest counts (and revives at break) again
-        // Modo Infinito: NO new players mid-run (join only at the start) — this also prevents a late
-        // joiner picking a character that's currently walking around as an NPC helper. Returning
-        // guests (above) still reconnect to their own slot.
-        else if(!survival && players.length<lobbyCap()){
-          const i=players.length, sy=(currentMap==='stonebridge')?344:WORLD_H/2;
-          // mid-game joiner: random character, but NEVER one already taken by another player
-          const taken=new Set(players.map(pp=>pp.kind));
+        // Modo Infinito: NO joins mid-run (fresh or returning) — this also prevents a late joiner
+        // taking a character that's currently walking around as an NPC helper. They spectate and
+        // enter normally when the next game starts.
+        if(!survival){
+          const sy=(currentMap==='stonebridge')?344:WORLD_H/2;
+          // mid-game joiner: random character, but NEVER one held by a present (non-departed) player
+          const taken=new Set(players.filter(pp=>!pp.departed).map(pp=>pp.kind));
           const kind=shuffledChars().find(k=>!taken.has(k))||'michi';
-          const p=makePlayer(kind, WORLD_W/2 + (i-1)*44, sy, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
+          const p=makePlayer(kind, WORLD_W/2 + (guest.slot-1)*44, sy, REMOTE);
           p.keysrc=guest.keys; p.netRemote=guest;
           // Joining mid-round? Sit them out (dead/hidden) until the next round starts, so nobody can
           // leave-and-rejoin at full health to dodge a loss. Joining during the break/intro is fine.
           if(state===STATE.PLAY){ p.pending=true; p.alive=false; p.hp=0; }
-          players.push(p);
+          seatPlayer(p);
           mode=2;   // a solo online host is no longer solo (mode is otherwise only set at startGame)
         }
       }
@@ -7623,24 +7644,19 @@ requestAnimationFrame(frame);
       // character first (first-come-first-serve vs the ones already taken) and spawn next round
       else if(state===STATE.PVP && pvpOnline && pvp.sub!=='off' && pvp.sub!=='matchend'){
         guest.grace=0.6;
-        if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }   // returning player keeps their character, revives next round
-        else if(players.length<lobbyCap()){
-          const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
-          pl.keysrc=guest.keys; pl.netRemote=guest;
-          pvpInitChooser(pl, players.length);
-          players.push(pl); pvp.wins.push(0);
-          floatText(W/2, PVP_OY+70, '¡J'+(guest.slot+1)+' se une! Eligiendo personaje…', '#aef7c2');
-        }
+        const pl=makePlayer('freddy', 0,0, REMOTE);
+        pl.keysrc=guest.keys; pl.netRemote=guest;
+        pvpInitChooser(pl, guest.slot);
+        if(guest.slot<players.length){ players[guest.slot]=pl; pvp.wins[guest.slot]=0; }   // fresh joiner: never inherit a leaver's score
+        else { players.push(pl); pvp.wins.push(0); }
+        floatText(W/2, PVP_OY+70, '¡J'+(guest.slot+1)+' se une! Eligiendo personaje…', '#aef7c2');
       }
       // joining while everyone is on the horda pick screen: grab a cursor and pick too
       else if(state===STATE.NETSELECT){
-        if(players[guest.slot]){ const rp=players[guest.slot]; rp.departed=false; rp.keysrc=guest.keys; rp.netRemote=guest; }
-        else if(players.length<lobbyCap()){
-          const pl=makePlayer('freddy', 0,0, {up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'});
-          pl.keysrc=guest.keys; pl.netRemote=guest;
-          pvpInitChooser(pl, players.length);
-          players.push(pl);
-        }
+        const pl=makePlayer('freddy', 0,0, REMOTE);
+        pl.keysrc=guest.keys; pl.netRemote=guest;
+        pvpInitChooser(pl, guest.slot);
+        seatPlayer(pl);
       }
     });
     peer.on('error', e => setStatus('Error PeerJS: ' + e.type));
