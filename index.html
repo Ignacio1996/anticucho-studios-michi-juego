@@ -3149,6 +3149,12 @@ function updateEnemies(dt){
         e.dir = Math.abs(adx)>Math.abs(ady)*1.05 ? (adx<0?'w':'e') : (ady<0?'n':'s');
         e.aimRight = adx>0;
         if(!e.shotDone && e.aiming<=(e.supay?0.9:e.llama?0.6:0.7)){ if(e.supay) fireSupayballs(e,tgt); else if(e.llama) fireSpit(e,tgt); else fireArrow(e,tgt); e.shotDone=true; }
+      } else if(tgt.isDecoy && d < e.radius+34){
+        // mobbing Alessito: hold a small ring around him instead of stacking on his exact spot —
+        // he stays visible mid-tantrum and the mob still looks like it's beating on him
+        const hx=tgt.x-e.x, hy=tgt.y-e.y;
+        e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.faceRight=hx>0;
+        e.moving=false;
       } else {
         let dx,dy;
         if(turTgt){
@@ -3232,7 +3238,10 @@ function updateEnemies(dt){
     // while locked on, the players CANNOT damage this enemy (see dcLock guards) so the blast gets it
     if(tgt && tgt.isDecoy){
       e.dcLock=true;
-      if(d < e.radius+tgt.radius+8 && e.atkcd<=0){
+      // never let anything sit ON him (dashing slimes overshoot the hold ring) — nudge back out
+      const d2=dist(e.x,e.y,tgt.x,tgt.y), minR=e.radius+18;
+      if(d2>0.01 && d2<minR){ const k=(minR-d2)/d2; e.x+=(e.x-tgt.x)*k; e.y+=(e.y-tgt.y)*k; }
+      if(d2 < e.radius+60 && e.atkcd<=0){   // generous swing range: crowd pressure widens the ring
         e.atkcd=0.6;
         if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); }
         spark(tgt.x,tgt.y-8,'#ffcf9a',3,70);
@@ -3645,7 +3654,9 @@ function startSurvival(){
   npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; lpCrateT=6;
-  for(const p of players){ p._vend1=false; }   // fresh run → the first-buy Distracción test hook re-arms
+  // TEST HOOKS (remove when done testing): first weapon-machine buy re-arms to hand out the
+  // Distracción, and everyone starts with 60 soles so it can be bought right away
+  for(const p of players){ p._vend1=false; p.soles=60; }
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
