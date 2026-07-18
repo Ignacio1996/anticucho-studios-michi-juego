@@ -3463,7 +3463,7 @@ function updateSurvival(dt){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
   }
-  lpSpeedPenalty(dt);   // every 5 hits taken costs one Tierra (speed) stack — you must keep re-grabbing shoes
+  lpSpeedPenalty(dt);   // Modo Infinito ONLY (called from updateSurvival): every 5 hits costs one white-running-shoe speed level
   const nParty=activePlayerCount();
   const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
   lpEnemyN=aliveN;
@@ -3486,7 +3486,11 @@ function updateSurvival(dt){
   // wave down -> round cleared, start the countdown to the next one
   if(spawnQueue<=0 && aliveN===0){ lpBreakT=LP_ROUND_BREAK; breakTimer=lpBreakT; }
 }
-// --- speed penalty: track each player's hit streak (host-authoritative) via the hitFlash rising edge ---
+// --- speed penalty (Modo Infinito only — this runs solely from updateSurvival) ---
+// Every 5 hits a player takes strips one white-running-shoe speed level (p.tierra, capped 0..3 and
+// filled ONLY by the shoe pickup on Las Palmas). At 0 shoes you're already at base speed, so there's
+// nothing to lose — you never drop below the character's starting speed. Hits are counted host-
+// authoritatively off the hitFlash rising edge. Horda/PVP never call this, so their speed is untouched.
 function lpSpeedPenalty(dt){
   for(const p of players){
     if(!p.alive){ p._hf=0; p.hitStreak=0; continue; }
@@ -3495,7 +3499,7 @@ function lpSpeedPenalty(dt){
       p.hitStreak=(p.hitStreak||0)+1;
       if(p.hitStreak>=5){ p.hitStreak=0;
         if(p.tierra>0){ p.tierra--; floatText(p.x,p.y-30,'-VELOCIDAD','#ff9a7a'); spark(p.x,p.y,'#ff9a7a',8,110); }
-        // no Tierra stacks left → you're already at base speed, nothing more to lose
+        // no shoe levels left → already at base speed, nothing more to lose
       }
     }
     p._hf=p.hitFlash;
