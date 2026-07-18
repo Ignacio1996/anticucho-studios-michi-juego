@@ -1784,7 +1784,8 @@ function mineBlast(x,y,owner,rad){
   spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=12; sfxBoom();
   fx_effects.push({kind:'shock', x, y, r:R, life:0.4, max:0.4});
   const ow=players[owner], bossDmg=ow?effDmg(ow)*2.5:70;
-  for(const e of enemies){ if(e.dead||e.dcLock) continue; if(dist(x,y,e.x,e.y)<R+(e.footR||e.radius)){
+  // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
+  for(const e of enemies.slice()){ if(e.dead||e.dcLock) continue; if(dist(x,y,e.x,e.y)<R+(e.footR||e.radius)){
     if(e.boss){ e.hp-=bossDmg; } else { e.hp=0; }
     e.hitFlash=0.16; e.stagger=0.3; spark(e.x,e.y,'#ff9a2a',6,140);
     if(e.hp<=0){ e.hp=0; killEnemy(e, ow); }
@@ -1829,7 +1830,8 @@ const grenades=[];
 function explodeAt(x,y,radius,frac,owner){
   spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=11; sfxBoom();
   fx_effects.push({kind:'shock', x, y, r:radius, life:0.4, max:0.4});
-  for(const e of enemies){ if(e.dead||e.dcLock) continue; const d=dist(x,y,e.x,e.y); if(d<radius+(e.footR||e.radius)){
+  // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
+  for(const e of enemies.slice()){ if(e.dead||e.dcLock) continue; const d=dist(x,y,e.x,e.y); if(d<radius+(e.footR||e.radius)){
     if(e.boss){ e.hp-=e.maxhp*frac; } else { e.hp=0; }   // grenades wipe out regular enemies instantly; bosses just take a chunk
     e.hitFlash=0.16; e.stagger=0.3;
     const dd=d||1, k=280*Math.max(0.2,1-d/(radius+40)); e.vx+=(e.x-x)/dd*k; e.vy+=(e.y-y)/dd*k;
@@ -1880,7 +1882,7 @@ const _aleEls={};
 function aleEl(k){ let a=_aleEls[k]; if(!a){ try{ a=new Audio(ALE_AUD_SRC[k]); a.preload='metadata'; _aleEls[k]=a; }catch(e){ return null; } } return a; }
 function playAle(k){ try{ const a=aleEl(k); if(a){ a.currentTime=0; a.volume=0.95; a.play().catch(()=>{}); } }catch(e){} }
 function aleDur(k,fb){ const a=_aleEls[k]; return (a && isFinite(a.duration) && a.duration>0.5) ? a.duration : fb; }
-const DECOY_LURE_R=620;    // enemies inside this radius drop the players and mob Alessito
+const DECOY_LURE_R=460;    // enemies inside this radius drop the players and mob Alessito (outside: unaware, still shootable)
 const ALE_ALERT_R=300;     // enemies this close trigger his panic (and the countdown to the blast)
 const ALE_BOOM_R=340;      // the goodbye explosion
 function throwDecoy(p,power){
@@ -1927,8 +1929,12 @@ function decoyBoom(d){
   spark(d.x,d.y,'#ffd24a',30,260); spark(d.x,d.y,'#ff9a2a',22,190); cameraShake=13; sfxBoom();
   fx_effects.push({kind:'shock', x:d.x, y:d.y, r:ALE_BOOM_R, life:0.5, max:0.5});
   const ow=players[d.owner]||null;
-  for(const e of enemies){ if(e.dead||e.boss) continue;
-    if(dist(d.x,d.y,e.x,e.y)<ALE_BOOM_R+(e.footR||e.radius)){ e.dcLock=false; e.hp=0; killEnemy(e, ow); } }
+  // everyone he pulled in dies with him (dcLock, wherever crowd pressure left them), plus anything
+  // else caught inside the blast radius — no lured enemy may survive (players couldn't shoot it).
+  // Iterate over a COPY: killEnemy splices the live array, which made for..of skip the next enemy
+  // (that's how some blast victims used to walk away).
+  for(const e of enemies.slice()){ if(e.dead||e.boss) continue;
+    if(e.dcLock || dist(d.x,d.y,e.x,e.y)<ALE_BOOM_R+(e.footR||e.radius)){ e.dcLock=false; e.hp=0; killEnemy(e, ow); } }
 }
 // The Ale art ships on a 1077x976 canvas with lots of transparent padding that varies per pose,
 // so each sprite is trimmed to its visible pixels once (cached) and every pose is drawn at ONE
@@ -3019,11 +3025,12 @@ function nearestPlayer(e){
 // whichever is nearest. Idle (untagged) NPCs stay invisible to them.
 function nearestTarget(e){
   // an active Distracción inside its lure radius beats every player/ally — that's the whole point.
-  // Enemies fighting far away (outside the radius) never even notice him.
+  // Enemies fighting far away (outside the radius) never even notice him and stay shootable.
+  // Once an enemy IS pulled (dcLock) the lock is sticky: it stays his until the blast takes it.
   if(survival) for(const dc of decoys){
     if(dc.phase==='idle'||dc.phase==='scared'||dc.phase==='doom'){
       const dd=dist(e.x,e.y,dc.x,dc.y);
-      if(dd<DECOY_LURE_R) return {p:{x:dc.x,y:dc.y,radius:12,isDecoy:true,shields:0}, d:dd};
+      if(dd<DECOY_LURE_R || e.dcLock) return {p:{x:dc.x,y:dc.y,radius:12,isDecoy:true,shields:0}, d:dd};
     }
   }
   const r=nearestPlayer(e); let best=r.p, bd=r.d;
@@ -3149,12 +3156,18 @@ function updateEnemies(dt){
         e.dir = Math.abs(adx)>Math.abs(ady)*1.05 ? (adx<0?'w':'e') : (ady<0?'n':'s');
         e.aimRight = adx>0;
         if(!e.shotDone && e.aiming<=(e.supay?0.9:e.llama?0.6:0.7)){ if(e.supay) fireSupayballs(e,tgt); else if(e.llama) fireSpit(e,tgt); else fireArrow(e,tgt); e.shotDone=true; }
-      } else if(tgt.isDecoy && d < e.radius+34){
-        // mobbing Alessito: hold a small ring around him instead of stacking on his exact spot —
-        // he stays visible mid-tantrum and the mob still looks like it's beating on him
-        const hx=tgt.x-e.x, hy=tgt.y-e.y;
+      } else if(tgt.isDecoy && d < e.radius+26){
+        // mobbing Alessito: hold a tight ring around him (he stays visible, they read as point-blank).
+        // Each enemy rolls a mob style once — stand still, circle clockwise, or counter-clockwise —
+        // so the crowd spreads AROUND him instead of clumping on the approach side.
+        if(e.dcMode===undefined) e.dcMode=randi(0,2);   // 0 = stay put, 1 = CW, 2 = CCW
+        const hx=tgt.x-e.x, hy=tgt.y-e.y, hl=Math.hypot(hx,hy)||1;
         e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.faceRight=hx>0;
-        e.moving=false;
+        if(e.dcMode>0){
+          const s=(e.dcMode===1?1:-1), osp=e.speed*0.55;
+          e.x+=(-hy/hl)*s*osp*dt; e.y+=(hx/hl)*s*osp*dt;   // strafe along the ring, still facing him
+          e.moving=true;
+        } else e.moving=false;
       } else {
         let dx,dy;
         if(turTgt){
@@ -3169,6 +3182,13 @@ function updateEnemies(dt){
           if(fd && (!los || (e._stuckT||0)>0.3)){ dx=fd.x; dy=fd.y; } else { const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il; }
         } else {
           const il=1/(d||1); dx=(tgt.x-e.x)*il; dy=(tgt.y-e.y)*il;
+        }
+        if(tgt.isDecoy){
+          // approach Alessito on a spiral (per-enemy CW/CCW/straight roll) so the mob wraps around
+          // him instead of piling up on the side it came from
+          if(e.dcMode===undefined) e.dcMode=randi(0,2);
+          if(e.dcMode>0 && d<220){ const s2=(e.dcMode===1?1:-1), tx=-dy*s2, ty=dx*s2;
+            let nx=dx+tx*0.8, ny=dy+ty*0.8; const nl=Math.hypot(nx,ny)||1; dx=nx/nl; dy=ny/nl; }
         }
         if(e._detourT>0){ e._detourT-=dt; dx=e._detourX; dy=e._detourY; }   // sidestep around geometry
         let sp=e.speed;
