@@ -1882,8 +1882,8 @@ const _aleEls={};
 function aleEl(k){ let a=_aleEls[k]; if(!a){ try{ a=new Audio(ALE_AUD_SRC[k]); a.preload='metadata'; _aleEls[k]=a; }catch(e){ return null; } } return a; }
 function playAle(k){ try{ const a=aleEl(k); if(a){ a.currentTime=0; a.volume=0.95; a.play().catch(()=>{}); } }catch(e){} }
 function aleDur(k,fb){ const a=_aleEls[k]; return (a && isFinite(a.duration) && a.duration>0.5) ? a.duration : fb; }
-const DECOY_LURE_R=460;    // enemies inside this radius drop the players and mob Alessito (outside: unaware, still shootable)
-const ALE_ALERT_R=300;     // enemies this close trigger his panic (and the countdown to the blast)
+const DECOY_LURE_R=280;    // enemies inside this radius drop the players and mob Alessito (outside: unaware, still shootable)
+const ALE_ALERT_R=230;     // enemies this close trigger his panic (and the countdown to the blast) — inside the lure ring
 const ALE_BOOM_R=340;      // the goodbye explosion
 function throwDecoy(p,power){
   power=(power==null?1:clamp(power,0,1));
@@ -1960,6 +1960,18 @@ function drawDecoy(d){
   const img=ALE_IMG[d.pose], dead=(d.pose==='DEATH');
   ctx.save();
   if(d.phase==='dead' && d.t>13) ctx.globalAlpha=clamp((15-d.t)/2,0,1);   // fade out the last 2s
+  if(d.phase!=='dead'){
+    // faint rotating dashed ring = the lure radius, so players can read exactly which enemies
+    // he'll pull (and which stay theirs to shoot)
+    const tks=performance.now()/1000;
+    ctx.save();
+    ctx.globalAlpha=0.20+0.10*Math.sin(tks*4.5);   // slow blink
+    ctx.strokeStyle='#ffffff'; ctx.lineWidth=2.5;
+    ctx.setLineDash([16,13]); ctx.lineDashOffset=-tks*45;   // rotating dashes
+    ctx.beginPath(); ctx.arc(d.x,d.y,DECOY_LURE_R,0,TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
   ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(d.x,d.y+10,10,4,0,0,TAU); ctx.fill();
   const tb=img && img.naturalWidth ? aleTrimBox(d.pose) : null;
   if(tb){
@@ -7289,7 +7301,8 @@ function _frameBody(now){
   const drawables=[...(_LP?enemies.filter(e=>inV(e.x,e.y)):enemies).map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
                    ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
-                   ...(survival?decoys.filter(dc=>inV(dc.x,dc.y)):[]).map(dc=>({y:dc.y,x:dc.x,sy:dc.y+12,zt:0,f:()=>drawDecoy(dc)})),
+                   // decoys cull with a lure-ring-sized margin so the radius circle doesn't pop at screen edges
+                   ...(survival?decoys.filter(dc=> dc.x>camX-DECOY_LURE_R-40 && dc.x<camX+W+DECOY_LURE_R+40 && dc.y>camY-DECOY_LURE_R-40 && dc.y<camY+H+DECOY_LURE_R+40):[]).map(dc=>({y:dc.y,x:dc.x,sy:dc.y+12,zt:0,f:()=>drawDecoy(dc)})),
                    ...(survival?corpses.filter(c=>inV(c.x,c.y)):[]).map(c=>({y:c.y,x:c.x,sy:c.y,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat (lose z-ties to the living)
                    ...(survival?bullets.filter(b=>inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
                    ...(_LP?incaWalls.filter(w=>inV(w.x,w.y)):incaWalls).map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
