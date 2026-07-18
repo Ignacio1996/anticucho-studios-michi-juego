@@ -1086,7 +1086,7 @@ const LP_SPAWN={x:1640, y:1587};          // town centre, by the water tower (pl
 // Modo Infinito vending machine: save up soles, walk up, buy a random weapon crate. Sits on the plaza
 // in front of the clubhouse. Its lower body is solid (see lpSolidAt); `r` is the buy-interaction radius.
 const LP_VENDING={x:2060, y:498, w:52, h:82, r:82};   // against the clubhouse entrance (left of the glass doors)
-const VENDING_COST=200;                    // soles per random weapon crate — a real save-up (tunable)
+const VENDING_COST=50;                     // soles per random weapon crate — cheap enough to shop every few rounds
 let vendFlash=0;
 const LP_TERRAIN_IMG=new Image(); LP_TERRAIN_IMG.src='assets/laspalmas_terrain.png';   // prop-free ground (background layers flattened)
 const LP_THUMB_IMG=new Image(); LP_THUMB_IMG.src='assets/laspalmas_thumb.png';         // map-select card art
@@ -1155,23 +1155,42 @@ function lpResolve(ent){
   }
   ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
 }
-// survival run state
+// survival run state — Modo Infinito is ROUND-based: waves with a breather between them, harder
+// every round. The record chased is the highest ROUND reached (kills break ties).
 let survival=false, survTime=0, survSpawnT=0, kills=0;
+let lpBreakT=0;                 // >0 → between-rounds countdown (mirrored into breakTimer for guests)
+let lpEnemyN=0;                 // TRUE live-enemy count — guests' enemy list is interest-culled, so it rides the snapshot
+const LP_ROUND_BREAK=10;        // seconds of calm between Modo Infinito rounds
+let lpRunSaved=true;            // one leaderboard write per run
 let lpBestScore=0; try{ lpBestScore=(+localStorage.getItem('fm_laspalmas_best'))||0; }catch(e){}
+let lpBestRound=0; try{ lpBestRound=(+localStorage.getItem('fm_lp_bestround'))||0; }catch(e){}
+// wave size per round (scaled a little by party size); the live-enemy cap grows with the round too
+function lpQuota(r,n){ return Math.round((6 + r*3 + Math.pow(r,1.35)) * (0.7 + 0.3*n)); }
+// end of a run: record it (rounds first, kills as tie-break) on THIS machine, under our character
+function lpRecordRun(){
+  if(lpRunSaved) return; lpRunSaved=true;
+  const me=players[(NET.role==='guest')?NET.slot:0];
+  if(!me || me.departed) return;                      // spectators don't log records
+  lpSaveScore((me.name)||'---', round, kills);
+  if(round>lpBestRound || (round===lpBestRound && kills>lpBestScore)){
+    lpBestRound=round; lpBestScore=kills;
+    try{ localStorage.setItem('fm_lp_bestround',''+lpBestRound); localStorage.setItem('fm_laspalmas_best',''+lpBestScore); }catch(e){}
+  }
+}
 // Local Modo Infinito leaderboard (top 20 kept; top 10 shown). A Cloudflare-backed global board can
 // sync into fm_lp_board later — the render only cares about the {name,score} shape.
 let lpBoardCache=null;
 function lpLoadBoard(){ if(lpBoardCache) return lpBoardCache; let a=[]; try{ a=JSON.parse(localStorage.getItem('fm_lp_board')||'[]'); }catch(e){} if(!Array.isArray(a)) a=[]; lpBoardCache=a; return a; }
 function lpTop10(){
   const arr=lpLoadBoard().slice();
-  if(kills>0) arr.push({name:'TÚ (ahora)', score:kills, _live:true});   // show where the live run would rank
-  arr.sort((a,b)=>b.score-a.score);
+  if(round>0 && (kills>0 || round>1)) arr.push({name:'TÚ (ahora)', r:round, score:kills, _live:true});   // show where the live run would rank
+  arr.sort((a,b)=>((b.r||0)-(a.r||0)) || (b.score-a.score));   // rounds decide; kills break the tie
   return arr.slice(0,10);
 }
-function lpSaveScore(name,score){
+function lpSaveScore(name,r,score){
   const arr=lpLoadBoard();
-  arr.push({name:((name||'---').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()||'---').slice(0,10), score:score|0, t:0});
-  arr.sort((a,b)=>b.score-a.score); lpBoardCache=arr.slice(0,20);
+  arr.push({name:((name||'---').toUpperCase().replace(/[^A-Z0-9 ]/g,'').trim()||'---').slice(0,10), r:r|0, score:score|0, t:0});
+  arr.sort((a,b)=>((b.r||0)-(a.r||0)) || (b.score-a.score)); lpBoardCache=arr.slice(0,20);
   try{ localStorage.setItem('fm_lp_board', JSON.stringify(lpBoardCache)); }catch(e){}
 }
 function stripPowers(p){   // death wipes every buff — you re-earn them from scratch
@@ -1506,12 +1525,12 @@ function drawLpItem(it){
 function drawLpItems(){ for(const it of lpItems) drawLpItem(it); }
 let lpCrateT=10;
 // weighted crate loot table — common ammo drops often, the powerful placeables are rare
-const CRATE_LOOT=[['rapid',5],['fire',3],['grenade',3],['mine',2],['block',3],['torreta',1]];
+const CRATE_LOOT=[['rapid',9],['fire',4],['grenade',3],['mine',2],['block',3],['torreta',1]];   // rapid-fire is the workhorse drop
 function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r=Math.random()*tot; for(const w of CRATE_LOOT){ r-=w[1]; if(r<=0) return w[0]; } return 'rapid'; }
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
 const CRATE_LIFE=55;   // crates linger a while so a distant one is worth walking to before it fades
 function spawnWeaponCrate(){
-  if(lpItems.filter(it=>it.kind!=='shoe').length>=3) return;   // few crates on the ground at once
+  if(lpItems.filter(it=>it.kind!=='shoe').length>=5) return;   // several crates can wait on the ground at once
   const kind=pickCrateKind();
   // Spawn ANYWHERE on the map (NOT near players) — free crates landing at your feet defeated the point
   // of saving up for the vending machine. Now they're an occasional find that rewards exploring.
@@ -2131,7 +2150,7 @@ function updateDeathAnims(dt){
 }
 // Modo Infinito revives are snappier (the endless swarm rarely gives you 5 clear seconds);
 // Horda keeps the original 5s hold. The revive ring in drawPlayer uses the same value.
-function reviveNeed(){ return survival ? 3.2 : 5; }
+function reviveNeed(){ return survival ? 1.6 : 5; }
 function updateRevive(dt){
   if(players.length<2) return;
   for(const dead of players){ if(dead.alive) continue; if(dead.fell) continue; if(dead.deathAnim!=null) continue; if(dead.departed) continue;   // can't revive a disconnected guest
@@ -2139,7 +2158,7 @@ function updateRevive(dt){
     for(const q of players){ if(!q.alive) continue; if(dist(q.x,q.y,dead.x,dead.y)<q.radius+24){ reviver=q; break; } }
     if(reviver){
       dead.reviveProgress=(dead.reviveProgress||0)+dt;
-      if(dead.reviveProgress>=reviveNeed()){ dead.x=reviver.x+(reviver.facing&&reviver.facing.x<0?38:-38); dead.y=reviver.y; dead.alive=true; dead.fell=false; dead.hp=Math.round(dead.maxhp*0.5); dead.reviveProgress=0; dead.shieldFlash=0; resolveCollision(dead); spark(dead.x,dead.y,'#aef7c2',22,170); floatText(dead.x,dead.y-30,'\u00a1REVIVIDO!','#aef7c2'); }
+      if(dead.reviveProgress>=reviveNeed()){ dead.x=reviver.x+(reviver.facing&&reviver.facing.x<0?38:-38); dead.y=reviver.y; dead.alive=true; dead.fell=false; dead.hp=survival?dead.maxhp:Math.round(dead.maxhp*0.5); dead.reviveProgress=0; dead.shieldFlash=0; resolveCollision(dead); spark(dead.x,dead.y,'#aef7c2',22,170); floatText(dead.x,dead.y-30,'\u00a1REVIVIDO!','#aef7c2'); }
     } else dead.reviveProgress=0;
   }
 }
@@ -3348,10 +3367,27 @@ function drawNpc(n){
   }
 }
 function startSurvival(){
-  state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0;
+  state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0; lpBreakT=0; breakTimer=0; lpRunSaved=false;
   npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
-  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; spawnQueue=0; lpCrateT=10;
+  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; lpCrateT=6;
+  startLpRound(true);
+}
+// arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
+// FULL health next to a survivor — same rhythm as Horda's round start
+function startLpRound(first){
+  spawnQueue=lpQuota(round, activePlayerCount());
+  survSpawnT=first?2.0:1.0;
+  if(!first){
+    const anchor=players.find(pp=>pp.alive);
+    for(const p of players){ if(!p.alive && !p.departed){
+      if(anchor){ p.x=anchor.x+rand(-46,46); p.y=anchor.y+rand(-34,34); }
+      p.pending=false; p.alive=true; p.fell=false; p.deathAnim=null; p.deadT=0; p.hp=p.maxhp;
+      p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p);
+      if(p.netRemote) p.netRemote.grace=0.5;
+      spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,'RENACE','#aef7c2');
+    } }
+  }
 }
 function updateSurvival(dt){
   survTime+=dt;
@@ -3361,28 +3397,31 @@ function updateSurvival(dt){
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(18,34); spawnWeaponCrate(); }
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(8,15); spawnWeaponCrate(); }
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
   }
   const nParty=activePlayerCount();
-  // more players -> the clock effectively runs faster, so difficulty ramps sooner; solo is chill early
-  const rf=1 + 0.35*(nParty-1);
-  const dtf=survTime*rf;
-  round = 1 + Math.floor(dtf/22);   // virtual round drives spawnEnemy's type pool + base scaling
   const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
-  // The live-enemy cap keeps climbing the longer the run goes (it no longer stops at 70): if you
-  // don't keep killing, the map fills up and eventually becomes impossible. CAP_MAX is only a
-  // performance ceiling, reached deep into a run.
-  const CAP_MAX=240;
-  const cap = Math.min(CAP_MAX, Math.round(10 + 5*nParty + dtf*0.26));
-  survSpawnT-=dt;
-  if(aliveN<cap && survSpawnT<=0){
-    const burst = dtf>300?4:(dtf>150?3:(dtf>60?2:1));   // bigger spawn bursts over time — cut the swarm down and it rebuilds fast
-    for(let i=0;i<burst;i++){ if(enemies.reduce((a,e)=>a+(e.dead?0:1),0)>=cap) break; spawnEnemy(); }
-    survSpawnT = Math.max(0.16, (nParty>=2?0.7:0.95) - dtf*0.006);
+  lpEnemyN=aliveN;
+  // ---- between rounds: a breather, then the next (bigger) wave ----
+  if(lpBreakT>0){
+    lpBreakT-=dt; breakTimer=Math.max(0,lpBreakT);
+    if(lpBreakT<=0){ breakTimer=0; round++; startLpRound(false); }
+    return;
   }
+  breakTimer=0;
+  // ---- wave in progress: pour the round's quota in, capped so the map stays playable ----
+  const cap = Math.min(240, Math.round(10 + 5*nParty + round*6));   // 240 = performance ceiling
+  survSpawnT-=dt;
+  if(spawnQueue>0 && aliveN<cap && survSpawnT<=0){
+    const burst=Math.min(spawnQueue, 1+Math.floor(round/4));
+    for(let i=0;i<burst && spawnQueue>0;i++){ spawnEnemy(); spawnQueue--; }
+    survSpawnT = Math.max(0.14, (nParty>=2?0.62:0.85) - round*0.02);
+  }
+  // wave down -> round cleared, start the countdown to the next one
+  if(spawnQueue<=0 && aliveN===0){ lpBreakT=LP_ROUND_BREAK; breakTimer=lpBreakT; }
 }
 
 function updatePlay(dt){
@@ -3471,7 +3510,7 @@ function updateDying(dt){
 }
 function drawDying(){ drawDeathScene(); ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(0,0,W,H); }
 function gameOver(){
-  if(survival && kills>lpBestScore){ lpBestScore=kills; try{ localStorage.setItem('fm_laspalmas_best', lpBestScore); }catch(e){} }
+  if(survival) lpRecordRun();   // rounds-first record + local leaderboard entry
   camX = clamp((lastDead?lastDead.x:W/2) - W/2, 0, Math.max(0,WORLD_W-W));
   camY = clamp((lastDead?lastDead.y:H/2) - H/2, 0, Math.max(0,WORLD_H-H));
   if(lastDead && lastDead.fell){ dying=null; state=STATE.OVER; menuSel=0; playDeathMusic(); return; }
@@ -4864,13 +4903,12 @@ function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,52);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 18px Courier New'; ctx.textAlign='center';
   if(state===STATE.PLAY && survival){
-    // Modo Infinito is a record chase: the kill count IS the score, so it gets top billing —
-    // big number, the live récord to beat next to it, and a pulsing ¡NUEVO RÉCORD! once you pass it
-    const cnt='Enemigos: '+enemies.filter(en=>!en.dead).length;
-    const newRec = lpBestScore>0 && kills>lpBestScore;
-    const recTxt = newRec ? '¡NUEVO RÉCORD!' : (lpBestScore>0 ? ('Récord: '+lpBestScore) : '');
+    // Modo Infinito is a ROUND chase: the round number gets top billing; kills break record ties
+    const cnt='Enemigos: '+((lpEnemyN|0)+Math.max(0,spawnQueue|0))+' · Eliminados: '+kills;
+    const newRec = lpBestRound>0 && (round>lpBestRound || (round===lpBestRound && kills>lpBestScore));
+    const recTxt = newRec ? '¡NUEVO RÉCORD!' : (lpBestRound>0 ? ('Récord: Ronda '+lpBestRound) : '');
     if(players.length>=3){
-      const label='ELIMINADOS '+kills;
+      const label='RONDA '+round;
       ctx.font='bold 16px Courier New';
       const bw=Math.max(ctx.measureText(label).width, ctx.measureText(cnt).width)+24, by=56, bx=W-8-bw, bh=recTxt?54:40;
       ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(bx,by,bw,bh);
@@ -4881,9 +4919,17 @@ function drawHUD(){
       if(recTxt){ ctx.save(); if(newRec) ctx.globalAlpha=0.6+0.4*Math.sin(time*6); ctx.fillStyle='#ffd24a'; ctx.font='bold 11px Courier New'; ctx.fillText(recTxt, W-20, by+47); ctx.restore(); }
       ctx.textAlign='center';
     } else {
-      ctx.font='bold 26px Courier New'; ctx.fillText('ELIMINADOS: '+kills, W/2, 28);
+      ctx.font='bold 26px Courier New'; ctx.fillText('RONDA '+round, W/2, 28);
       ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 45);
       if(recTxt){ ctx.save(); if(newRec) ctx.globalAlpha=0.6+0.4*Math.sin(time*6); ctx.fillStyle='#ffd24a'; ctx.font='bold 12px Courier New'; ctx.fillText(recTxt, W/2, 64); ctx.restore(); }
+    }
+    // between rounds: countdown banner (breakTimer mirrors lpBreakT and replicates to guests)
+    if(breakTimer>0){
+      ctx.textAlign='center';
+      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-240,86,480,66);
+      ctx.strokeStyle='rgba(174,247,194,0.5)'; ctx.lineWidth=1.5; ctx.strokeRect(W/2-240,86,480,66);
+      ctx.fillStyle='#aef7c2'; ctx.font='bold 24px Courier New'; ctx.fillText('¡RONDA '+round+' SUPERADA!', W/2, 114);
+      ctx.fillStyle='#ffe14a'; ctx.font='bold 15px Courier New'; ctx.fillText('RONDA '+(round+1)+' EN '+Math.ceil(breakTimer)+'s — recarga, compra y revive', W/2, 140);
     }
     // recruited AI allies: slim "ALIADO" health bars tucked against the right edge, out of the way
     {
@@ -5168,7 +5214,7 @@ function drawModos(){
   ctx.fillText('Elige el modo de juego', W/2, 130);
   const cards=[
     {t:'HORDA',         c:'#8cc24a', d1:'Sobrevive 20 rondas de enemigos', d2:'y derrota al jefe',        d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Disponible', fc:'#aef7c2'},
-    {t:'MODO INFINITO', c:'#ff9a4a', d1:'Supervivencia sin fin: enemigos', d2:'que no paran de venir',    d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Mejor: '+lpBestScore, fc:'#ffd24a'},
+    {t:'MODO INFINITO', c:'#ff9a4a', d1:'Supervivencia sin fin: enemigos', d2:'que no paran de venir',    d3:NET.hosting?'1-4 jugadores':'1-2 jugadores', foot:'Mejor: Ronda '+lpBestRound, fc:'#ffd24a'},
     {t:'PVP',           c:'#ff8a5a', d1:'Duelo explosivo: bombas, Apuchis', d2:'y un solo golpe',          d3:NET.hosting?'2-4 jugadores':'2 jugadores',   foot:'Disponible', fc:'#aef7c2'},
   ];
   const cw=300, chh=280, gap=34, x0=(W-3*cw-2*gap)/2, cy=180;
@@ -5307,9 +5353,9 @@ function drawOver(){
   ctx.fillText('FIN DEL JUEGO', W/2, 150);
   ctx.fillStyle='#ffe9b0'; ctx.font='20px Courier New';
   if(survival){
-    ctx.fillText('Enemigos eliminados: '+kills, W/2, 210);
+    ctx.fillText('Llegaste a la RONDA '+round+' — '+kills+' eliminados', W/2, 210);
     ctx.fillStyle=(kills>=lpBestScore&&kills>0)?'#ffd24a':'#aef7c2'; ctx.font='18px Courier New';
-    ctx.fillText((kills>=lpBestScore&&kills>0)?('¡NUEVO RÉCORD!  '+lpBestScore):('Mejor: '+lpBestScore), W/2, 240);
+    ctx.fillText((round>lpBestRound||(round===lpBestRound&&kills>=lpBestScore&&kills>0))?('¡NUEVO RÉCORD!  Ronda '+lpBestRound):('Mejor: Ronda '+lpBestRound), W/2, 240);
   } else {
     ctx.fillText('Ronda alcanzada: '+round, W/2, 210);
     ctx.fillText('Puntos totales: '+score, W/2, 244);
@@ -5476,18 +5522,18 @@ function drawPauseSurvival(){
     ctx.fillText('\u00a1S\u00e9 el primero en la tabla!', rx+18, py+76);
   } else {
     let ry=py+56;
-    for(let i=0;i<board.length && i<10;i++){ const e=board[i], me=(kills>0 && e.score===kills && e._live);
+    for(let i=0;i<board.length && i<10;i++){ const e=board[i], me=!!e._live;
       ctx.fillStyle=i===0?'#ffd24a':i===1?'#d8d8d8':i===2?'#cd9a5a':'#9fb0a6';
       ctx.font='bold 13px Courier New'; ctx.textAlign='left'; ctx.fillText((i+1)+'.', rx+18, ry);
       ctx.fillStyle=me?'#aef7c2':'#e8e0cc'; ctx.font='13px Courier New';
       ctx.fillText((e.name||'---').slice(0,10), rx+44, ry);
-      ctx.textAlign='right'; ctx.fillStyle=i===0?'#ffd24a':'#c8d2da'; ctx.fillText(''+e.score, rx+rw-18, ry);
+      ctx.textAlign='right'; ctx.fillStyle=i===0?'#ffd24a':'#c8d2da'; ctx.fillText('R'+(e.r||0)+' · '+e.score, rx+rw-18, ry);
       ctx.textAlign='left'; ry+=26;
     }
   }
   ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New'; ctx.textAlign='left';
-  ctx.fillText('Tu mejor: '+lpBestScore, rx+18, py+ph-20);
-  ctx.fillText('Actual: '+kills, rx+18, py+ph-6);
+  ctx.fillText('Tu mejor: Ronda '+lpBestRound+' · '+lpBestScore+' bajas', rx+18, py+ph-20);
+  ctx.fillText('Actual: Ronda '+round+' · '+kills+' bajas', rx+18, py+ph-6);
 
   drawPauseOptions();
 }
@@ -7087,6 +7133,57 @@ function netSerializeSnapshot(){
     bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt), mines: mines.map(m=>({id:m.id,x:m.x,y:m.y,arm:m.arm})),
     drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) };
 }
+// ---- Modo Infinito interest management: each guest receives only what's near ITS OWN view ----
+// The swarm can reach 240 enemies across a huge map, but every camera sees one corner — culling per
+// guest keeps each snapshot small and roughly CONSTANT no matter how big the total swarm gets (this
+// was the guests' late-run lag). Statics are tracked per guest (g.estT): an enemy walking into a
+// view gets its constant fields immediately, resent a few ticks to survive the lossy channel, and
+// re-sent whenever it re-enters after leaving. A dead (spectating) guest gets the whole world.
+function netSerializeSnapshotLP(){
+  const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0);
+  while(netEvtQ.length && seq-netEvtQ[0].q>4) netEvtQ.shift();
+  return { seq, kf, base:{ _snap:1, seq, evts:(netEvtQ.length?netEvtQ:undefined),
+    state, round, score, spawnQueue, breakTimer, introTimer, currentMap, worldW:WORLD_W, worldH:WORLD_H,
+    survival, kills, eN: enemies.reduce((a,e)=>a+(e.dead?0:1),0),
+    players: players.map(netSerPlayer),
+    apuchis: apuchis.map(a=>({id:a.id, type:a.type, x:a.x, y:a.y})),
+    npcs: npcs.map(n=>({id:n.id, kind:n.kind, x:Math.round(n.x*10)/10, y:Math.round(n.y*10)/10,
+      st:n.npcState==='active'?1:0, hp:Math.round(n.hp), maxhp:n.maxhp, dir:n.dir, mv:n.moving?1:0,
+      pa:n.punchAnim, hf:n.hitFlash, fx:n.facing.x, fy:n.facing.y})),
+    hearts: hearts.map(h=>({x:h.x, y:h.y})),
+    amuleto: null,
+    rays: rays.map(netSerEnt), ice: iceBeams.map(netSerEnt), wallets: [],
+    bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
+    mines: mines.map(m=>({id:m.id,x:m.x,y:m.y,arm:m.arm})),
+    drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) } };
+}
+function netCullFor(S,g){
+  const vp=players[g.slot];
+  const cull=!!(vp && vp.alive && !vp.departed);   // dead/spectating or seatless guests see everything
+  const vcx=cull?clamp(vp.x-W/2,0,Math.max(0,WORLD_W-W)):0, vcy=cull?clamp(vp.y-H/2,0,Math.max(0,WORLD_H-H)):0;
+  const M=480;   // margin past the screen edge — entities pop in/out well out of sight
+  const keep=(x,y)=> !cull || (x>vcx-M && x<vcx+W+M && y>vcy-M && y<vcy+H+M);
+  if(!g.estT) g.estT=new Map();
+  const estatic={}, dyn=[], seenIds=new Set();
+  for(const e of enemies){
+    if(!keep(e.x,e.y)) continue;
+    seenIds.add(e.id);
+    let fs=g.estT.get(e.id); if(fs===undefined){ fs=S.seq; g.estT.set(e.id,fs); }
+    if(S.kf || (S.seq-fs)<6) estatic[e.id]=netSerEnemyStatic(e);
+    dyn.push(netSerEnemyDyn(e));
+  }
+  for(const id of g.estT.keys()) if(!seenIds.has(id)) g.estT.delete(id);   // left the view → full re-send on re-entry
+  const s=Object.assign({}, S.base);
+  s.enemies=dyn; s.estatic=estatic;
+  s.corpses=corpses.filter(c=>keep(c.x,c.y)).map(c=>({id:c.id, kind:c.kind, x:c.x, y:c.y, t:Math.round(c.t*10)/10}));
+  s.lpItems=lpItems.filter(it=>keep(it.x,it.y)).map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y}));
+  s.fx=fx_effects.filter(f=>keep(f.x||0,f.y||0)).map(netSerEnt);
+  s.leaves=leaves.filter(l=>keep(l.x,l.y)).map(netSerEnt);
+  s.bullets=bullets.filter(b=>keep(b.x,b.y)).map(netSerEnt);
+  s.grenades=grenades.filter(gr=>keep(gr.x,gr.y)).map(netSerEnt);
+  s.nuggets=nuggets.filter(n2=>keep(n2.x,n2.y)).map(netSerEnt);
+  return s;
+}
 // PVP snapshot: tiny — a grid string, a handful of bombs/flames/items, and per-player pvp stats
 function netSerializePvp(){
   const seq=++netSeq;
@@ -7119,6 +7216,12 @@ function netBroadcast(dt){
   netAccum+=dt; if(netAccum<SNAP_DT) return; netAccum=0;
   if(NET._prune) NET._prune();   // drop dead half-open channels before they count as players anywhere
   const inGame = (state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING||state===STATE.OVER||state===STATE.VICTORY);
+  if(survival && inGame && state!==STATE.PVP && state!==STATE.NETSELECT){
+    // Modo Infinito: per-guest interest-managed snapshots (see netCullFor)
+    const S=netSerializeSnapshotLP();
+    for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ const s=netCullFor(S,g); s.you=g.slot; g.conn.send(s); } }catch(e){} }
+    return;
+  }
   const s = (state===STATE.PVP) ? netSerializePvp() : (state===STATE.NETSELECT) ? netSerializeNsel() : inGame ? netSerializeSnapshot() : {_wait:1, state};
   for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ s.you = g.slot; g.conn.send(s); } }catch(e){} }
 }
@@ -7186,8 +7289,13 @@ function netApplyMeta(s){
   // host restarted (REINTENTAR / new game): wipe the local prediction + spectator state so our
   // player doesn't materialize at its previous game's position for everyone
   if(s.state===STATE.PLAY && (state===STATE.OVER || state===STATE.VICTORY || state===STATE.DYING)){ gPred.init=false; gSpecIdx=null; gPrevRound=-999; }
+  // Modo Infinito records live on every machine: playing arms the run, the replicated game-over logs it
+  if(s.survival){
+    if(s.state===STATE.PLAY) lpRunSaved=false;
+    else if((s.state===STATE.OVER || s.state===STATE.DYING) && state!==STATE.OVER && state!==STATE.DYING){ round=s.round; kills=s.kills||0; lpRecordRun(); }
+  }
   state=s.state; round=s.round; score=s.score; spawnQueue=s.spawnQueue; breakTimer=s.breakTimer;
-  survival=!!s.survival; kills=s.kills||0;
+  survival=!!s.survival; kills=s.kills||0; if(typeof s.eN==='number') lpEnemyN=s.eN;
   netSetMap(s.currentMap);
   WORLD_W=s.worldW; WORLD_H=s.worldH;
 }
