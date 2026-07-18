@@ -4761,24 +4761,30 @@ function drawHUD(){
   ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,52);
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 18px Courier New'; ctx.textAlign='center';
   if(state===STATE.PLAY && survival){
+    // Modo Infinito is a record chase: the kill count IS the score, so it gets top billing —
+    // big number, the live récord to beat next to it, and a pulsing ¡NUEVO RÉCORD! once you pass it
     const cnt='Enemigos: '+enemies.filter(en=>!en.dead).length;
+    const newRec = lpBestScore>0 && kills>lpBestScore;
+    const recTxt = newRec ? '¡NUEVO RÉCORD!' : (lpBestScore>0 ? ('Récord: '+lpBestScore) : '');
     if(players.length>=3){
       const label='ELIMINADOS '+kills;
       ctx.font='bold 16px Courier New';
-      const bw=Math.max(ctx.measureText(label).width, ctx.measureText(cnt).width)+24, by=56, bx=W-8-bw;
-      ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(bx,by,bw,40);
-      ctx.strokeStyle='rgba(255,225,74,0.45)'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,40);
+      const bw=Math.max(ctx.measureText(label).width, ctx.measureText(cnt).width)+24, by=56, bx=W-8-bw, bh=recTxt?54:40;
+      ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(bx,by,bw,bh);
+      ctx.strokeStyle='rgba(255,225,74,0.45)'; ctx.lineWidth=1; ctx.strokeRect(bx,by,bw,bh);
       ctx.textAlign='right';
       ctx.fillStyle='#ffe9b0'; ctx.font='bold 16px Courier New'; ctx.fillText(label, W-20, by+18);
       ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W-20, by+33);
+      if(recTxt){ ctx.save(); if(newRec) ctx.globalAlpha=0.6+0.4*Math.sin(time*6); ctx.fillStyle='#ffd24a'; ctx.font='bold 11px Courier New'; ctx.fillText(recTxt, W-20, by+47); ctx.restore(); }
       ctx.textAlign='center';
     } else {
-      ctx.fillText('ELIMINADOS: '+kills, W/2, 22);
-      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 40);
+      ctx.font='bold 26px Courier New'; ctx.fillText('ELIMINADOS: '+kills, W/2, 28);
+      ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 45);
+      if(recTxt){ ctx.save(); if(newRec) ctx.globalAlpha=0.6+0.4*Math.sin(time*6); ctx.fillStyle='#ffd24a'; ctx.font='bold 12px Courier New'; ctx.fillText(recTxt, W/2, 64); ctx.restore(); }
     }
     // recruited AI allies: slim "ALIADO" health bars tucked against the right edge, out of the way
     {
-      let ay=(players.length>=3)?110:58;
+      let ay=(players.length>=3)?124:80;   // clear of the ELIMINADOS badge / récord line
       for(const nn of npcs){ if(nn.npcState!=='active') continue;
         const bw2=110, bx2=W-16-bw2;
         ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(bx2-8,ay-14,bw2+16,34);
@@ -4812,9 +4818,12 @@ function drawHUD(){
       ctx.fillStyle='#ffd0d0'; ctx.font='11px Courier New'; ctx.fillText(cnt, W/2, 40);
     }
   }
-  ctx.font='14px Courier New'; ctx.textAlign='right';
-  ctx.fillStyle='#ffd24a'; ctx.fillText('PUNTOS '+score, W-14, 22);
-  ctx.textAlign='left';
+  // PUNTOS is Horda's run score — Modo Infinito's score IS the kill count, so no second number there
+  if(!survival){
+    ctx.font='14px Courier New'; ctx.textAlign='right';
+    ctx.fillStyle='#ffd24a'; ctx.fillText('PUNTOS '+score, W-14, 22);
+    ctx.textAlign='left';
+  } else ctx.textAlign='left';
   let px=14;
   // 5-player online sessions won't fit five 200px bars across the top — shrink the bar + stride so
   // every player's health/ammo strip stays on-screen (≤4 players keep the roomy original layout).
