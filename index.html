@@ -2312,10 +2312,7 @@ function tryVend(p){
     floatText(p.x, p.y-30, (WEAPONS[wk]?WEAPONS[wk].name:wk)+' NIVEL '+p.enh[wk], '#7fd4ff'); playCoin();
   } else {
     p.soles-=cost; vendFlash=0.5;
-    // TEST HOOK (remove when done testing): the first weapon-machine buy of a run hands out the
-    // Distracción so it's easy to try — after that it's the normal random crate.
-    let kind; if(!p._vend1){ p._vend1=true; kind='decoy'; } else kind=pickCrateKind();
-    giveWeapon(p, kind);   // giveWeapon already floats the weapon name + plays a coin
+    giveWeapon(p, pickCrateKind());   // giveWeapon already floats the weapon name + plays a coin
   }
   spark(v.x, v.y-6, '#ffe07a', 22, 170); cameraShake=4;
   return true;
@@ -3689,9 +3686,7 @@ function startSurvival(){
   npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; lpCrateT=6;
-  // TEST HOOKS (remove when done testing): first weapon-machine buy re-arms to hand out the
-  // Distracción, and everyone starts with 60 soles so it can be bought right away
-  for(const p of players){ p._vend1=false; p.soles=60; }
+  for(const p of players){ p.soles=0; }   // everyone starts a run misio — the machines are the save-up goal
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
