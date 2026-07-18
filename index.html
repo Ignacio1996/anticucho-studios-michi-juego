@@ -925,6 +925,17 @@ addEventListener('wheel', e => { if(survival && state===STATE.PLAY){ const lp=pl
 ['pointerdown','mousedown','mousemove','touchstart','click'].forEach(ev=>addEventListener(ev, ()=>{ try{ initAudio(); }catch(e){} }));
 // real activation gestures only (mousemove doesn't count for autoplay): un-mute a muted-fallback intro clip
 ['pointerdown','mousedown','touchstart','click'].forEach(ev=>addEventListener(ev, ()=>{ try{ if(introUnmute) introUnmute(); }catch(e){} }));
+// Host alt-tabs away (Discord, WhatsApp…): requestAnimationFrame parks, so the authoritative sim
+// would freeze mid-combat with everyone locked out. Auto-PAUSE instead — the pause replicates to
+// guests through the hidden-tab heartbeat (see netBroadcast's setInterval), and the host un-pauses
+// manually when they come back. Guests hiding their own tab change nothing for the room.
+document.addEventListener('visibilitychange', ()=>{
+  try{
+    if(!document.hidden || NET.role==='guest' || introPlaying) return;
+    if(state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO) togglePause();
+    else if(state===STATE.PVP && !pvp.paused && (pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend')){ pvp.paused=true; pvpInfo=false; pvp.pauseSel=0; pvp.pauseView='main'; }
+  }catch(e){}
+});
 
 // ---------- Helpers ----------
 const rand = (a,b) => a + Math.random()*(b-a);
@@ -6612,9 +6623,10 @@ function togglePause(){
   // overlay too. Guests request a toggle by sending {pt:1} to the host (see initNet).
   if(state===STATE.PVP){   // PVP pause. Offline: real freeze. Online: local overlay only — the duel keeps running.
     if(pvp.sub==='chars' && NET.role!=='guest'){ pvpExit(true); return; }   // host Esc on the pick screen: back to menu (nobody gets stranded waiting)
+    if(pvp.paused && NET.role!=='guest'){ pvpResume(); return; }   // shared pause (host offline Esc or auto-pause on tab-hide) → host resumes the whole room
     if(pvp.sub==='count'||pvp.sub==='play'||pvp.sub==='roundend'){
       if(pvpOnline || NET.role==='guest'){ pvpInfo=!pvpInfo; if(pvpInfo){ pvp.pauseSel=0; pvp.pauseView='main'; } else pvpResume(); }
-      else if(pvp.paused) pvpResume(); else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
+      else { pvp.paused=true; pvp.pauseSel=0; pvp.pauseView='main'; }
     }
     return;
   }
@@ -6984,6 +6996,16 @@ function netBroadcast(dt){
   const s = (state===STATE.PVP) ? netSerializePvp() : (state===STATE.NETSELECT) ? netSerializeNsel() : inGame ? netSerializeSnapshot() : {_wait:1, state};
   for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ s.you = g.slot; g.conn.send(s); } }catch(e){} }
 }
+// Hidden-tab heartbeat: with the host's tab in the background, rAF (and so the frame-loop
+// broadcast) stops entirely — guests used to starve for >6s and drop into their reconnect
+// watchdog ("Conectando con el anfitrión…"). Background timers still tick (throttled to ~1Hz;
+// pages with live WebRTC connections are exempt from Chrome's intensive throttling), so keep the
+// room fed from here: guests receive the auto-PAUSE state and stay connected, and a mid-intro
+// room keeps its cue. No-op whenever the tab is visible — the frame loop owns broadcasting then.
+setInterval(()=>{
+  if(!document.hidden || NET.role!=='host' || !NET.conns.length) return;
+  try{ if(introPlaying) netBroadcastIntro(1); else netBroadcast(1); }catch(e){}
+}, 500);
 
 // ---- guest: buffer snapshots, replicate + interpolate + predict ----
 let gBuf=[];                 // recent snapshots, each stamped with local receive time .rt
@@ -7529,8 +7551,11 @@ requestAnimationFrame(frame);
     // A healthy host streams SOMETHING at ~18Hz in every state (snapshots / pick screen / {_wait}),
     // so a channel that reports open but goes >6s without data is a half-open handshake the host
     // never registered ("Esperando al anfitrión…" forever). Tear it down and reconnect fresh.
+    // While the room is PAUSED (host alt-tabbed — its hidden tab heartbeats ~1Hz, throttled), be far
+    // more patient before declaring the channel dead.
     setInterval(()=>{
-      if(joined && performance.now()-lastDataT>6000){
+      const lim=(state===STATE.PAUSE || (state===STATE.PVP && pvp.paused)) ? 30000 : 6000;
+      if(joined && performance.now()-lastDataT>lim){
         joined=false; NET.guestReady=false; NET.nsel=null;
         setBanner('Conexión inestable. Reintentando…');
         tryConnect();
