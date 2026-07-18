@@ -230,7 +230,7 @@ function initAudio(){
       sfxBuffer(AUDIO_SRC.sumac1); sfxBuffer(AUDIO_SRC.sumac2); sfxBuffer(AUDIO_SRC.shooshy1); sfxBuffer(AUDIO_SRC.shooshy2);
     }catch(e){} }, 2500); }catch(e){}
   }
-  try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState()){ if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
+  try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState() || (NET.role==='guest' && NET.nsel)){ if(currentMap==='laspalmas' && (state===STATE.NETSELECT || (NET.role==='guest' && NET.nsel))){ /* Las Palmas playlist owns the pick screen — don't mix the menu track in */ } else if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
 function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
 let voices=[];
@@ -688,15 +688,21 @@ const CHARS={
 // no bespoke punch art — punch/bomb poses fall back to the matching walk frame. Walk cycles ping-pong
 // 1-2-3-2 and idle holds frame 2 already (see charFrame). Frames are pre-aligned to one shared cell so
 // the body's feet sit at the cell's centre-bottom and every character renders at a consistent scale.
+// The water-gun art is ONLY for Modo Infinito (Las Palmas): everywhere else — Horda, PVP, and their
+// character selectors — the five keep their classic gun-less models. The sprite fields are getters
+// switching on currentMap, so every draw site (charFrame, pick screens, HUD) follows automatically.
 const GUN_CELL={w:339,h:286};
 for(const nm of ['alfredo','mati','sebas','vannucci','flash']){
   const G={};
   for(const k of ['ew1','ew2','ew3','nw1','nw2','nw3','sw1','sw2','sw3']){ const im=new Image(); im.src='assets/char_'+nm+'gun_'+k+'.png'; G[k]=im; }
   G.ep1=G.ew1; G.ep2=G.ew2; G.np=G.nw2; G.sp1=G.sw1; G.sp2=G.sw2;   // no punch art → fall back to walk poses
-  CHARS[nm].S=G;
-  CHARS[nm].cell=GUN_CELL;
-  CHARS[nm].selCrop={sx:38,sy:0,sw:263,sh:286};   // full-body card crop for the new models
-  CHARS[nm].loaded=(g=>()=>!!(g.ew1 && g.ew1.naturalWidth))(G);
+  const C=CHARS[nm];
+  const std={ S:C.S, cell:C.cell, selCrop:C.selCrop, loaded:C.loaded };
+  const gun={ S:G, cell:GUN_CELL, selCrop:{sx:38,sy:0,sw:263,sh:286},   // full-body card crop for the gun models
+              loaded:(g=>()=>!!(g.ew1 && g.ew1.naturalWidth))(G) };
+  for(const f of ['S','cell','selCrop','loaded']){
+    Object.defineProperty(C, f, { get(){ return (currentMap==='laspalmas'?gun:std)[f]; } });
+  }
 }
 const CHAR_LIST=['freddy','michi','sumac','shooshy'];                 // Horda roster
 const SURV_CHAR_LIST=['alfredo','mati','sebas','vannucci','flash'];   // Modo Infinito roster (the five newcomers)
@@ -917,6 +923,8 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('wheel', e => { if(survival && state===STATE.PLAY){ const lp=players[NET.role==='guest'?NET.slot:0]; if(lp){ cycleWeapon(lp, e.deltaY>0?1:-1); if(NET.role==='guest') NET.guestWeapon=lp.weapon; } } }, {passive:true});
 ['pointerdown','mousedown','mousemove','touchstart','click'].forEach(ev=>addEventListener(ev, ()=>{ try{ initAudio(); }catch(e){} }));
+// real activation gestures only (mousemove doesn't count for autoplay): un-mute a muted-fallback intro clip
+['pointerdown','mousedown','touchstart','click'].forEach(ev=>addEventListener(ev, ()=>{ try{ if(introUnmute) introUnmute(); }catch(e){} }));
 
 // ---------- Helpers ----------
 const rand = (a,b) => a + Math.random()*(b-a);
@@ -3012,6 +3020,7 @@ function startBreak(){
 // the map, then hands off to the round. Skippable. If the asset is missing it silently starts the game,
 // so the mode always works even before the video file is added.
 let introPlaying=false, introSkip=null;   // introSkip: call to end the clip early (SALTAR button or a key)
+let introUnmute=null;   // guest clip started muted (no gesture yet): first key/click calls this to un-mute
 // Silence EVERY music element — the intro clip is the only thing that should be audible.
 function silenceAllMusic(){ try{ lpMusicStop(); [menuMusic,bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,deathMusic,losAndesMusic].forEach(m=>{ if(m) m.pause(); }); }catch(e){} }
 // The intro's baked-in audio (Alfredo) was recorded quiet; route the <video> through a Web Audio
@@ -3074,11 +3083,20 @@ function playIntroGuest(){
   v.style.display='block'; if(skip) skip.style.display='none';   // no SALTAR button for guests
   v.onended=endIntroGuest; v.onerror=endIntroGuest;
   try{ v.load(); v.currentTime=0; }catch(e){}
-  const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>{});   // blocked → just hold on the first frame until snapshots arrive
+  // Autoplay policy: a guest who hasn't touched the page yet can't start an UNMUTED video — that
+  // used to leave the clip frozen on its first frame. Fall back to a MUTED start (always allowed),
+  // and un-mute on the guest's first key/click/tap (a real gesture also lets the boost ctx resume).
+  // The guest key handler swallows events (stopImmediatePropagation), so it calls introUnmute itself.
+  const pr=v.play();
+  if(pr&&pr.catch) pr.catch(()=>{ try{ v.muted=true; const p2=v.play(); if(p2&&p2.catch) p2.catch(()=>{}); }catch(e){} });
+  introUnmute=()=>{
+    if(!introPlaying){ introUnmute=null; return; }
+    try{ boostIntroAudio(v); v.muted=false; if(v.paused){ const p3=v.play(); if(p3&&p3.catch) p3.catch(()=>{}); } }catch(e){}
+  };
 }
 function endIntroGuest(){
   const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
-  introPlaying=false; introSkip=null;
+  introPlaying=false; introSkip=null; introUnmute=null;
   try{ if(v){ v.pause(); v.onended=v.onerror=null; v.style.display='none'; } }catch(e){}
   if(skip) skip.style.display='none';
 }
@@ -5650,6 +5668,7 @@ function drawSelect(){
 // startGame() rebuilds the real players and applies the picks via netSelPicks.
 let netSelT=0, netSelPicks=null;
 function enterNetSelect(){
+  if(NET._prune) NET._prune();   // ghost connections must not claim pick-screen slots
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const REMOTE={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   const total=Math.min(lobbyCap(), 1+NET.conns.length);
@@ -5685,6 +5704,7 @@ function startGame(){
   const P1={up:'KeyW',down:'KeyS',left:'KeyA',right:'KeyD',punch:'Space',gear:'KeyF'};
   const P2={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight',punch:'Comma',gear:'Period'};
   if(NET.hosting){
+    if(NET._prune) NET._prune();   // a dead channel must not become a phantom AFK player this run
     const sy0=sy0base;
     const total=Math.min(lobbyCap(), Math.max(1, 1+NET.conns.length));
     mode=(total>1)?2:1;
@@ -6827,6 +6847,11 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   playCameraClick=wrapSnd('cam',playCameraClick); playMagic=wrapSnd('magic',playMagic);
   playHee=wrapSnd('hee',playHee);               playHeeGiant=wrapSnd('heeg',playHeeGiant);
   playBrujaAttack=wrapSnd('bruja',playBrujaAttack); playCharDeath=wrapSnd('die',playCharDeath);
+  // Modo Infinito weapon sounds are host-side synthesized (WebAudio) — replicate them as events too,
+  // or guests fight in silence: no gunfire, no explosions, no turret/mine placement feedback
+  sfxGun=wrapSnd('gun',sfxGun);       sfxFireShot=wrapSnd('fshot',sfxFireShot);
+  sfxLaunch=wrapSnd('lnch',sfxLaunch); sfxBoom=wrapSnd('boom',sfxBoom);
+  sfxPlace=wrapSnd('plc',sfxPlace);   sfxTurretShot=wrapSnd('tshot',sfxTurretShot);
   const _pps=playPunchSound;   // punch voices key off the puncher's character
   playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
 }
@@ -6836,7 +6861,9 @@ const NET_SND={
   zap:()=>playZapSound(), beam:()=>playBeamSound(), cam:()=>playCameraClick(), magic:()=>playMagic(),
   hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
   die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k})),
-  sel:k=>playCharSelect(k), pboom:()=>playPvpBoom()
+  sel:k=>playCharSelect(k), pboom:()=>playPvpBoom(),
+  gun:a=>sfxGun(a), fshot:()=>sfxFireShot(), lnch:()=>sfxLaunch(),
+  boom:()=>sfxBoom(), plc:()=>sfxPlace(), tshot:()=>sfxTurretShot()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
@@ -6930,6 +6957,7 @@ function netSerializeNsel(){
 function netBroadcast(dt){
   if(NET.role!=='host' || !NET.conns.length) return;
   netAccum+=dt; if(netAccum<SNAP_DT) return; netAccum=0;
+  if(NET._prune) NET._prune();   // drop dead half-open channels before they count as players anywhere
   const inGame = (state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING||state===STATE.OVER||state===STATE.VICTORY);
   const s = (state===STATE.PVP) ? netSerializePvp() : (state===STATE.NETSELECT) ? netSerializeNsel() : inGame ? netSerializeSnapshot() : {_wait:1, state};
   for(const g of NET.conns){ try{ if(g.conn && g.conn.open){ s.you = g.slot; g.conn.send(s); } }catch(e){} }
@@ -7047,7 +7075,14 @@ function netPredictOwned(rp, me, cur, dt){
 }
 function netGuestMusic(st){
   const playing=(st===STATE.PLAY||st===STATE.BREAK||st===STATE.INTRO||st===STATE.PVP);
-  if(playing){ const gt=gameTrack(); if(gt && gt.paused && (!deathMusic||deathMusic.paused)) gt.play().catch(()=>{}); if(menuMusic && !menuMusic.paused) menuMusic.pause(); }
+  if(!playing) return;
+  const gt=gameTrack();
+  // one track per map: pause everything that ISN'T this map's track, so a room switching modes
+  // (PVP duel → Horda run, map changes, …) never leaves the previous music bleeding underneath.
+  // (lpMx playlist siblings are deliberately not touched — lpMusicUpdate crossfades them.)
+  try{ for(const m of [menuMusic,bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,losAndesMusic]){ if(m && m!==gt && !m.paused) m.pause(); } }catch(e){}
+  if(currentMap!=='laspalmas') lpMusicStop();   // a leftover Modo Infinito playlist must not bleed into other maps
+  if(gt && gt.paused && (!deathMusic||deathMusic.paused)) gt.play().catch(()=>{});
 }
 // ---- guest: replicate a PVP duel snapshot (own player predicted, others interpolated) ----
 const gPvpItems={};
@@ -7089,6 +7124,9 @@ function netApplyGuestPvp(cur,dt){
       pvpCnt:sp.cnt||{piedra:0,tierra:0,cuarzo:0,rio:0,morganita:0,safiro:0} };
     if(i===NET.slot) netPvpPredictOwned(rp, sp, cur, dt);
     else if(interp && a.players[i]){ rp.x=a.players[i].x+(sp.x-a.players[i].x)*alpha; rp.y=a.players[i].y+(sp.y-a.players[i].y)*alpha; }
+    // render players are rebuilt every frame, so carry the Cóndor wing-freeze stamp over — otherwise
+    // charFrame re-stamps "now" each frame and a dead Cóndor keeps flapping on guest screens
+    const pv=players[i]; if(pv && !sp.alive && pv.flapFreeze!=null) rp.flapFreeze=pv.flapFreeze;
     np.push(rp);
   }
   players=np;
@@ -7192,8 +7230,13 @@ function netApplyGuest(dt){
   const np=[];
   for(let i=0;i<src.players.length;i++){
     const sp=src.players[i], rp=netRenderPlayer(sp);
-    if(i===NET.slot){ netPredictOwned(rp, sp, cur, dt); }
+    if(i===NET.slot){ netPredictOwned(rp, sp, cur, dt);
+      // own weapon slot switches locally (digits/Q/E/wheel) — show it now instead of waiting the
+      // host round-trip; the host adopts it from the input stream and the snapshot converges
+      if(NET.guestWeapon && weaponOwned(rp, NET.guestWeapon)) rp.weapon=NET.guestWeapon;
+    }
     else if(interp && a.players[i]){ rp.x=a.players[i].x+(sp.x-a.players[i].x)*alpha; rp.y=a.players[i].y+(sp.y-a.players[i].y)*alpha; }
+    const pv=players[i]; if(pv && !sp.alive && pv.flapFreeze!=null) rp.flapFreeze=pv.flapFreeze;   // keep the Cóndor wing-freeze across per-frame rebuilds
     np.push(rp);
   }
   players=np;
@@ -7373,6 +7416,20 @@ requestAnimationFrame(frame);
     const swallow = e => {
       const down = e.type==='keydown';
       try{ initAudio(); }catch(_e){}                                // first key is the user gesture that unlocks local audio
+      if(down){ try{ if(introUnmute) introUnmute(); }catch(_e){} }  // intro clip rolling muted (autoplay fallback) → this gesture un-mutes it
+      // Modo Infinito weapon switch — the page-level keydown hook never runs here (this handler
+      // swallows the event), so mirror it: digits pick the Nth owned weapon, Q/E cycle
+      if(down && survival && state===STATE.PLAY && !gk[e.code]){
+        const lp=players[NET.slot];
+        if(lp){
+          if(e.code.indexOf('Digit')===0){
+            const n=+e.code.slice(5)-1, own=WEAPON_ORDER.filter(k=>weaponOwned(lp,k));
+            if(n>=0 && n<own.length){ lp.weapon=own[n]; NET.guestWeapon=lp.weapon; sendInput(true); }
+          } else if(e.code==='KeyQ'||e.code==='KeyE'){
+            cycleWeapon(lp, e.code==='KeyQ'?-1:1); NET.guestWeapon=lp.weapon; sendInput(true);
+          }
+        }
+      }
       // Escape isn't part of the input packet. Horda: it asks the host to toggle the shared pause
       // (edge-triggered). PVP: pause is local-only — toggle our own info overlay, the duel keeps running.
       if(e.code==='Escape' && down && !gk[e.code]){
@@ -7427,24 +7484,34 @@ requestAnimationFrame(frame);
     // ICE packet, or the host momentarily off the signaling server) and leave this guest stuck on
     // "Conectando con el anfitrión…" forever — while other guests get in fine. So keep (re)trying
     // until a channel actually opens, tearing down each half-open attempt before the next.
-    let joined=false, connTimer=null, attempt=0;
+    let joined=false, connTimer=null, attempt=0, lastDataT=performance.now();
     const clearConnTimer=()=>{ if(connTimer){ clearTimeout(connTimer); connTimer=null; } };
     function tryConnect(){
       if(joined || NET.role!=='guest') return;
       clearConnTimer();
       if(NET.conn){ try{ NET.conn.close(); }catch(_e){} }   // retire the previous half-open attempt first
-      attempt++;
+      attempt++; lastDataT=performance.now();
       setBanner(attempt>1 ? 'Reintentando conexión ('+attempt+')…' : 'Conectando con el anfitrión…');
       let conn;
       try{ conn = peer.connect(joinId, { reliable:false }); }catch(_e){ connTimer=setTimeout(tryConnect,2000); return; }
       NET.conn = conn;
       const onUp=()=>{ if(joined) return; joined=true; clearConnTimer(); lastSig=''; };
-      conn.on('data',  d => { onUp(); try{ netOnSnapshot(d); if(banner) banner.style.display='none'; }catch(_e){} });
+      conn.on('data',  d => { onUp(); lastDataT=performance.now(); try{ netOnSnapshot(d); if(banner) banner.style.display='none'; }catch(_e){} });
       conn.on('open',  () => { onUp(); setBanner('Conectado - esperando al anfitrión…'); sendInput(true); });
       conn.on('close', () => { NET.guestReady=false; if(joined){ joined=false; setBanner('Conexión perdida. Reconectando…'); tryConnect(); } });
       conn.on('error', () => {});                              // recovered by the retry timer / peer 'error' below
       connTimer=setTimeout(()=>{ if(!joined) tryConnect(); }, 5000);   // handshake didn't finish → drop it and retry
     }
+    // A healthy host streams SOMETHING at ~18Hz in every state (snapshots / pick screen / {_wait}),
+    // so a channel that reports open but goes >6s without data is a half-open handshake the host
+    // never registered ("Esperando al anfitrión…" forever). Tear it down and reconnect fresh.
+    setInterval(()=>{
+      if(joined && performance.now()-lastDataT>6000){
+        joined=false; NET.guestReady=false; NET.nsel=null;
+        setBanner('Conexión inestable. Reintentando…');
+        tryConnect();
+      }
+    }, 2000);
     peer.on('open', tryConnect);
     // idle or a network blip can drop us from the signaling server; rejoin so we can (re)connect
     peer.on('disconnected', () => { if(!joined){ try{ peer.reconnect(); }catch(_e){} } });
@@ -7478,30 +7545,58 @@ requestAnimationFrame(frame);
       if(linkBox) linkBox.value = NET.link;
       setStatus('Comparte el enlace con hasta '+(lobbyCap()-1)+' amigos. Cuando estén conectados, empieza la partida.');
     });
+    // Drop a guest connection and (unless soft) mark their player departed. Shared by the per-conn
+    // 'close' handler, the same-peer reconnect dedupe, and the silence prune below. soft = the same
+    // person is taking the slot right back (channel replacement) — don't kill their live player.
+    function hostDropGuest(guest, soft){
+      const ci=NET.conns.indexOf(guest); if(ci<0) return;
+      NET.conns.splice(ci,1);
+      try{ if(guest.conn) guest.conn.close(); }catch(e){}
+      const p=players[guest.slot];
+      if(p && p.netRemote===guest){
+        p.netRemote=null; p.keysrc={};
+        if(!soft){
+          p.departed=true;
+          if(p.alive){ p.alive=false; p.hp=0; p.deathAnim=0; spark(p.x,p.y,p.color,20,180); }
+        }
+      }
+      if(!soft) setStatus('J'+(guest.slot+1)+' se desconectó.');
+    }
+    // Ghost sweep: every live guest streams input ~30×/s, so a connection with no data for 9s (or
+    // one that never sent anything within 8s of appearing) is a dead half-open channel. Left alone,
+    // those ghosts count as players when a round starts — that's how a 4-player room ended up with
+    // a fifth AFK character standing at spawn. Called from netBroadcast/enterNetSelect/startGame.
+    NET._prune=function(){
+      const now=performance.now();
+      for(let i=NET.conns.length-1;i>=0;i--){
+        const g=NET.conns[i];
+        const dead = g.lastData ? (now-g.lastData>9000) : (now-g.bornT>8000);
+        if(dead) hostDropGuest(g);
+      }
+    };
     peer.on('connection', conn => {
-      // lowest free slot 1-3, so a leaver's spot can be re-taken by a new (or returning) guest
-      const used=new Set(NET.conns.map(g=>g.slot));
-      let slot=1; while(used.has(slot)) slot++;
-      if(slot>=lobbyCap()){ try{ conn.close(); }catch(e){} return; }   // host + (lobbyCap-1) guests
-      const guest = { conn, keys:{}, slot };
+      // same peer reconnecting (its previous channel stalled or was replaced by the guest-side
+      // watchdog): retire the old connection FIRST and hand the newcomer the same slot — otherwise
+      // the stale channel keeps a phantom slot alive and the room gains a fake extra player
+      const prev=conn.peer ? NET.conns.find(g=>g.conn && g.conn.peer===conn.peer) : null;
+      let slot;
+      if(prev){ slot=prev.slot; hostDropGuest(prev, true); }
+      else {
+        // lowest free slot, so a leaver's spot can be re-taken by a new (or returning) guest
+        const used=new Set(NET.conns.map(g=>g.slot));
+        slot=1; while(used.has(slot)) slot++;
+        if(slot>=lobbyCap()){ try{ conn.close(); }catch(e){} return; }   // host + (lobbyCap-1) guests
+      }
+      const guest = { conn, keys:{}, slot, bornT:performance.now(), lastData:0 };
       NET.conns.push(guest);
       setStatus('¡'+NET.conns.length+' jugador(es) conectado(s)! Empieza (o reinicia) la partida. (J'+(slot+1)+' listo)');
       conn.on('data', d => {
+        guest.lastData=performance.now();
         if(d && d.pt){ if(state!==STATE.PVP) togglePause(); return; }                        // pause-toggle request
         if(d && d.ds){ if(state===STATE.NETSELECT) chooserDeselect(players[guest.slot]); return; }   // un-pick request (pick screen)
         applyRemote(guest, d);   // guest→host input / pose packets
       });
-      conn.on('close', () => {
-        const ci=NET.conns.indexOf(guest); if(ci>=0) NET.conns.splice(ci,1);
-        // mark their player departed: no more input, down until they reconnect, and
-        // startRound/spawnBreakItems stop counting them from the next round on
-        const p=players[guest.slot];
-        if(p && p.netRemote===guest){
-          p.departed=true; p.netRemote=null; p.keysrc={};
-          if(p.alive){ p.alive=false; p.hp=0; p.deathAnim=0; spark(p.x,p.y,p.color,20,180); }
-        }
-        setStatus('J'+(guest.slot+1)+' se desconectó.');
-      });
+      conn.on('close', () => hostDropGuest(guest));
       // (snapshots are broadcast from the main loop via netBroadcast — nothing to set up per-connection)
       // if a game is already running, slot this guest in live
       if(inGame()){
