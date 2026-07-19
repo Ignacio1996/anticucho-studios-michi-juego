@@ -1650,15 +1650,28 @@ const VEND_RARES=['torreta','block','decoy'];
 function vendRareRoom(p,k){ const a=(p.ammo&&p.ammo[k])||0; return k==='torreta'?a<WEAPONS.torreta.ammoMax : k==='decoy'?a<1 : a<WEAPONS.block.ammoMax*3; }
 function pickVendRare(p){ const av=VEND_RARES.filter(k=>vendRareRoom(p,k)); return av.length?av[randi(0,av.length-1)]:null; }
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
-const CRATE_LIFE=55;   // crates linger a while so a distant one is worth walking to before it fades
+const CRATE_LIFE=45;   // each crate lives ~45s, blinks its last seconds (pickupBlinkHide), then rotates elsewhere
+function crateMax(){ return 5+activePlayerCount(); }   // pool size scales with the party
+// A crate spawns CLOSE to someone — just outside a random player's screen — but never inside
+// ANY player's current view (no pop-in). Each crate expires on its own clock, so the pool
+// rotates continuously instead of all boxes appearing/vanishing together.
 function spawnWeaponCrate(){
-  if(lpItems.filter(it=>it.kind!=='shoe').length>=5) return;   // several crates can wait on the ground at once
+  if(lpItems.filter(it=>it.kind!=='shoe').length>=crateMax()) return;
   const kind=pickCrateKind();
-  // Spawn ANYWHERE on the map (NOT near players) — free crates landing at your feet defeated the point
-  // of saving up for the vending machine. Now they're an occasional find that rewards exploring.
-  for(let t=0;t<60;t++){
-    const x=rand(180,LP_W-180), y=rand(180,LP_H-180);
-    if(!lpSolidAt(x,y)){ lpItems.push({id:_entId++, kind, x:Math.round(x), y:Math.round(y), bob:Math.random()*TAU, spawn:0, life:CRATE_LIFE}); return; }
+  const alive=players.filter(p=>p&&p.alive&&!p.departed);
+  for(let t=0;t<50;t++){
+    let x,y;
+    if(alive.length && t<40){   // ring just past the anchor player's viewport
+      const a=alive[randi(0,alive.length-1)], ang=Math.random()*TAU, r=rand(720,1150);
+      x=a.x+Math.cos(ang)*r; y=a.y+Math.sin(ang)*r;
+    } else { x=rand(180,LP_W-180); y=rand(180,LP_H-180); }   // fallback: anywhere
+    if(x<180||x>LP_W-180||y<180||y>LP_H-180) continue;
+    if(lpSolidAt(x,y)) continue;
+    let seen=false;
+    for(const p of alive){ if(Math.abs(x-p.x)<W/2+50 && Math.abs(y-p.y)<H/2+50){ seen=true; break; } }
+    if(seen) continue;
+    lpItems.push({id:_entId++, kind, x:Math.round(x), y:Math.round(y), bob:Math.random()*TAU, spawn:0, life:CRATE_LIFE});
+    return;
   }
 }
 function spawnBreakItems(){
@@ -2778,6 +2791,10 @@ function hitWall(w,n){
   }
 }
 function hitTurret(t,n){
+  // damage gate: a mob piling on can only land ONE hit every 0.15s total — without this, 15
+  // enemies each with their own attack cooldown shred 800hp in about a second (and the moment
+  // they all arrive their cooldowns are ALL at zero: a synchronized first-frame burst)
+  if(survival){ if((t._gate||0)>0) return; t._gate=0.15; }
   t.hp-=n; t.hitFlash=0.15; spark(t.x,t.y-20,'#caa66a',5,90);
   if(t.hp<=0){
     const i=turrets.indexOf(t); if(i>=0) turrets.splice(i,1);
@@ -2800,6 +2817,7 @@ function updateGear(dt){
   // turrets: track the nearest enemy, loose an arrow every 3s at the nearest one in line of sight
   for(const t of turrets){
     if(t.hitFlash>0) t.hitFlash-=dt;
+    if(t._gate>0) t._gate-=dt;
     t.cd-=dt;
     const trange=t.beef?640:560, treload=t.beef?2.4:3, tspd=t.beef?460:340;   // beefed turret reload 1.4->2.4s: one extra breath between arrows
     let aim=null, ad=1e9;
@@ -3351,16 +3369,23 @@ function updateEnemies(dt){
     } else if(e.dcLock) e.dcLock=false;
     // contact damage (Cuarzo shields absorb whole hits)
     if(tgt && !tgt.isDecoy && d < e.radius+tgt.radius+2 && e.atkcd<=0){
-      e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); } tgt.hitFlash=1.0; cameraShake=4;
-      if(tgt.shields>0){
-        tgt.shields--; tgt.shieldFlash=0.25;
-        spark(tgt.x,tgt.y,'#7fd4ff',12,150);
-        floatText(tgt.x,tgt.y-24,'BLOQUEO','#7fd4ff');
-      } else {
-        tgt.hp -= e.dmg;
-        spark(tgt.x,tgt.y,'#ff5050',6,100);
-        // AI allies die through updateNpcs (their own death voice + respawn queue), not the player path
-        if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
+      e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); }
+      // Modo Infinito damage gate: walking into a cluster no longer means 10 simultaneous hits —
+      // at most one contact hit lands every 0.28s (the rest of the mob swings at air). Ranged
+      // attacks (slime balls, arrows) bypass the gate. Other modes keep their original rules.
+      if(!(survival && (tgt.dmgGateT||0)>0)){
+        if(survival) tgt.dmgGateT=0.28;
+        tgt.hitFlash=1.0; cameraShake=4;
+        if(tgt.shields>0){
+          tgt.shields--; tgt.shieldFlash=0.25;
+          spark(tgt.x,tgt.y,'#7fd4ff',12,150);
+          floatText(tgt.x,tgt.y-24,'BLOQUEO','#7fd4ff');
+        } else {
+          tgt.hp -= e.dmg;
+          spark(tgt.x,tgt.y,'#ff5050',6,100);
+          // AI allies die through updateNpcs (their own death voice + respawn queue), not the player path
+          if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
+        }
       }
     }
     // turret melee: enemies claw it down with their real contact damage (player contact wins ties above)
@@ -3783,12 +3808,14 @@ function updateSurvival(dt){
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(8,15); spawnWeaponCrate(); }
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(3,7); spawnWeaponCrate(); }   // frequent top-up; the pool cap does the real limiting
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
   }
   lpSpeedPenalty(dt);   // Modo Infinito ONLY (called from updateSurvival): every 5 hits costs one white-running-shoe speed level
+  for(const p of players){ if(p.dmgGateT>0) p.dmgGateT-=dt; }        // contact-damage gate windows tick down
+  for(const n of npcs){ if(n.dmgGateT>0) n.dmgGateT-=dt; }
   const nParty=activePlayerCount();
   const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
   lpEnemyN=aliveN;
