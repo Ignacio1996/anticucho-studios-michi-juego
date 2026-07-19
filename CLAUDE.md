@@ -38,3 +38,7 @@ Key global mutable arrays/objects updated each tick: `players`, `enemies`, `apuc
 - `_frameBody` branches on `NET.role`: a guest skips all `update*()` sim and instead runs `netApplyGuest`; the host additionally calls `netBroadcast`. Entities carry a stable `id` (`_entId`, stamped at spawn) for cross-snapshot matching.
 
 Snapshots use a static/dynamic split for enemies: constant fields (skin, variant indices, radius, type/kind…) are sent only for an enemy's first ~1s and re-broadcast every ~2s (keyframe), while the small mutable set streams every frame. Projectiles/pickups (`leaves`/arrows, `rays`, `iceBeams`, `nuggets`, `wallets`) are replicated and dead-reckoned locally between snapshots. Not replicated (cosmetic only): host-side spark particles and floating text. UI strings throughout are in Spanish.
+
+## Workflow (owner preference)
+
+After completing and pushing any piece of work, ALWAYS make sure an open pull request exists for it without being asked: if the branch has no open PR, create one; if the branch's previous PR was already merged/closed, rebase the branch onto the latest `main` and open a fresh PR for the new commits. Never leave pushed work sitting without an open PR.
