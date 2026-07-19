@@ -1981,7 +1981,9 @@ function explodeAt(x,y,radius,frac,owner){
   fx_effects.push({kind:'shock', x, y, r:radius, life:0.4, max:0.4});
   // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
   for(const e of enemies.slice()){ if(e.dead||e.dcLock) continue; const d=dist(x,y,e.x,e.y); if(d<radius+(e.footR||e.radius)){
-    if(e.boss){ e.hp-=e.maxhp*frac; } else { e.hp=0; }   // grenades wipe out regular enemies instantly; bosses just take a chunk
+    // grenades wipe out regular enemies instantly; EGGS are tanks — half their bar per blast, so
+    // it takes two grenades (a mine still one-shots them); bosses just take a chunk
+    if(e.boss){ e.hp-=e.maxhp*frac; } else if(e.skin==='egg'){ e.hp-=Math.ceil(e.maxhp/2); } else { e.hp=0; }
     e.hitFlash=0.16; e.stagger=0.3;
     const dd=d||1, k=280*Math.max(0.2,1-d/(radius+40)); e.vx+=(e.x-x)/dd*k; e.vy+=(e.y-y)/dd*k;
     if(e.hp<=0) killEnemy(e, owner||null);
@@ -4316,6 +4318,9 @@ function updateSurvival(dt){
 function lpSpeedPenalty(dt){
   for(const p of players){
     if(!p.alive){ p._hf=0; p.hitStreak=0; continue; }
+    // riding the Ticla: contact hits pound the BIKE (its own wear pool), not your legs — plowing
+    // through a crowd was silently stripping shoe levels, which read as "the bike stole my speed"
+    if(p.riding){ p._hf=p.hitFlash; continue; }
     const prev=p._hf||0;
     if(p.hitFlash>prev+0.02){                 // a fresh hit landed this frame
       p.hitStreak=(p.hitStreak||0)+1;
@@ -5932,7 +5937,17 @@ function drawHUD(){
     }
     drawBar(px, 19, w, 12, p.alive?p.hp/p.maxhp:0, '#ff5a4a');
     ctx.fillStyle='#fff'; ctx.font='10px Courier New';
-    ctx.fillText(Math.ceil(p.hp)+'/'+p.maxhp, px+4, 29);
+    const _hpTxt=Math.ceil(p.hp)+'/'+p.maxhp;
+    ctx.fillText(_hpTxt, px+4, 29);
+    if(survival){
+      // ZAPATILLA stacks (speed levels 0-3): 3 pip slots right after the HP numbers, filled =
+      // levels held — same colour as the pause-menu shoe, so losing one to the hit penalty is visible
+      const _sx=px+8+ctx.measureText(_hpTxt).width;
+      for(let d=0;d<3;d++){
+        ctx.fillStyle = d<(p.tierra||0) ? '#dfeaff' : 'rgba(20,26,34,0.55)';
+        ctx.fillRect(_sx+d*9, 22, 6, 6);
+      }
+    }
     if(!survival){ // boss-drop gadget status (Horda only) — count + key hint, blinking DETONAR while armed
       const pi=players.indexOf(p), gkey=(pi===0?'F':'.');
       const armed=bombs.some(b=>b.owner===pi);
