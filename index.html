@@ -517,21 +517,25 @@ const WSFX={ gun:'assets/sfx_gun.mp3',
   rapid:'assets/sfx_rapidloop.mp3', nadepin:'assets/sfx_nadepin.mp3', nadethrow:'assets/sfx_nadethrow.mp3',
   nadeboom:'assets/sfx_nadeboom.mp3', mineboom:'assets/sfx_mineboom.mp3', blockplace:'assets/sfx_blockplace.mp3',
   aletoss:'assets/sfx_aletoss.mp3', slimehit:'assets/sfx_slimehit.mp3', turret:'assets/sfx_turretshot.mp3' };
-function sfxGun(rapid,x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return;
-  if(rapid){ _rapidFeed(g); return; }   // held RÁPIDA = one resumable loop, not per-shot blips
+function sfxGun(rapid,x,y,ch){ try{ const g=_proxGain(x,y); if(g<0.04) return;
+  if(rapid){ _rapidFeed(g,ch); return; }   // held RÁPIDA = one resumable loop PER SHOOTER, not per-shot blips
   if(actx){ const t=actx.currentTime; if(t-_lastGunT<0.02) return; _lastGunT=t; }
   playSfx(WSFX.gun, 0.5*g);
 }catch(e){} }
-// RÁPIDA: a single looping clip that plays while shot events stream in and PAUSES (keeping its
-// position) ~150ms after they stop — re-opening fire resumes mid-loop, so bursts never start on
-// the exact same spot of the recording twice.
-let _rapidEl=null, _rapidUntil=0;
-function _rapidFeed(g){
-  if(!_rapidEl){ try{ _rapidEl=new Audio(WSFX.rapid); _rapidEl.loop=true; }catch(e){ return; } }
-  _rapidUntil=performance.now()+150;
-  try{ _rapidEl.volume=clamp(0.55*g,0,1)*sfxVol; if(_rapidEl.paused) _rapidEl.play().catch(()=>{}); }catch(e){}
+// RÁPIDA: a looping clip that plays while shot events stream in and PAUSES (keeping its position)
+// ~150ms after they stop — re-opening fire resumes mid-loop, so bursts never start on the exact
+// same spot of the recording twice. One loop per shooter CHANNEL (each player slot, the Tío…):
+// with a single shared element, whoever fed it last set its volume — the Super Ayuda hammering the
+// trigger across the screen used to duck the loop under YOUR own gun.
+const _rapidEls={}, _rapidUntil={};
+function _rapidFeed(g,ch){
+  ch=(ch==null)?0:ch;
+  let el=_rapidEls[ch];
+  if(!el){ try{ el=new Audio(WSFX.rapid); el.loop=true; _rapidEls[ch]=el; }catch(e){ return; } }
+  _rapidUntil[ch]=performance.now()+150;
+  try{ el.volume=clamp(0.55*g,0,1)*sfxVol; if(el.paused) el.play().catch(()=>{}); }catch(e){}
 }
-setInterval(()=>{ try{ if(_rapidEl && !_rapidEl.paused && performance.now()>_rapidUntil) _rapidEl.pause(); }catch(e){} }, 60);
+setInterval(()=>{ try{ for(const ch in _rapidEls){ const el=_rapidEls[ch]; if(el && !el.paused && performance.now()>(_rapidUntil[ch]||0)) el.pause(); } }catch(e){} }, 60);
 // FUEGO cycles FB1→FB5 in order, one per shot, then loops
 let _fbIdx=0;
 function sfxFireShot(x,y){ try{ const g=_proxGain(x,y); const s=WSFX.fb[_fbIdx]; _fbIdx=(_fbIdx+1)%WSFX.fb.length;
@@ -1222,9 +1226,12 @@ let vendFlash=0;
 // SOLID (players/enemies walk around it, bullets stop on it, see lpSolidAt); walk up to the front
 // and press the gear key to fully repair your Ticla for 50 soles (see tryBici).
 const LP_BICI_IMG=new Image(); LP_BICI_IMG.src='assets/lp_bicicletero.png';
-const LP_BICI={ dx:159, dy:373, w:623, h:623,      // image draw box (top-left x/y + size in world px)
-  sx0:292, sy0:470, sx1:648, sy1:886,              // solid footprint rect (world px)
-  ix:470, iy:918, r:104, cost:50 };                // front interaction point + reach radius + price
+// Placed in the map's TOP-LEFT corner, on the dirt strip west of the sidewalk (the owner's marked
+// spot), sized so the visible shop is ~212x254 world px. The draw box hangs off-map a little
+// (dx/dy negative) because the 1024² art carries transparent padding around the visible building.
+const LP_BICI={ dx:-28, dy:-27, w:348, h:348,      // image draw box (top-left x/y + size in world px)
+  sx0:46, sy0:27, sx1:245, sy1:260,                // solid footprint rect (world px) — walls of the visible art
+  ix:146, iy:286, r:88, cost:50 };                 // front interaction point + reach radius + price
 function drawLpBici(){ const im=LP_BICI_IMG; if(!im.naturalWidth) return; const B=LP_BICI;
   ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(B.ix, B.sy1+4, (B.sx1-B.sx0)/2, 14, 0,0,TAU); ctx.fill();
   ctx.drawImage(im, B.dx, B.dy, B.w, B.h); }
@@ -1294,6 +1301,21 @@ function lpResolve(ent){
       const nx=clamp(ent.x,w.x,w.x+w.w), ny=clamp(ent.y,w.y,w.y+w.h);
       let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
       if(dd<r){ if(dd<0.0001){ const cx=w.x+w.w/2; ent.x = ent.x<cx ? w.x-r : w.x+w.w+r; } else { ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; } }
+    }
+    // the Bicicletero building blocks MOVEMENT too — its footprint isn't in the baked grid mask,
+    // so without this rect check everyone strolled straight over the shop (bullets and NPC pathing
+    // already respected it through lpSolidAt). Buried entities (edge-spawned enemies) exit the
+    // nearest side instead of teleporting.
+    if(survival){ const B=LP_BICI;
+      const nx=clamp(ent.x,B.sx0,B.sx1), ny=clamp(ent.y,B.sy0,B.sy1);
+      let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
+      if(dd<r){
+        if(dd<0.0001){
+          const dl=ent.x-B.sx0, dr=B.sx1-ent.x, dtp=ent.y-B.sy0, db=B.sy1-ent.y;
+          const m=Math.min(dl,dr,dtp,db);
+          if(m===dl) ent.x=B.sx0-r; else if(m===dr) ent.x=B.sx1+r; else if(m===dtp) ent.y=B.sy0-r; else ent.y=B.sy1+r;
+        } else { ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; }
+      }
     }
   }
   ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
@@ -1919,7 +1941,7 @@ function tryShoot(p){
   if(wk==='mine'){ if(placeMine(p)) consumeAmmo(p,'mine'); return; }
   if(wk==='block'){ if(placeBlockLP(p)) consumeAmmo(p,'block'); else p.cooldown=0.1; return; }
   if(wk==='torreta'){ if(placeTurretLP(p)) consumeAmmo(p,'torreta'); else p.cooldown=0.1; return; }
-  fireBullet(p); sfxGun(wk==='rapid', p.x, p.y);
+  fireBullet(p); sfxGun(wk==='rapid', p.x, p.y, players.indexOf(p));   // per-shooter loop channel
   if(wk!=='pistol') consumeAmmo(p,wk);
 }
 // --- Modo Infinito placeables: mines, concrete blocks, beefed turrets ---
@@ -2196,6 +2218,7 @@ function tioSpawn(byIdx){
     maxhp:base*10, hp:base*10,   // a small fortune buys a big tank — he's meant to hold for rounds, not seconds
     speed:190, state:'intro', introT:Math.max(1.2,tioDur('INTRO',2.2)),
     dir8:2, moving:false, animT:0, shootCd:0, shootFlash:0, hitFlash:0, dmgGateT:0,
+    burstN:0, burstCd:0, kneelMissT:0, magN:TIO_MAG, reloadT:0,
     aiTgt:null, aiTgtT:0, aiSide:0, aiStuckT:0, aiLX:TIO_SPOT.x, aiLY:TIO_SPOT.y, aiDetourT:0, aiDetourA:0,
     aiWX:TIO_SPOT.x, aiWY:TIO_SPOT.y, aiRepathT:0, guardIdx:byIdx, guardT:0,
     kills:0, tauntKills:0, tauntPose:1, tauntT:0, tauntCd:12, kneelT:0, kneelCd:rand(6,11),
@@ -2214,13 +2237,41 @@ function tryTioSpot(p){
 }
 // snap an angle to the 8 compass slots: 0=E 1=SE 2=S 3=SW 4=W 5=NW 6=N 7=NE
 function tioDir8(ang){ return ((Math.round(ang/(Math.PI/4))%8)+8)%8; }
+// facing damper: an aim/heading that wobbles across a 45° sector boundary used to strobe him
+// between two sprite sets (E↔SE walk frames, or a mirrored flip) every frame. A move to the
+// NEIGHBOURING sector must now hold for a beat before the pose turns; a real turn (2+ sectors,
+// e.g. a new target behind him) still snaps instantly.
+function tioFace(t,d,dt){
+  if(d==null || d===t.dir8){ t._fPend=null; return; }
+  const diff=Math.min((d-t.dir8+8)%8,(t.dir8-d+8)%8);
+  if(diff>=2){ t.dir8=d; t._fPend=null; return; }
+  if(t._fPend!==d){ t._fPend=d; t._fT=0; }
+  t._fT+=dt; if(t._fT>=0.15){ t.dir8=d; t._fPend=null; }
+}
+// His fire is 8-way SNAPPED (like every gun in Modo Infinito), so "can I hit this enemy?" is two
+// separate questions: does the enemy sit ON one of my eight rays (within its hit circle at that
+// range), and is THAT ray's path — the one the bullet will really fly — clear of walls? Checking
+// the straight player→enemy line instead is exactly how you end up emptying a magazine into a
+// house corner, or backpedaling forever while every diagonal shot whiffs past a chaser.
+function tioAim(t,te){
+  const ang=Math.atan2(te.y-t.y,te.x-t.x), snap=Math.round(ang/(Math.PI/4))*(Math.PI/4);
+  const cx=Math.cos(snap), cy=Math.sin(snap), d=dist(t.x,t.y,te.x,te.y);
+  let err=ang-snap; while(err>Math.PI)err-=TAU; while(err<-Math.PI)err+=TAU;
+  const aligned=Math.abs(Math.sin(err))*d < ((te.footR||te.radius||14)+4);   // lateral miss at his range vs the hit circle
+  const clear=aligned ? npcShotLos(t.x,t.y,t.x+cx*(d+24),t.y+cy*(d+24))       // the ray the bullet takes
+                      : npcShotLos(t.x,t.y,te.x,te.y);                        // not lined up yet → straight LOS = "flankable, worth lining up"
+  return {ang,snap,cx,cy,err,d,aligned,clear};
+}
+const TIO_MUZZLE_LIFT=-30;   // his rifle rides at chest height — tracers DRAW there (physics stays at centre)
+const TIO_ENGAGE_R=340;      // reaction range: a shade beyond the Distracción's lure ring (280) — no cross-map sniping
+const TIO_DROP_R=430;        // an engaged target must slip this far away before he lets it go (no flap at the edge)
+const TIO_MAG=30;            // magazine size — a dry mag forces a real reload pause, HIS vulnerable window
 function fireTioBullet(t, te){
   const ang=Math.atan2(te.y-t.y, te.x-t.x), snap=Math.round(ang/(Math.PI/4))*(Math.PI/4);
   const cx=Math.cos(snap), cy=Math.sin(snap);
-  t.dir8=tioDir8(snap);
   const mz=20, bx=t.x+cx*mz, by=t.y+cy*mz;
-  bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, tioB:1, wk:'rapid', lvl:2, wmul:1});
-  spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(true, t.x, t.y); }catch(e){}   // the RÁPIDA loop, proximity-faded
+  bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, tioB:1, wk:'rapid', lvl:0, wmul:1, dy:TIO_MUZZLE_LIFT});   // BASIC rapid rounds — no enhancement levels for hired help
+  spark(bx,by+TIO_MUZZLE_LIFT,'#bfe4ff',3,130); try{ sfxGun(true, t.x, t.y, 'tio'); }catch(e){}   // muzzle flash at the gun, RÁPIDA loop on his OWN channel
 }
 // one voice line at a time, and never two too close together (the anti-spam gate every caller shares)
 function tioTrySay(pool){
@@ -2266,27 +2317,50 @@ function updateTio(dt){
     for(const p of alive){ const d0=dist(p.x,p.y,t.x,t.y); if(d0<bd){ bd=d0; guard=p; } }
     if(guard) t.guardIdx=players.indexOf(guard);
   }
-  // ---- pick a target: prefer clear line of fire, lock ~1s so aim doesn't thrash in a crowd ----
-  t.aiTgtT-=dt;
-  let te=(t.aiTgt && !t.aiTgt.dead && t.aiTgtT>0) ? t.aiTgt : null;
+  // ---- pick a target: only enemies CLOSE enough to be a real threat (a shade beyond the
+  // Distracción's lure ring) make him react — no sniping specks across the map. ONE alien at a
+  // time: the lock holds until the target DIES or slips the drop radius, so a surrounding mob
+  // never turns him into a sprinkler spinning between eight of them. The single exception: a
+  // point-blank usurper (in his face while the locked one is still mid-range) steals the lock.
+  let te=(t.aiTgt && !t.aiTgt.dead && dist(t.x,t.y,t.aiTgt.x,t.aiTgt.y)<TIO_DROP_R) ? t.aiTgt : null;
+  if(te && dist(t.x,t.y,te.x,te.y)>200){
+    for(const e of enemies){ if(e.dead || e.dcLock || e===te) continue;
+      if(dist(t.x,t.y,e.x,e.y)<90){ te=e; t.aiTgt=e; break; } }
+  }
   if(!te){
     let tv=null, tvd=1e9, tn=null, tnd=1e9;
     for(const e of enemies){ if(e.dead || e.dcLock) continue;
-      const d0=dist(t.x,t.y,e.x,e.y); if(d0>760) continue;
+      const d0=dist(t.x,t.y,e.x,e.y); if(d0>TIO_ENGAGE_R) continue;
       if(d0<tnd){tnd=d0;tn=e;}
-      if(d0<640 && d0<tvd && npcShotLos(t.x,t.y,e.x,e.y)){ tvd=d0; tv=e; } }
-    te=tv||tn; t.aiTgt=te; t.aiTgtT=rand(0.9,1.5);
+      if(d0<tvd && npcShotLos(t.x,t.y,e.x,e.y)){ tvd=d0; tv=e; } }
+    te=tv||tn; t.aiTgt=te;
   }
-  const td=te?dist(t.x,t.y,te.x,te.y):1e9;
-  const hasLos=te?npcShotLos(t.x,t.y,te.x,te.y):false;
+  const aim=te?tioAim(t,te):null, td=aim?aim.d:1e9;
+  const canShoot=!!(aim && aim.aligned && aim.clear && td<TIO_DROP_R);
+  // gusts, not a hose: each burst empties a handful of rounds, then the trigger rests — and a dry
+  // magazine forces a REAL reload, the window where aliens can actually reach him
+  const burstFire=()=>{
+    if(t.reloadT>0 || t.burstCd>0) return;
+    if(!(t.burstN>0)) t.burstN=randi(4,9);   // squeeze a fresh gust
+    if(t.shootCd<=0){
+      fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25;
+      t.magN--; t.burstN--;
+      if(t.magN<=0){ t.magN=TIO_MAG; t.reloadT=rand(1.4,2.2); t.burstN=0; }   // dry — swap mags
+      else if(t.burstN<=0) t.burstCd=rand(0.4,0.95);   // let go of the trigger
+    }
+  };
+  if(t.burstCd>0) t.burstCd-=dt;
+  if(t.reloadT>0) t.reloadT-=dt;
   // how crowded is he? (kneeling in a mob's face is how mercenaries die)
   let close=0; for(const e of enemies){ if(!e.dead && dist(t.x,t.y,e.x,e.y)<110) close++; }
   if(t.state==='kneel'){
     t.kneelT-=dt; t.moving=false;
+    if(te) tioFace(t, tioDir8(aim.snap), dt);   // damped — no pose flip-flapping at 45°
     // rooted marksman: keeps firing from the knee — the audio may end long before he stands up
-    if(te && hasLos && td<680 && t.shootCd<=0){ fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25; }
-    else if(te){ t.dir8=tioDir8(Math.atan2(te.y-t.y,te.x-t.x)); }
-    if(t.kneelT<=0 || !te || close>=2){ t.state='fight'; t.kneelCd=rand(8,15); }
+    if(canShoot) burstFire();
+    // but he's not a statue: if the target slid off his ray and he can't hit from the knee, stand up
+    t.kneelMissT = canShoot ? 0 : (t.kneelMissT||0)+dt;
+    if(t.kneelT<=0 || !te || close>=2 || t.kneelMissT>0.8){ t.state='fight'; t.kneelMissT=0; t.kneelCd=rand(8,15); }
     return;
   }
   // ---- taunt: a streak of kills earned a MACHO pose (only when nothing is breathing down his neck)
@@ -2297,29 +2371,37 @@ function updateTio(dt){
     t.tauntT=tioDur(k,2);   // the pose holds exactly as long as the bark
     return;
   }
-  // ---- kneel: now and then he decides a firing position beats footwork (his call, not a rule) ----
-  if(te && hasLos && t.kneelCd<=0 && close===0 && td>170 && td<600 && Math.random()<0.65){
-    t.state='kneel'; t.kneelT=rand(2.2,4.5); t.kneelCd=rand(8,15);
-    t.dir8=tioDir8(Math.atan2(te.y-t.y,te.x-t.x));
+  // ---- kneel: now and then he decides a firing position beats footwork (his call, not a rule).
+  // Only from a spot that's actually landing hits — kneeling to miss is for tourists.
+  if(canShoot && t.kneelCd<=0 && close===0 && td>170 && Math.random()<0.65){
+    t.state='kneel'; t.kneelT=rand(2.2,4.5); t.kneelCd=rand(8,15); t.kneelMissT=0;
+    t.dir8=tioDir8(aim.snap);
     if(Math.random()<0.7) tioTrySay(Math.random()<0.85 ? TIO_SHOOT_LINES : TIO_IDLE_LINES);
     return;
   }
-  // ---- movement: orbit the guarded player at a loose leash, close on targets, back off point-blank
+  // ---- movement: a player's footwork, not a turret's. Wall in the bullet path → flank around it.
+  // Off his 8 firing rays → sidestep until the enemy is dead on one. Too close → give ground ALONG
+  // the firing ray, so the backpedal keeps landing hits instead of kiting a chaser forever.
   let wantA=null;
   if(t.aiDetourT>0){ t.aiDetourT-=dt; wantA=t.aiDetourA; }   // unsticking: hold the detour heading
   else if(guard && dist(t.x,t.y,guard.x,guard.y)>320){ wantA=npcSteer(t, guard.x, guard.y); }   // leash first: cover your man
   if(te){
     if(wantA===null){
-      if(!hasLos || td>260){ wantA=npcSteer(t, te.x, te.y); }             // close in / flank, wall-aware
-      else if(td<80){ wantA=npcSteer(t, t.x*2-te.x, t.y*2-te.y); }       // too close → give ground
+      if(!aim.clear){ wantA=npcSteer(t, te.x, te.y); }                       // wall between → whisker-steer around the house
+      else if(t.reloadT>0 && td<220){ wantA=npcSteer(t, t.x-aim.cx*230, t.y-aim.cy*230); }   // mid-reload with company closing → give ground until the mag's in
+      else if(td<80){ wantA=npcSteer(t, t.x-aim.cx*220, t.y-aim.cy*220); }   // fighting withdrawal down the ray
+      else if(!aim.aligned){                                                 // find the angle: strafe onto the nearest ray
+        const sd=aim.ang + (aim.err>0 ? Math.PI/2 : -Math.PI/2);
+        wantA=npcSteer(t, t.x+Math.cos(sd)*130, t.y+Math.sin(sd)*130);
+      }
+      else if(td>260){ wantA=npcSteer(t, te.x, te.y); }                      // lined up but far → advance, still firing
     }
-    if(hasLos && td<640){
+    if(canShoot){
       // combat barks — sparse, so the RÁPIDA doesn't turn him into a jukebox
       t.shootSayT-=dt;
       if(t.shootSayT<=0){ if(tioTrySay(Math.random()<0.85 ? TIO_SHOOT_LINES : TIO_IDLE_LINES)) t.shootSayT=rand(10,20); else t.shootSayT=2; }
+      burstFire();
     }
-    if(hasLos && td<640 && t.shootCd<=0){ fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25; }
-    else if(wantA===null){ t.dir8=tioDir8(Math.atan2(te.y-t.y,te.x-t.x)); }
   } else if(guard && wantA===null){
     // no work: drift to a fresh spot around his man so he reads as pacing a perimeter
     t.aiRepathT-=dt;
@@ -2336,9 +2418,12 @@ function updateTio(dt){
     if(guard && dist(t.x,t.y,guard.x,guard.y)>520) sp*=1.4;   // sprint to catch a runner (or a Ticla)
     t.x+=Math.cos(wantA)*sp*dt; t.y+=Math.sin(wantA)*sp*dt;
     t.moving=true;
-    if(!(t.shootFlash>0)) t.dir8=tioDir8(wantA);   // aim wins the facing while he's firing
     resolveCollision(t);
   } else t.moving=false;
+  // facing: the aim wins while he's engaging, the walk heading otherwise — every change runs
+  // through the damper so a heading wobbling on a 45° boundary can't strobe the sprite sets
+  const engaged=!!(aim && aim.clear && td<TIO_DROP_R);
+  tioFace(t, engaged ? tioDir8(aim.snap) : (wantA!==null ? tioDir8(wantA) : null), dt);
   // stuck watchdog: wanted to move but barely displaced → hard sideways detour (same trick as allies)
   t.aiStuckT+=dt;
   if(t.aiStuckT>=0.5){
@@ -2723,14 +2808,17 @@ function updateBurns(dt){
 }
 function drawBullet(b){   // one tracer — depth-sorted with the world so trees/houses cover shots
   ctx.save(); ctx.lineCap='round';
-  const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=b.y-b.vy/d*tl;   // tracer line
+  // b.dy = visual-only lift (the Tío's rifle sits at chest height, but the PHYSICS line stays at
+  // body-centre level so horizontal shots still cross the enemies' hit circles)
+  const by=b.y+(b.dy||0);
+  const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=by-b.vy/d*tl;   // tracer line
   if(b.fire){   // incendiary rounds keep their fiery look
-    ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-    ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,by); ctx.stroke();
+    ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,by); ctx.stroke();
   } else {      // water-gun squirt: translucent blue jet with a paler core (saturated enough to
                 // stay clearly blue under the map's red apocalyptic tint)
-    ctx.strokeStyle='rgba(30,140,255,0.6)'; ctx.lineWidth=6.5; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
-    ctx.strokeStyle='rgba(140,210,255,0.95)'; ctx.lineWidth=2.8; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle='rgba(30,140,255,0.6)'; ctx.lineWidth=6.5; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,by); ctx.stroke();
+    ctx.strokeStyle='rgba(140,210,255,0.95)'; ctx.lineWidth=2.8; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,by); ctx.stroke();
   }
   ctx.restore();
 }
@@ -8425,7 +8513,7 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   // Modo Infinito weapon sounds are host-side synthesized (WebAudio) — replicate them as events too,
   // or guests fight in silence: no gunfire, no explosions, no turret/mine placement feedback.
   // Gun/fire shots carry the SHOOTER's position so every machine applies its own proximity falloff.
-  const _sg=sfxGun; sfxGun=function(r,x,y){ netQSnd('gun',{r:r?1:0, x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sg(r,x,y); };
+  const _sg=sfxGun; sfxGun=function(r,x,y,ch){ netQSnd('gun',{r:r?1:0, x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null, c:(ch==null?null:ch)}); return _sg(r,x,y,ch); };
   const _sf=sfxFireShot; sfxFireShot=function(x,y){ netQSnd('fshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sf(x,y); };
   sfxLaunch=wrapSnd('lnch',sfxLaunch);
   // positional wrap: send the sound's WORLD coords so every machine applies its own proximity falloff
@@ -8464,7 +8552,7 @@ const NET_SND={
   hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
   die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k})),
   sel:k=>playCharSelect(k), pboom:()=>playPvpBoom(),
-  gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxGun(a),
+  gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y,a.c==null?undefined:a.c):sfxGun(a),
   fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
   lnch:()=>sfxLaunch(),
   boom:_sndXY('boom'), plc:_sndXY('plc'), tshot:_sndXY('tshot'), slh:_sndXY('slh'),
