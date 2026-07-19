@@ -2719,7 +2719,7 @@ function tryVend(p){
     floatText(v.x, v.y-40, ENHANCEABLE.has(wk) ? nm+' al máximo' : nm+' no se puede mejorar', '#9aa4b0');
     playLock(); return true;
   }
-  if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡Sigues misio! ('+cost+' S/.)', '#ff9a7a'); playDenied(); return true; }
+  if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡'+(p.vendFlip?'Pobre de mierda':'Sigues misio')+'! ('+cost+' S/.)', '#ff9a7a'); playDenied(); return true; }
   if(v.type==='heal'){
     if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playDenied(); return true; }
     p.soles-=cost; vendFlash=0.5; p.hp=p.maxhp;
@@ -2782,7 +2782,7 @@ function drawVend(v){
     let txt, col;
     if(cost==null){ const wk=near.weapon||'pistol';
       txt=v.type==='ticla'?'Ya tienes tu Ticla':(ENHANCEABLE.has(wk)?(WEAPONS[wk]?WEAPONS[wk].name:wk)+' al máximo':'No se puede mejorar'); col='#9aa4b0'; }
-    else if((near.soles||0)<cost){ txt='Sigues misio'; col='#ffcf9a'; }
+    else if((near.soles||0)<cost){ txt=near.vendFlip?'Pobre de mierda':'Sigues misio'; col='#ffcf9a'; }
     else { const hint=v.type==='heal'?'Vida llena':v.type==='enh'?'Mejorar arma':v.type==='ticla'?'Comprar Ticla':'Comprar';
       txt=hint+'  ['+key+']'; col='#aef7c2'; }
     const tw=ctx.measureText(txt).width+16;
@@ -4240,6 +4240,12 @@ function updateSurvival(dt){
       if((p.deadT||0)>REVIVE_GRACE && !p._stripped){ stripPowers(p); p._stripped=true; }
     }
     else if(p.alive){ p._stripped=false; p.rioGrabbed=false; }   // Rio heals grabbable whenever you're hurt
+    // the broke-at-a-machine insult alternates per VISIT: it flips when you walk away, so the next
+    // approach greets you with the other line. Host-tracked + replicated (vendFlip) so every screen
+    // shows the same one.
+    const nv=vendNear(p);
+    if(!nv && p._vAt){ p.vendFlip=1-(p.vendFlip||0); }
+    p._vAt=nv||null;
   }
   lpSpeedPenalty(dt);   // Modo Infinito ONLY (called from updateSurvival): every 5 hits costs one white-running-shoe speed level
   for(const p of players){ if(p.dmgGateT>0) p.dmgGateT-=dt; }        // contact-damage gate windows tick down
@@ -8070,7 +8076,7 @@ function netSerPlayer(p){
     gear:p.gear||'none', gearCount:p.gearCount||0,
     tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, departed:!!p.departed, fx:p.facing.x, fy:p.facing.y,
     weapon:p.weapon||'pistol', ammo:p.ammo||{}, enh:p.enh||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0,
-    riding:!!p.riding };
+    riding:!!p.riding, vf:p.vendFlip?1:0 };
 }
 function netSerializeSnapshot(){
   const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0), estatic={}, ids=new Set();
@@ -8282,7 +8288,7 @@ function netRenderPlayer(sp){
     gear:sp.gear, gearCount:sp.gearCount,
     tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy},
     weapon:sp.weapon||'pistol', ammo:sp.ammo||{}, enh:sp.enh||{}, nadeArmed:!!sp.nadeArmed, nadeCharge:sp.nadeCharge||0,
-    riding:!!sp.riding };
+    riding:!!sp.riding, vendFlip:sp.vf?1:0 };
 }
 function netPredictOwned(rp, me, cur, dt){
   if(!me.alive){ gPred.init=false; gPred.punchAnim=0; return; }   // dead → just show authoritative pose
