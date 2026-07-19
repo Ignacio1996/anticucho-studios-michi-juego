@@ -1710,8 +1710,18 @@ let lpCrateT=10;
 // rapid-fire, grenades, mines and fire (the ammo consumables) dominate; blocks/turrets/decoy are rare
 // Map crates rain the COMMON weapons; the rare/powerful trio (torreta, bloques, Distracción) is
 // vending-machine exclusive — that's what the big save-up price at the ARMAS machine buys you.
-const CRATE_LOOT=[['rapid',12],['fire',7],['grenade',8],['mine',7]];
-function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r=Math.random()*tot; for(const w of CRATE_LOOT){ r-=w[1]; if(r<=0) return w[0]; } return 'rapid'; }
+// Even split, drawn from a SHUFFLED BAG (same trick as the vending rares): each kind appears its
+// weighted number of times per bag cycle, so no kind can flood the map on a lucky streak. With the
+// old independent rolls at rapid=12/34, streaks regularly left most visible boxes RÁPIDA crates.
+const CRATE_LOOT=[['rapid',2],['fire',2],['grenade',2],['mine',2]];
+let _crateBag=[];   // host-only (crates replicate through lpItems), refills+reshuffles when empty
+function pickCrateKind(){
+  if(!_crateBag.length){
+    for(const w of CRATE_LOOT) for(let i=0;i<w[1];i++) _crateBag.push(w[0]);
+    for(let i=_crateBag.length-1;i>0;i--){ const j=randi(0,i), t=_crateBag[i]; _crateBag[i]=_crateBag[j]; _crateBag[j]=t; }
+  }
+  return _crateBag.pop();
+}
 const VEND_RARES=['torreta','block','decoy'];
 // only offer rares the buyer can actually carry more of — never silently eat 120+ soles for nothing
 function vendRareRoom(p,k){ const a=(p.ammo&&p.ammo[k])||0; return k==='torreta'?a<WEAPONS.torreta.ammoMax : k==='decoy'?a<1 : a<WEAPONS.block.ammoMax*3; }
