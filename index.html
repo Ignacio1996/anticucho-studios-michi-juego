@@ -538,6 +538,10 @@ function sfxMineBoom(){ try{ playSfx(WSFX.mineboom, 0.8); }catch(e){} }
 function sfxBlockPlace(){ try{ playSfx(WSFX.blockplace, 0.6); }catch(e){} }
 function sfxAleToss(){ try{ playSfx(WSFX.aletoss, 0.7); }catch(e){} }        // la Distracción leaves Alessito's hand
 function sfxSlimeHit(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.slimehit, 0.55*g); }catch(e){} }
+// Ticla runs over a slime: one of three squishy splash takes, chosen at random (i is passed over
+// the net so every machine hears the SAME take)
+const WSFX_SPLASH=['assets/sfx_slimesplash1.mp3','assets/sfx_slimesplash2.mp3','assets/sfx_slimesplash3.mp3'];
+function sfxSlimeSplash(x,y,i){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX_SPLASH[(i|0)%3], 0.7*g); }catch(e){} }
 function sfxBoom(){ if(!actx) return; try{ const t=actx.currentTime;   // explosion (Alessito's blast + legacy)
   _noise(t,0.45,0.5,'lowpass',1800,150); _tone(t,0.4,0.42,'sine',120,38); _tone(t,0.12,0.2,'square',90,40);
 }catch(e){} }
@@ -1160,7 +1164,8 @@ const VEND_W=52, VEND_H=82, VEND_R=82;
 const LP_VENDING  ={x:2060, y:498,  w:VEND_W, h:VEND_H, r:VEND_R, type:'weapon'};   // clubhouse entrance
 const LP_VEND_HEAL={x:735,  y:1690, w:VEND_W, h:VEND_H, r:VEND_R, type:'heal'};     // bottom-left of the pool building
 const LP_VEND_ENH ={x:1235, y:470,  w:VEND_W, h:VEND_H, r:VEND_R, type:'enh'};      // right edge of the playground sand
-const LP_VENDS=[LP_VENDING, LP_VEND_HEAL, LP_VEND_ENH];
+const LP_VEND_TICLA={x:2180, y:498, w:VEND_W, h:VEND_H, r:VEND_R, type:'ticla'};    // bike rack beside the clubhouse weapons machine
+const LP_VENDS=[LP_VENDING, LP_VEND_HEAL, LP_VEND_ENH, LP_VEND_TICLA];
 // Price curve: flat 5-round blocks early — you can't even scrape 50 soles in round 1, so per-round
 // bumps there were pure punishment — then per-round growth from round 16 on, paced to how income
 // actually grows (enemy count ≈ linear-plus), so buying perks stays "about the same effort" forever:
@@ -1171,10 +1176,11 @@ function vendMult(){ return round<=5?1 : round<=10?1.25 : round<=15?1.5 : 1.5+0.
 // weapon with no upgrade path like the Distracción) — callers show it locked + play the lock clunk.
 // weapon machine sells ONLY the rare trio (torreta / bloques / Distracción) — priced so it takes
 // real saving-up: ~3-4 rounds of full income early, just over a round of income deep in a run
-const VEND_BASE={weapon:120, heal:60};
+const VEND_BASE={weapon:120, heal:60, ticla:200};   // the Ticla is the luxury one-time purchase
 const ENH_COSTS=[50,90,110];
 function vendCost(v,p){
   let b=VEND_BASE[v.type]||50;
+  if(v.type==='ticla' && p && bikes.some(bk=>bk.owner===players.indexOf(p))) return null;   // one Ticla per player — yours is out there somewhere
   if(v.type==='enh'){
     if(p){
       const wk=p.weapon||'pistol', lvl=(p.enh&&p.enh[wk])||0;
@@ -1650,15 +1656,28 @@ const VEND_RARES=['torreta','block','decoy'];
 function vendRareRoom(p,k){ const a=(p.ammo&&p.ammo[k])||0; return k==='torreta'?a<WEAPONS.torreta.ammoMax : k==='decoy'?a<1 : a<WEAPONS.block.ammoMax*3; }
 function pickVendRare(p){ const av=VEND_RARES.filter(k=>vendRareRoom(p,k)); return av.length?av[randi(0,av.length-1)]:null; }
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
-const CRATE_LIFE=55;   // crates linger a while so a distant one is worth walking to before it fades
+const CRATE_LIFE=45;   // each crate lives ~45s, blinks its last seconds (pickupBlinkHide), then rotates elsewhere
+function crateMax(){ return 5+activePlayerCount(); }   // pool size scales with the party
+// A crate spawns CLOSE to someone — just outside a random player's screen — but never inside
+// ANY player's current view (no pop-in). Each crate expires on its own clock, so the pool
+// rotates continuously instead of all boxes appearing/vanishing together.
 function spawnWeaponCrate(){
-  if(lpItems.filter(it=>it.kind!=='shoe').length>=5) return;   // several crates can wait on the ground at once
+  if(lpItems.filter(it=>it.kind!=='shoe').length>=crateMax()) return;
   const kind=pickCrateKind();
-  // Spawn ANYWHERE on the map (NOT near players) — free crates landing at your feet defeated the point
-  // of saving up for the vending machine. Now they're an occasional find that rewards exploring.
-  for(let t=0;t<60;t++){
-    const x=rand(180,LP_W-180), y=rand(180,LP_H-180);
-    if(!lpSolidAt(x,y)){ lpItems.push({id:_entId++, kind, x:Math.round(x), y:Math.round(y), bob:Math.random()*TAU, spawn:0, life:CRATE_LIFE}); return; }
+  const alive=players.filter(p=>p&&p.alive&&!p.departed);
+  for(let t=0;t<50;t++){
+    let x,y;
+    if(alive.length && t<40){   // ring just past the anchor player's viewport
+      const a=alive[randi(0,alive.length-1)], ang=Math.random()*TAU, r=rand(720,1150);
+      x=a.x+Math.cos(ang)*r; y=a.y+Math.sin(ang)*r;
+    } else { x=rand(180,LP_W-180); y=rand(180,LP_H-180); }   // fallback: anywhere
+    if(x<180||x>LP_W-180||y<180||y>LP_H-180) continue;
+    if(lpSolidAt(x,y)) continue;
+    let seen=false;
+    for(const p of alive){ if(Math.abs(x-p.x)<W/2+50 && Math.abs(y-p.y)<H/2+50){ seen=true; break; } }
+    if(seen) continue;
+    lpItems.push({id:_entId++, kind, x:Math.round(x), y:Math.round(y), bob:Math.random()*TAU, spawn:0, life:CRATE_LIFE});
+    return;
   }
 }
 function spawnBreakItems(){
@@ -1892,7 +1911,7 @@ function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
-  if(t && turrets.length>before){ t.hp=t.maxhp=400; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // owner + enhancement (arrows do TURRET_FRAC damage)
+  if(t && turrets.length>before){ t.hp=t.maxhp=800; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // 800hp: it's a 120+ soles rare now, it should hold the line (was 400)
   sfxPlace(); return true;   // deploy thunk — the recorded turret sound now plays per ARROW instead
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
@@ -2061,6 +2080,141 @@ function drawDecoy(d){
   }
   ctx.restore();
 }
+// ================= TICLA — the bicycle (Modo Infinito) =================
+// Bought once at its own vending machine (200 soles base), spawns parked beside it, and lives in
+// the world forever: ride it, park it anywhere, come back for it later. Indestructible — the RISK
+// is all on the rider: you can't shoot while pedaling (the fire key rings the bell), you take
+// normal contact damage, and 3 hits in ~2.5s crash you off right where you are. Riding is strictly
+// 4-way (FireRed style). Rams shove enemies hard and hurt them (slimes pop, greys die in 2 passes,
+// eggs are speed bumps), but every body you plow through bleeds your momentum.
+const bikes=[];   // {id,x,y,dir,owner,rider(-1 = parked),parked}
+const BIKE_KINDS=['alfredo','mati','sebas','vannucci','flash'];
+const BIKE_IMG={}; for(const k of BIKE_KINDS){ BIKE_IMG[k]={}; for(const d of ['n','s','e']){ const im=new Image(); im.src='assets/bike_'+k+'_'+d+'.png'; BIKE_IMG[k][d]=im; } }
+const BIKE_PARKED=new Image(); BIKE_PARKED.src='assets/bike_parked.png';
+// generic alpha-trim cache (same trick as the Alessito sprites — the art ships with big margins)
+const _trimCache={};
+function spriteTrim(im){
+  if(!im || !im.naturalWidth) return null;
+  const key=im.src; let t=_trimCache[key]; if(t!==undefined) return t;
+  try{
+    const c=document.createElement('canvas'); c.width=im.naturalWidth; c.height=im.naturalHeight;
+    const g=c.getContext('2d'); g.drawImage(im,0,0);
+    const px=g.getImageData(0,0,c.width,c.height).data;
+    let x0=c.width,y0=c.height,x1=-1,y1=-1;
+    for(let y=0;y<c.height;y+=2) for(let x=0;x<c.width;x+=2){
+      if(px[(y*c.width+x)*4+3]>10){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } }
+    t=(x1<0)?null:{x:x0,y:y0,w:x1-x0+2,h:y1-y0+2};
+  }catch(e){ t=null; }
+  _trimCache[key]=t; return t;
+}
+const BIKE_SPEED=1.85, BIKE_RIDER_H=60, BIKE_PARKED_H=34;
+function sfxBikeUse(){ try{ playSfx('assets/sfx_bike_useexit.mp3', 0.6); }catch(e){} }
+function sfxBikeRing(){ try{ playSfx('assets/sfx_bike_ring.mp3', 0.65); }catch(e){} }
+function spawnTicla(v,ownerIdx){
+  let bx=v.x, by=v.y+v.h+40;
+  for(let t=0;t<30;t++){ const qx=v.x+rand(-80,80), qy=v.y+v.h+rand(28,90); if(!lpSolidAt(qx,qy)){ bx=qx; by=qy; break; } }
+  bikes.push({id:_entId++, x:Math.round(bx), y:Math.round(by), dir:'s', owner:ownerIdx, rider:-1, parked:true});
+  floatText(bx,by-26,'¡TU TICLA!','#7fe0a0'); sfxBikeUse(); spark(bx,by,'#7fe0a0',16,150);
+}
+function dismountBike(p){
+  const b=p.riding; if(!b) return;
+  b.rider=-1; b.parked=true; b.x=Math.round(p.x); b.y=Math.round(p.y); b.dir=p.dir;
+  p.riding=null; p._remount=0.9; p._rideHits=0; p._rideAcc=0;
+  sfxBikeUse();
+}
+function crashBike(p){
+  if(!p.riding) return;
+  dismountBike(p); p._stun=0.5; p._remount=1.5;
+  floatText(p.x,p.y-30,'¡TE CAÍSTE!','#ffcf9a'); playHitThud(); cameraShake=8;
+}
+function updateBikes(dt){
+  for(const p of players){
+    if(p._remount>0) p._remount-=dt;
+    if(p._stun>0) p._stun-=dt;
+    if(p._rideSlow>0) p._rideSlow-=dt;
+    if(p._rideHitDecay>0){ p._rideHitDecay-=dt; if(p._rideHitDecay<=0) p._rideHits=0; }
+  }
+  for(const e of enemies){ if(e._ramCd>0) e._ramCd-=dt; }
+  for(const b of bikes){
+    if(b.rider>=0){
+      const p=players[b.rider];
+      if(!p || !p.alive || p.departed || p.riding!==b){ if(p&&p.riding===b) p.riding=null; b.rider=-1; b.parked=true; continue; }   // rider fell → the Ticla drops right there
+      b.x=p.x; b.y=p.y; b.dir=p.dir;
+    } else {
+      for(const p of players){   // parked: walk over it to mount (anyone may take any Ticla)
+        if(!p.alive || p.departed || p.riding || p.pending || (p._remount>0)) continue;
+        if(dist(p.x,p.y,b.x,b.y)<p.radius+16){
+          b.rider=players.indexOf(p); b.parked=false; p.riding=b; p._rideHits=0; p._rideAcc=0; p.nadeArmed=false;
+          sfxBikeUse(); floatText(p.x,p.y-28,'¡TICLA!','#7fe0a0');
+          break;
+        }
+      }
+    }
+  }
+  // rams: a moving rider plows through the horde
+  for(const p of players){
+    const b=p.riding; if(!b || !p.alive || !p.moving) continue;
+    for(const e of enemies.slice()){   // copy: killEnemy splices mid-loop and would skip the next enemy
+      if(e.dead || e.boss || e._ramCd>0) continue;
+      if(dist(e.x,e.y,p.x,p.y) < p.radius+(e.footR||e.radius)+6){
+        e._ramCd=0.5;
+        const big=(e.type==='large');
+        // shove: ~5x a normal hit's push — along the bike's travel plus a bit outward (no ragdoll spin)
+        const dx=(e.x-p.x)||0.01, dy=(e.y-p.y)||0.01, dl=Math.hypot(dx,dy)||1;
+        const kx=p.facing.x*0.7+dx/dl*0.3, ky=p.facing.y*0.7+dy/dl*0.3, K=big?120:340;
+        e.vx=(e.vx||0)+kx*K; e.vy=(e.vy||0)+ky*K; e.stagger=Math.max(e.stagger||0,big?0.25:0.45); e.hitFlash=0.2;
+        if(e.type==='fast'){   // slimes pop on contact — random splash take + a gel-ball burst everyone sees
+          e.hp=0; sfxSlimeSplash(e.x,e.y,randi(0,2));
+          fx_effects.push({kind:'goo', x:Math.round(e.x), y:Math.round(e.y), life:0.55, max:0.55});
+          killEnemy(e,p);
+        }
+        else { e.hp-=e.maxhp*(big?0.2:0.6); playHitThud(); if(e.hp<=0){ e.hp=0; killEnemy(e,p); } }
+        spark(e.x,e.y,big?'#a6f0d0':'#d2d5db',10,150);
+        p._rideSlow=Math.max(p._rideSlow||0, big?0.7:0.3);   // every body bleeds momentum; eggs are walls
+        cameraShake=Math.max(cameraShake,big?6:3);
+      }
+    }
+  }
+}
+function drawTiclaParked(b){
+  const tb=spriteTrim(BIKE_PARKED);
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(b.x,b.y+8,16,5,0,0,TAU); ctx.fill();
+  if(tb){ const s=BIKE_PARKED_H/tb.h, DW=tb.w*s;
+    ctx.drawImage(BIKE_PARKED, tb.x,tb.y,tb.w,tb.h, b.x-DW/2, b.y+8-BIKE_PARKED_H, DW, BIKE_PARKED_H);
+  } else { ctx.fillStyle='#3aa05a'; ctx.fillRect(b.x-14,b.y-8,28,14); }
+  const ow=players[b.owner];
+  if(ow){
+    ctx.font='bold 9px Courier New'; ctx.textAlign='center';
+    const txt='Ticla de '+(ow.name||'?'), tw=ctx.measureText(txt).width;
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(b.x-tw/2-4,b.y+12,tw+8,12);
+    ctx.fillStyle=ow.color||'#cfe8d8'; ctx.fillText(txt, b.x, b.y+21);
+    ctx.textAlign='left';
+  }
+  ctx.restore();
+}
+function drawRider(p){
+  const d=(p.dir==='w')?'e':(p.dir||'s'), img=(BIKE_IMG[p.kind]||{})[d], tb=img?spriteTrim(img):null;
+  const mv=!!p.moving, t=p.animTime||0;
+  // dust kicked behind the rear wheel — drawn deterministically from animTime, so every machine
+  // (host and each guest) renders the same trail with zero particle replication
+  if(mv){
+    ctx.save(); ctx.globalAlpha=0.28; ctx.fillStyle='#d6cfbf';
+    for(let i=0;i<3;i++){ const ph=(t*2.6+i*0.33)%1;
+      ctx.beginPath(); ctx.arc(p.x-(p.facing.x||0)*(16+ph*30), p.y+p.radius*0.7-(p.facing.y||0)*(16+ph*30)*0.45, 2.6*(1-ph)+0.8, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(p.x,p.y+p.radius*0.8,16,5,0,0,TAU); ctx.fill();
+  ctx.translate(p.x, p.y+p.radius*0.8);
+  if(mv) ctx.rotate(Math.sin(t*13)*0.045);          // pedaling wobble sells motion on a still sprite
+  if(p.dir==='w') ctx.scale(-1,1);
+  const bob=mv?Math.sin(t*13)*1.5:0;
+  if(tb){ const s=BIKE_RIDER_H/tb.h, DW=tb.w*s;
+    ctx.drawImage(img, tb.x,tb.y,tb.w,tb.h, -DW/2, -BIKE_RIDER_H+bob, DW, BIKE_RIDER_H);
+  } else { ctx.fillStyle='#3aa05a'; ctx.fillRect(-14,-34,28,34); }
+  ctx.restore();
+}
 // power meter floating over any player charging a grenade throw (fills/empties as they hold)
 function drawNadeCharges(){
   for(const p of players){ if(!p || !p.nadeArmed || !p.alive) continue;
@@ -2142,6 +2296,23 @@ function drawEffects(){
       ctx.save(); const rr=10+22*(1-a); ctx.globalAlpha=a; ctx.fillStyle='#ffffff'; ctx.shadowColor='#fff'; ctx.shadowBlur=24; ctx.beginPath(); ctx.arc(e.x,e.y,rr,0,TAU); ctx.fill(); ctx.globalAlpha=a*0.5; ctx.beginPath(); ctx.arc(e.x,e.y,rr*1.8,0,TAU); ctx.fill(); ctx.globalAlpha=1; ctx.shadowBlur=0; ctx.restore();
     } else if(e.kind==='shock'){
       const sa=1-a; ctx.save(); ctx.globalAlpha=a*0.85; ctx.strokeStyle='#ffceaa'; ctx.lineWidth=7+12*a; ctx.beginPath(); ctx.arc(e.x,e.y,e.r*sa+12,0,TAU); ctx.stroke(); ctx.globalAlpha=a*0.5; ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(e.x,e.y,e.r*sa+12,0,TAU); ctx.stroke(); ctx.globalAlpha=1; ctx.restore();
+    } else if(e.kind==='goo'){
+      // slime run over by the Ticla: gel balls burst outward and squash flat as they land.
+      // Deterministic from (x,y,life) — replicated via fx_effects, so every machine draws the
+      // same splash with zero particle sync.
+      const t=1-a, seed=(e.x*13+e.y*7)|0;
+      ctx.save();
+      for(let k=0;k<11;k++){
+        const ang=((seed+k*97)%360)/360*TAU, spd=34+((seed>>2)+k*53)%46;
+        const px=e.x+Math.cos(ang)*spd*t*1.9, py=e.y+Math.sin(ang)*spd*t*1.9 - 26*t*(1-t)*2;   // little arcs
+        const rr=(3.4-((k*29+seed)%3))*(1-t*0.55);
+        ctx.globalAlpha=a*0.9;
+        ctx.fillStyle=k%3===0?'#a8ecff':(k%3===1?'#5fd0f0':'#3fb4e0');
+        ctx.beginPath(); ctx.ellipse(px,py,rr,rr*(1-t*0.4),0,0,TAU); ctx.fill();
+      }
+      ctx.globalAlpha=a*0.5; ctx.fillStyle='#7fe0ff';
+      ctx.beginPath(); ctx.ellipse(e.x,e.y+4,10+22*t,4+8*t,0,0,TAU); ctx.fill();   // spreading puddle
+      ctx.globalAlpha=1; ctx.restore();
     } else if(e.kind==='zap'){
       const zc=e.col||'#7ad0ff';
       ctx.save(); ctx.globalAlpha=a;
@@ -2353,15 +2524,18 @@ const VEND_META={
   weapon:{label:'ARMAS',  body:'#b83a3a', lit:'#e05a5a', dark:'#5a1a1a'},
   heal:  {label:'VIDA',   body:'#c0407a', lit:'#e05a9a', dark:'#5a1236'},
   enh:   {label:'MEJORA', body:'#3a7ac0', lit:'#4a9ae0', dark:'#132f5a'},
+  ticla: {label:'TICLA',  body:'#2f9a55', lit:'#4ec97a', dark:'#0f3a20'},
 };
 function vendNear(p){ if(!survival||!p.alive) return null; let best=null,bd=1e9; for(const v of LP_VENDS){ const d=dist(p.x,p.y,v.x,v.y+v.h*0.5); if(d<v.r && d<bd){ bd=d; best=v; } } return best; }
 function nearVending(p){ return !!vendNear(p); }   // kept for callers that only need a boolean
 // improve every turret this player already placed, so a mid-fight upgrade lifts the whole line
 function bumpPlacedTurrets(pi,lvl){ for(const t of turrets){ if(t.owner===pi) t.enh=lvl; } }
 function tryVend(p){
+  if(p.riding){ dismountBike(p); return true; }   // F while riding = park the Ticla (even next to a machine)
   const v=vendNear(p); if(!v) return false;
   const cost=vendCost(v,p);
-  if(cost==null){   // enhance machine, but the held weapon has no next level — locked, hard stop
+  if(cost==null){   // locked, hard stop
+    if(v.type==='ticla'){ floatText(v.x, v.y-40, 'Ya tienes tu Ticla', '#9aa4b0'); playLock(); return true; }
     const wk=p.weapon||'pistol', nm=(WEAPONS[wk]?WEAPONS[wk].name:wk);
     floatText(v.x, v.y-40, ENHANCEABLE.has(wk) ? nm+' al máximo' : nm+' no se puede mejorar', '#9aa4b0');
     playLock(); return true;
@@ -2371,6 +2545,9 @@ function tryVend(p){
     if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playDenied(); return true; }
     p.soles-=cost; vendFlash=0.5; p.hp=p.maxhp;
     floatText(p.x, p.y-30, '¡VIDA LLENA!', '#ff7ab0'); playPickup();
+  } else if(v.type==='ticla'){
+    p.soles-=cost; vendFlash=0.5;
+    spawnTicla(v, players.indexOf(p));
   } else if(v.type==='enh'){
     const wk=p.weapon||'pistol';
     if(!p.enh) p.enh={};
@@ -2401,6 +2578,9 @@ function drawVend(v){
   ctx.strokeStyle='#3a5060'; ctx.lineWidth=1; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.stroke();
   if(v.type==='weapon'){ try{ drawWeaponCrate(x-6, top+40, VEND_RARES[Math.floor(time/1.4)%VEND_RARES.length]); }catch(e){} }   // teaser cycles the rare stock
   else if(v.type==='heal'){ ctx.fillStyle='#ff5fa0'; ctx.font='bold 22px Courier New'; ctx.textAlign='center'; ctx.fillText('♥', x-6, top+48); }
+  else if(v.type==='ticla'){ try{ const tb=spriteTrim(BIKE_PARKED);
+    if(tb){ const s=26/tb.h, DW=tb.w*s; ctx.drawImage(BIKE_PARKED, tb.x,tb.y,tb.w,tb.h, x-6-DW/2, top+34, DW, 26); }
+    else { ctx.fillStyle='#7fe0a0'; ctx.font='bold 18px Courier New'; ctx.textAlign='center'; ctx.fillText('B', x-6, top+47); } }catch(e){} }
   else { ctx.fillStyle='#7fd4ff'; ctx.font='bold 20px Courier New'; ctx.textAlign='center'; ctx.fillText('▲', x-6, top+47); }
   ctx.strokeStyle='rgba(255,255,255,0.16)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x-w/2+11, top+24); ctx.lineTo(x-w/2+11, top+h-26); ctx.stroke();
   // coin column
@@ -2414,7 +2594,7 @@ function drawVend(v){
   const cost=vendCost(v, near);
   ctx.fillStyle='#0d1218'; rrect(x-w/2+6, top+h-18, w-12, 13, 2); ctx.fill();
   ctx.font='bold 9px Courier New'; ctx.textAlign='center';
-  if(cost==null){ ctx.fillStyle='#5a6570'; ctx.fillText(ENHANCEABLE.has(near.weapon||'pistol')?'MÁX':'✕', x, top+h-8); }
+  if(cost==null){ ctx.fillStyle='#5a6570'; ctx.fillText(v.type==='ticla'?'TUYA':(ENHANCEABLE.has(near.weapon||'pistol')?'MÁX':'✕'), x, top+h-8); }
   else { ctx.fillStyle='#ffe14a'; ctx.fillText(cost+' S/.', x, top+h-8); }
   // proximity prompt
   if(near){
@@ -2422,9 +2602,9 @@ function drawVend(v){
     ctx.font='bold 11px Courier New';
     let txt, col;
     if(cost==null){ const wk=near.weapon||'pistol';
-      txt=ENHANCEABLE.has(wk)?(WEAPONS[wk]?WEAPONS[wk].name:wk)+' al máximo':'No se puede mejorar'; col='#9aa4b0'; }
+      txt=v.type==='ticla'?'Ya tienes tu Ticla':(ENHANCEABLE.has(wk)?(WEAPONS[wk]?WEAPONS[wk].name:wk)+' al máximo':'No se puede mejorar'); col='#9aa4b0'; }
     else if((near.soles||0)<cost){ txt='Sigues misio'; col='#ffcf9a'; }
-    else { const hint=v.type==='heal'?'Vida llena':v.type==='enh'?'Mejorar arma':'Comprar';
+    else { const hint=v.type==='heal'?'Vida llena':v.type==='enh'?'Mejorar arma':v.type==='ticla'?'Comprar Ticla':'Comprar';
       txt=hint+'  ['+key+']'; col='#aef7c2'; }
     const tw=ctx.measureText(txt).width+16;
     ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(x-tw/2, top-26, tw, 18, 4); ctx.fill();
@@ -2778,6 +2958,10 @@ function hitWall(w,n){
   }
 }
 function hitTurret(t,n){
+  // damage gate: a mob piling on can only land ONE hit every 0.15s total — without this, 15
+  // enemies each with their own attack cooldown shred 800hp in about a second (and the moment
+  // they all arrive their cooldowns are ALL at zero: a synchronized first-frame burst)
+  if(survival){ if((t._gate||0)>0) return; t._gate=0.15; }
   t.hp-=n; t.hitFlash=0.15; spark(t.x,t.y-20,'#caa66a',5,90);
   if(t.hp<=0){
     const i=turrets.indexOf(t); if(i>=0) turrets.splice(i,1);
@@ -2800,6 +2984,7 @@ function updateGear(dt){
   // turrets: track the nearest enemy, loose an arrow every 3s at the nearest one in line of sight
   for(const t of turrets){
     if(t.hitFlash>0) t.hitFlash-=dt;
+    if(t._gate>0) t._gate-=dt;
     t.cd-=dt;
     const trange=t.beef?640:560, treload=t.beef?2.4:3, tspd=t.beef?460:340;   // beefed turret reload 1.4->2.4s: one extra breath between arrows
     let aim=null, ad=1e9;
@@ -3047,20 +3232,30 @@ function updatePlayers(dt){
       if(ks[c.down]) my+=1;
       if(ks[c.left]) mx-=1;
       if(ks[c.right]) mx+=1;
+      if(p._stun>0){ mx=0; my=0; }   // just crashed off the Ticla — brief daze
+      if(p.riding && mx && my){ if(p.dir==='e'||p.dir==='w') my=0; else mx=0; }   // Ticla is strictly 4-way (FireRed style)
       p.moving=!!(mx||my);
       if(mx||my){
         const l=Math.hypot(mx,my); mx/=l; my/=l;
         p.facing.x=mx; p.facing.y=my;
         p.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s');
-        const sp=effSpeed(p);
+        let sp=effSpeed(p);
+        if(p.riding){   // ease into top speed; plowing through bodies bleeds momentum
+          p._rideAcc=Math.min(1,(p._rideAcc||0)+dt*2.6);
+          sp*=BIKE_SPEED*(0.55+0.45*p._rideAcc)*(p._rideSlow>0?0.55:1);
+        }
         p.x+=mx*sp*dt; p.y+=my*sp*dt;
         resolveCollision(p);
-      }
+      } else if(p.riding){ p._rideAcc=Math.max(0,(p._rideAcc||0)-dt*4); }
     }
     if(survival){   // Modo Infinito: auto weapons fire while held; grenades charge on hold; the rest tap-to-fire
       if(state===STATE.PLAY){
         const _W=WEAPONS[p.weapon]||WEAPONS.pistol;
-        if(p.weapon==='grenade' || p.weapon==='decoy'){
+        if(p.riding){
+          // no shooting from the saddle — the fire key rings the bell instead (pure joy, zero damage)
+          p.nadeArmed=false;
+          if(ks[c.punch] && !p.wasPunch) sfxBikeRing();
+        } else if(p.weapon==='grenade' || p.weapon==='decoy'){
           // hold to build a power meter that ping-pongs 0..1; release to lob at that strength
           // (the Distracción throws exactly like a grenade, it just doesn't bounce or explode on landing)
           if(ks[c.punch]){
@@ -3351,16 +3546,25 @@ function updateEnemies(dt){
     } else if(e.dcLock) e.dcLock=false;
     // contact damage (Cuarzo shields absorb whole hits)
     if(tgt && !tgt.isDecoy && d < e.radius+tgt.radius+2 && e.atkcd<=0){
-      e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); } tgt.hitFlash=1.0; cameraShake=4;
-      if(tgt.shields>0){
-        tgt.shields--; tgt.shieldFlash=0.25;
-        spark(tgt.x,tgt.y,'#7fd4ff',12,150);
-        floatText(tgt.x,tgt.y-24,'BLOQUEO','#7fd4ff');
-      } else {
-        tgt.hp -= e.dmg;
-        spark(tgt.x,tgt.y,'#ff5050',6,100);
-        // AI allies die through updateNpcs (their own death voice + respawn queue), not the player path
-        if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
+      e.atkcd=0.6; if(e.skin==='tourist'){ fx_effects.push({kind:'camflash', x:e.x, y:e.y-e.radius*1.3+(currentMap==='machu'?machuElev(e.x):0), life:0.18, max:0.18}); playCameraClick(); } if(e.skin==='knight'||e.skin==='knight_gold') e.punchAnim=KN_PUNCH; if(e.skin==='supay' && !e.supay){ e.hitAnim=0.18; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); e.aimRight=hx>0; } if(e.skin==='grey'){ e.hitAnim=0.34; const hx=tgt.x-e.x, hy=tgt.y-e.y; e.dir=Math.abs(hx)>Math.abs(hy)?(hx<0?'w':'e'):(hy<0?'n':'s'); }
+      // Modo Infinito damage gate: walking into a cluster no longer means 10 simultaneous hits —
+      // at most one contact hit lands every 0.28s (the rest of the mob swings at air). Ranged
+      // attacks (slime balls, arrows) bypass the gate. Other modes keep their original rules.
+      if(!(survival && (tgt.dmgGateT||0)>0)){
+        if(survival) tgt.dmgGateT=0.28;
+        tgt.hitFlash=1.0; cameraShake=4;
+        // riding the Ticla: 3 hits inside ~2.5s knock you off right where you are
+        if(survival && tgt.riding){ tgt._rideHits=(tgt._rideHits||0)+1; tgt._rideHitDecay=2.5; if(tgt._rideHits>=3) crashBike(tgt); }
+        if(tgt.shields>0){
+          tgt.shields--; tgt.shieldFlash=0.25;
+          spark(tgt.x,tgt.y,'#7fd4ff',12,150);
+          floatText(tgt.x,tgt.y-24,'BLOQUEO','#7fd4ff');
+        } else {
+          tgt.hp -= e.dmg;
+          spark(tgt.x,tgt.y,'#ff5050',6,100);
+          // AI allies die through updateNpcs (their own death voice + respawn queue), not the player path
+          if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
+        }
       }
     }
     // turret melee: enemies claw it down with their real contact damage (player contact wins ties above)
@@ -3711,7 +3915,11 @@ function updateNpcs(dt){
       if(dist(n.x,n.y,n.aiWX,n.aiWY)>20) wantA=npcSteer(n, n.aiWX, n.aiWY);
     }
     let mx=0,my=0; if(wantA!==null){ mx=Math.cos(wantA); my=Math.sin(wantA); }
-    if(mx||my){ const sp=effSpeed(n); n.x+=mx*sp*dt; n.y+=my*sp*dt; resolveCollision(n); n.moving=true; n.facing.x=mx; n.facing.y=my; n.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); }
+    if(mx||my){ let sp=effSpeed(n);
+      // owner pedaling away on the Ticla: the ally sprints to keep up (and the invisible offscreen
+      // catch-up hop below covers the rest)
+      if(host && host.riding && dist(n.x,n.y,host.x,host.y)>320) sp*=1.45;
+      n.x+=mx*sp*dt; n.y+=my*sp*dt; resolveCollision(n); n.moving=true; n.facing.x=mx; n.facing.y=my; n.dir=Math.abs(mx)>Math.abs(my)?(mx<0?'w':'e'):(my<0?'n':'s'); }
     else n.moving=false;
     // stuck watchdog: wanted to move but barely displaced (wedged on a corner) → hard sideways detour
     n.aiStuckT+=dt;
@@ -3731,6 +3939,8 @@ function updateNpcs(dt){
         const y = side===2?camY-46 : side===3?camY+H+46 : camY+rand(40,H-40);
         const cx2=clamp(x,40,WORLD_W-40), cy2=clamp(y,40,WORLD_H-40);
         if(cx2>camX-14 && cx2<camX+W+14 && cy2>camY-14 && cy2<camY+H+14) continue;   // clamped back into view (map edge) — invisible hop only
+        // online: the hop must be invisible to EVERY player's screen, not just the owner's
+        { let seen=false; for(const q of players){ if(q&&q.alive&&!q.departed && Math.abs(cx2-q.x)<W/2+30 && Math.abs(cy2-q.y)<H/2+30){ seen=true; break; } } if(seen) continue; }
         if(npcWalkBlocked(cx2,cy2)) continue;
         n.x=cx2; n.y=cy2; n.aiOffT=0; n.aiReturn=true; n.aiTgt=null; n.aiDetourT=0; n.aiStuckT=0; n.aiLX=cx2; n.aiLY=cy2;
         break;
@@ -3755,8 +3965,10 @@ function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0; lpBreakT=0; breakTimer=0; lpRunSaved=false;
   npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
-  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; lpCrateT=6;
-  for(const p of players){ p.soles=0; }   // everyone starts a run misio — the machines are the save-up goal
+  apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; bikes.length=0; lpCrateT=6;
+  for(const p of players){ p.riding=null; p._rideHits=0; p._rideAcc=0; p._stun=0; p._remount=0; }
+  // TEST HOOK (remove when done testing the Ticla): start with exactly a Ticla's price in hand
+  for(const p of players){ p.soles=200; }
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
@@ -3783,12 +3995,14 @@ function updateSurvival(dt){
   updateLpItems(dt);   // ground pickups (shoe = speed, hearts = health)
   // ground crates are now an OCCASIONAL bonus (the vending machine is the reliable source you save up
   // for) — they rain in far less often than before
-  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(8,15); spawnWeaponCrate(); }
+  lpCrateT-=dt; if(lpCrateT<=0){ lpCrateT=rand(3,7); spawnWeaponCrate(); }   // frequent top-up; the pool cap does the real limiting
   for(const p of players){
     if(!p.alive && !p.pending) stripPowers(p);   // dying wipes every power (even after a revive)
     else if(p.alive) p.rioGrabbed=false;         // no breaks to reset it: Rio heals are grabbable whenever you're hurt
   }
   lpSpeedPenalty(dt);   // Modo Infinito ONLY (called from updateSurvival): every 5 hits costs one white-running-shoe speed level
+  for(const p of players){ if(p.dmgGateT>0) p.dmgGateT-=dt; }        // contact-damage gate windows tick down
+  for(const n of npcs){ if(n.dmgGateT>0) n.dmgGateT-=dt; }
   const nParty=activePlayerCount();
   const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
   lpEnemyN=aliveN;
@@ -3868,7 +4082,7 @@ function updatePlay(dt){
   updateEnemies(dt);
   updateEffects(dt);
   updateLeaves(dt);
-  if(survival){ updateBullets(dt); updateGrenades(dt); updateMines(dt); updateBurns(dt); updateDecoys(dt); }
+  if(survival){ updateBullets(dt); updateGrenades(dt); updateMines(dt); updateBurns(dt); updateDecoys(dt); updateBikes(dt); }
   updateRays(dt);
   updateIceBeams(dt);
   updateHearts(dt);
@@ -4473,6 +4687,7 @@ function michiFrame(p){
 }
 function drawPlayer(p){
   if(p.pending) return;   // online: joined mid-round, not in play yet — draw nothing until they enter next round
+  if(survival && p.alive && p.riding){ drawRider(p); return; }   // on the Ticla: the bike sprite IS the player
   if(!p.alive){
     if(p.fell){
       if(p.fallT>0){ const k=clamp(p.fallT/0.5,0,1), C=CHARS[p.kind]; if(C.loaded()){ const fr=charFrame(p), CELL=C.cell, DH=C.dh*k, scale=DH/CELL.h, DW=CELL.w*scale, top=p.y-DH+p.radius+(1-k)*30, dx=p.x-DW/2; ctx.save(); ctx.globalAlpha=k; if(fr.flip){ctx.translate(p.x,0);ctx.scale(-1,1);ctx.translate(-p.x,0);} ctx.drawImage(fr.img,dx,top,DW,DH); ctx.restore(); } }
@@ -5365,10 +5580,12 @@ function drawHUD(){
     // between rounds: countdown banner (breakTimer mirrors lpBreakT and replicates to guests)
     if(breakTimer>0){
       ctx.textAlign='center';
-      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-240,86,480,66);
-      ctx.strokeStyle='rgba(174,247,194,0.5)'; ctx.lineWidth=1.5; ctx.strokeRect(W/2-240,86,480,66);
+      ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(W/2-330,86,660,92);
+      ctx.strokeStyle='rgba(174,247,194,0.5)'; ctx.lineWidth=1.5; ctx.strokeRect(W/2-330,86,660,92);
       ctx.fillStyle='#aef7c2'; ctx.font='bold 24px Courier New'; ctx.fillText('¡RONDA '+round+' SUPERADA!', W/2, 114);
-      ctx.fillStyle='#ffe14a'; ctx.font='bold 15px Courier New'; ctx.fillText('RONDA '+(round+1)+' EN '+Math.ceil(breakTimer)+'s — recarga, compra y revive', W/2, 140);
+      ctx.fillStyle='#ffe14a'; ctx.font='bold 15px Courier New'; ctx.fillText('RONDA '+(round+1)+' EN '+Math.ceil(breakTimer)+'s', W/2, 140);
+      ctx.fillStyle='#ffefb8'; ctx.font='11px Courier New';
+      ctx.fillText('Compra vida, mejora tus armas o compra armas especiales en las máquinas dispensadoras', W/2, 164);
     }
     // recruited AI allies: slim "ALIADO" health bars tucked against the right edge, out of the way
     {
@@ -5946,13 +6163,14 @@ function drawPauseSurvival(){
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('M\u00c1QUINAS  \u00b7 compra: F / .', mx+18, py+132);
   const VM=[['#e05a5a','ARMAS','torreta/bloques/Ale \u00b7 clubhouse'],
             ['#e05a9a','VIDA','vida llena \u00b7 piscina'],
-            ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque']];
-  let vy=py+154;
+            ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque'],
+            ['#2f9a55','TICLA','tu bici para siempre \u00b7 clubhouse']];
+  let vy=py+152;
   for(const m of VM){
     ctx.fillStyle=m[0]; rrectPath(mx+18,vy-10,13,13,3); ctx.fill();
     ctx.fillStyle=m[0]; ctx.font='bold 13px Courier New'; ctx.fillText(m[1], mx+40, vy+1);
     ctx.fillStyle='#c8d2da'; ctx.font='10px Courier New'; ctx.fillText(m[2], mx+40, vy+15);
-    vy+=34;
+    vy+=30;
   }
   ctx.fillStyle='#8a97a4'; ctx.font='10px Courier New';
   wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Los precios suben cada 5 rondas.', mx+18, vy+4, mw-32, 13);
@@ -7243,6 +7461,7 @@ function drawSnow(dt){
   ctx.globalAlpha=1; ctx.restore();
 }
 let gSpecIdx=null;   // Modo Infinito online: index of the living teammate a dead player is spectating
+let camLeadX=0, camLeadY=0;   // Ticla camera lookahead (eased)
 // dead spectator taps A / D (or arrows) to hop between the teammates still fighting
 function specCycle(dir){
   const me=players[NET.role==='guest'?NET.slot:0];
@@ -7275,8 +7494,13 @@ function updateCamera(){
         }
         if(sp) anchor=sp;
       } else gSpecIdx=null;
-      camX=clamp(anchor.x - W/2, 0, Math.max(0,WORLD_W - W));
-      camY=clamp(anchor.y - H/2, 0, Math.max(0,WORLD_H - H));
+      // Ticla camera lookahead: while riding, the view eases ~55px ahead of travel so top speed
+      // FEELS fast (you see further down the road). Eases back to center when you stop/dismount.
+      const ridingNow=!!anchor.riding && anchor.moving && anchor.alive;
+      const tx=ridingNow?(anchor.facing?anchor.facing.x:0)*55:0, ty=ridingNow?(anchor.facing?anchor.facing.y:0)*55:0;
+      camLeadX+=(tx-camLeadX)*0.06; camLeadY+=(ty-camLeadY)*0.06;
+      camX=clamp(anchor.x + camLeadX - W/2, 0, Math.max(0,WORLD_W - W));
+      camY=clamp(anchor.y + camLeadY - H/2, 0, Math.max(0,WORLD_H - H));
       if(!Number.isFinite(camX)) camX=0; if(!Number.isFinite(camY)) camY=0;
       return;
     }
@@ -7381,11 +7605,14 @@ function _frameBody(now){
   // tree whose feet are below the screen can still poke its crown in — hence the big bottom margin).
   const inV=_LP ? ((x,y)=> x>camX-180 && x<camX+W+180 && y>camY-70 && y<camY+H+360) : (()=>true);
   const drawables=[...(_LP?enemies.filter(e=>inV(e.x,e.y)):enemies).map(e=>({y:e.y,x:e.x,sy:_LP?e.y+(e.footR||e.radius||16):e.y,zt:0,f:()=>drawEnemy(e)})),
-                   ...players.map(p=>({y:p.y,x:p.x,sy:_LP?p.y+(p.radius||16):p.y,zt:0,f:()=>drawPlayer(p)})),
+                   // dead players lie FLAT on the ground — sink them to the ground plane so a standing
+                   // player can never be hidden behind a corpse sprite
+                   ...players.map(p=>({y:p.y,x:p.x,sy:(survival&&!p.alive&&!p.pending)?p.y-1e5:(_LP?p.y+(p.radius||16):p.y),zt:(survival&&!p.alive)?-1:0,f:()=>drawPlayer(p)})),
                    ...(survival?npcs:[]).map(n=>({y:n.y,x:n.x,sy:n.y+(n.radius||16),zt:0,f:()=>drawNpc(n)})),
                    // decoys cull with a lure-ring-sized margin so the radius circle doesn't pop at screen edges
                    ...(survival?decoys.filter(dc=> dc.x>camX-DECOY_LURE_R-40 && dc.x<camX+W+DECOY_LURE_R+40 && dc.y>camY-DECOY_LURE_R-40 && dc.y<camY+H+DECOY_LURE_R+40):[]).map(dc=>({y:dc.y,x:dc.x,sy:dc.y+12,zt:0,f:()=>drawDecoy(dc)})),
-                   ...(survival?corpses.filter(c=>inV(c.x,c.y)):[]).map(c=>({y:c.y,x:c.x,sy:c.y,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat (lose z-ties to the living)
+                   ...(survival?bikes.filter(b=>b.parked&&inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y+8,zt:0,f:()=>drawTiclaParked(b)})),
+                   ...(survival?corpses.filter(c=>inV(c.x,c.y)):[]).map(c=>({y:c.y,x:c.x,sy:c.y-1e5,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat on the ground plane
                    ...(survival?bullets.filter(b=>inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
                    ...(_LP?incaWalls.filter(w=>inV(w.x,w.y)):incaWalls).map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...(_LP?turrets.filter(t=>inV(t.x,t.y)):turrets).map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
@@ -7528,6 +7755,8 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   sfxNadePin=wrapSnd('npin',sfxNadePin);     sfxNadeThrow=wrapSnd('nthrow',sfxNadeThrow);
   sfxNadeBoom=wrapSnd('nboom',sfxNadeBoom);  sfxMineBoom=wrapSnd('mboom',sfxMineBoom);
   sfxBlockPlace=wrapSnd('bplc',sfxBlockPlace); sfxAleToss=wrapSnd('aleT',sfxAleToss);
+  sfxBikeUse=wrapSnd('bkuse',sfxBikeUse);    sfxBikeRing=wrapSnd('bkring',sfxBikeRing);
+  const _ss=sfxSlimeSplash; sfxSlimeSplash=function(x,y,i){ netQSnd('slsp',{x:Math.round(x),y:Math.round(y),i:i|0}); return _ss(x,y,i); };
   playLock=wrapSnd('lock',playLock);   // enhance-machine "locked" clunk reaches guest buyers too
   playDenied=wrapSnd('deny',playDenied);   // vending "no money" buzzer too
   const _pps=playPunchSound;   // punch voices key off the puncher's character
@@ -7547,6 +7776,8 @@ const NET_SND={
   slh:a=>(a&&typeof a==='object')?sfxSlimeHit(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxSlimeHit(),
   npin:()=>sfxNadePin(), nthrow:()=>sfxNadeThrow(), nboom:()=>sfxNadeBoom(), mboom:()=>sfxMineBoom(),
   bplc:()=>sfxBlockPlace(), aleT:()=>sfxAleToss(),
+  bkuse:()=>sfxBikeUse(), bkring:()=>sfxBikeRing(),
+  slsp:a=>{ if(a&&typeof a==='object') sfxSlimeSplash(a.x,a.y,a.i); },
   aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
   lock:()=>playLock(), deny:()=>playDenied()
 };
@@ -7590,7 +7821,8 @@ function netSerPlayer(p){
     special:p.special, specialCharges:p.specialCharges, oro:p.oro||0, oroCharge:p.oroCharge||0, soles:p.soles||0,
     gear:p.gear||'none', gearCount:p.gearCount||0,
     tierra:p.tierra, piedra:p.piedra, pending:!!p.pending, departed:!!p.departed, fx:p.facing.x, fy:p.facing.y,
-    weapon:p.weapon||'pistol', ammo:p.ammo||{}, enh:p.enh||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0 };
+    weapon:p.weapon||'pistol', ammo:p.ammo||{}, enh:p.enh||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0,
+    riding:!!p.riding };
 }
 function netSerializeSnapshot(){
   const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0), estatic={}, ids=new Set();
@@ -7643,6 +7875,7 @@ function netSerializeSnapshotLP(){
     bombs: bombs.map(netSerEnt), turrets: turrets.map(netSerEnt), tarrows: turretArrows.map(netSerEnt),
     mines: mines.map(m=>({id:m.id,x:m.x,y:m.y,arm:m.arm})),
     decoys: decoys.map(netSerEnt),
+    bikes: bikes.map(netSerEnt),
     drops: bossDrops.map(netSerEnt), incaW: incaWalls.map(w=>({id:w.id, x:w.x, y:w.y, hp:w.hp})) } };
 }
 function netCullFor(S,g){
@@ -7800,7 +8033,8 @@ function netRenderPlayer(sp){
     special:sp.special, specialCharges:sp.specialCharges, oro:sp.oro, oroCharge:sp.oroCharge, soles:sp.soles||0,
     gear:sp.gear, gearCount:sp.gearCount,
     tierra:sp.tierra, piedra:sp.piedra, facing:{x:sp.fx, y:sp.fy},
-    weapon:sp.weapon||'pistol', ammo:sp.ammo||{}, enh:sp.enh||{}, nadeArmed:!!sp.nadeArmed, nadeCharge:sp.nadeCharge||0 };
+    weapon:sp.weapon||'pistol', ammo:sp.ammo||{}, enh:sp.enh||{}, nadeArmed:!!sp.nadeArmed, nadeCharge:sp.nadeCharge||0,
+    riding:!!sp.riding };
 }
 function netPredictOwned(rp, me, cur, dt){
   if(!me.alive){ gPred.init=false; gPred.punchAnim=0; return; }   // dead → just show authoritative pose
@@ -7813,13 +8047,16 @@ function netPredictOwned(rp, me, cur, dt){
   if(k['KeyA']||k['ArrowLeft'])  mx-=1;
   if(k['KeyD']||k['ArrowRight']) mx+=1;
   gPred.animTime+=dt;
+  const riding=!!me.riding;   // replicated flag — mount/dismount decisions are the host's
+  if(riding && mx && my){ if(gPred.dir==='e'||gPred.dir==='w') my=0; else mx=0; }   // Ticla: strict 4-way
   const moving=!!(mx||my);
   gPred.moving=moving;
   if(moving){
     const l=Math.hypot(mx,my); mx/=l; my/=l;
     rp.facing.x=mx; rp.facing.y=my; gPred.fx=mx; gPred.fy=my;
     rp.dir = Math.abs(mx)>Math.abs(my) ? (mx<0?'w':'e') : (my<0?'n':'s'); gPred.dir=rp.dir;
-    const sp=effSpeed(me);                                 // same stat pipeline the host uses
+    let sp=effSpeed(me);                                   // same stat pipeline the host uses
+    if(riding) sp*=BIKE_SPEED*0.95;                        // ~the host's eased top speed
     gPred.x+=mx*sp*dt; gPred.y+=my*sp*dt;
     const tmp={x:gPred.x, y:gPred.y, radius:me.radius}; resolveCollision(tmp); gPred.x=tmp.x; gPred.y=tmp.y;
   }
@@ -8069,6 +8306,7 @@ function netApplyGuest(dt){
   // boss-drop gadgets: bombs / turrets / drop crates replicate wholesale each snapshot
   bombs.length=0;     for(const b3 of cur.bombs||[])   bombs.push({...b3});
   decoys.length=0;    for(const d3 of cur.decoys||[])  decoys.push({...d3});
+  bikes.length=0;     for(const b3 of cur.bikes||[])   bikes.push({...b3});
   corpses.length=0;   for(const c2 of cur.corpses||[]) corpses.push({...c2});
   mines.length=0;     for(const m of cur.mines||[])    mines.push({...m});
   turrets.length=0;   for(const t2 of cur.turrets||[]) turrets.push({...t2});
