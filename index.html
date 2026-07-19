@@ -1226,9 +1226,12 @@ let vendFlash=0;
 // SOLID (players/enemies walk around it, bullets stop on it, see lpSolidAt); walk up to the front
 // and press the gear key to fully repair your Ticla for 50 soles (see tryBici).
 const LP_BICI_IMG=new Image(); LP_BICI_IMG.src='assets/lp_bicicletero.png';
-const LP_BICI={ dx:159, dy:373, w:623, h:623,      // image draw box (top-left x/y + size in world px)
-  sx0:292, sy0:470, sx1:648, sy1:886,              // solid footprint rect (world px)
-  ix:470, iy:918, r:104, cost:50 };                // front interaction point + reach radius + price
+// Placed in the map's TOP-LEFT corner, on the dirt strip west of the sidewalk (the owner's marked
+// spot), sized so the visible shop is ~212x254 world px. The draw box hangs off-map a little
+// (dx/dy negative) because the 1024² art carries transparent padding around the visible building.
+const LP_BICI={ dx:-28, dy:-27, w:348, h:348,      // image draw box (top-left x/y + size in world px)
+  sx0:46, sy0:27, sx1:245, sy1:260,                // solid footprint rect (world px) — walls of the visible art
+  ix:146, iy:286, r:88, cost:50 };                 // front interaction point + reach radius + price
 function drawLpBici(){ const im=LP_BICI_IMG; if(!im.naturalWidth) return; const B=LP_BICI;
   ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(B.ix, B.sy1+4, (B.sx1-B.sx0)/2, 14, 0,0,TAU); ctx.fill();
   ctx.drawImage(im, B.dx, B.dy, B.w, B.h); }
@@ -1298,6 +1301,21 @@ function lpResolve(ent){
       const nx=clamp(ent.x,w.x,w.x+w.w), ny=clamp(ent.y,w.y,w.y+w.h);
       let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
       if(dd<r){ if(dd<0.0001){ const cx=w.x+w.w/2; ent.x = ent.x<cx ? w.x-r : w.x+w.w+r; } else { ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; } }
+    }
+    // the Bicicletero building blocks MOVEMENT too — its footprint isn't in the baked grid mask,
+    // so without this rect check everyone strolled straight over the shop (bullets and NPC pathing
+    // already respected it through lpSolidAt). Buried entities (edge-spawned enemies) exit the
+    // nearest side instead of teleporting.
+    if(survival){ const B=LP_BICI;
+      const nx=clamp(ent.x,B.sx0,B.sx1), ny=clamp(ent.y,B.sy0,B.sy1);
+      let dx=ent.x-nx, dy=ent.y-ny, dd=Math.hypot(dx,dy);
+      if(dd<r){
+        if(dd<0.0001){
+          const dl=ent.x-B.sx0, dr=B.sx1-ent.x, dtp=ent.y-B.sy0, db=B.sy1-ent.y;
+          const m=Math.min(dl,dr,dtp,db);
+          if(m===dl) ent.x=B.sx0-r; else if(m===dr) ent.x=B.sx1+r; else if(m===dtp) ent.y=B.sy0-r; else ent.y=B.sy1+r;
+        } else { ent.x=nx+dx/dd*r; ent.y=ny+dy/dd*r; }
+      }
     }
   }
   ent.x=clamp(ent.x, r+2, WORLD_W-r-2); ent.y=clamp(ent.y, r+2, WORLD_H-r-2);
