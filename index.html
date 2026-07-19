@@ -1059,7 +1059,7 @@ const TAU = Math.PI*2;
 // ---------- Game State ----------
 const STATE = { LOADING:'loading', MENU:'menu', LOBBY:'lobby', PLAY:'play', BREAK:'break', OVER:'over', PAUSE:'pause', VICTORY:'victory', INTRO:'intro', SELECT:'select', DYING:'dying', MAINMENU:'mainmenu', MAPAS:'mapas', HELP:'help', PVP:'pvp', MODOS:'modos', NETSELECT:'netselect' };
 let state = STATE.LOADING;
-let mainSel=0, mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapLockShake=0, currentMap='amazonas';
+let mainSel=0, mainView='main', mapSel=0, mainMenuT=0, mapsUnlocked=false, mapThumb=null, mapThumb2=null, mapThumb3=null, mapThumb4=null, mapLockShake=0, currentMap='amazonas';
 let pvpPending=false;   // the SELECT screen was entered from PVP → start the duel instead of a Horda run
 let modeSel=0;          // MODOS screen selection: 0 Horda · 1 PVP
 let WORLD_W=W, WORLD_H=H, camX=0, camY=0;
@@ -6027,7 +6027,7 @@ function drawBreakUI(){
 function isMenuState(){ return state===STATE.MAINMENU||state===STATE.MAPAS||state===STATE.HELP||state===STATE.LOBBY||state===STATE.MODOS||state===STATE.NETSELECT; }
 function playMenuMusic(){ try{ lpMusicStop(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic){ evMusic.pause(); } if(deathMusic){ deathMusic.pause(); } if(losAndesMusic){ losAndesMusic.pause(); } if(pvpMusic){ pvpMusic.pause(); } if(menuMusic){ menuMusic.play().catch(()=>{}); } }catch(e){} }
 function stopMenuMusic(){ try{ if(menuMusic) menuMusic.pause(); }catch(e){} }
-function gotoMainMenu(){ stopVoices(); state=STATE.MAINMENU; mainSel=0; mainMenuT=99; playMenuMusic(); }
+function gotoMainMenu(){ stopVoices(); state=STATE.MAINMENU; mainSel=0; mainView='main'; mainMenuT=99; playMenuMusic(); }
 
 function rrect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 function drawImageCover(img){
@@ -6122,18 +6122,19 @@ function drawMainMenu(){
   ctx.textAlign='left'; ctx.fillStyle='rgba(255,233,176,0.5)'; ctx.font='11px Courier New';
   ctx.fillText(BUILD, 10, H-10);
   if(mainMenuT<4){ return; }
-  const opts=['JUGAR','JUGAR ONLINE','CÓMO JUGAR'];
-  const pw=440, ph=200, px=W/2-pw/2, py=H-250;
+  if(mainView==='settings'){ ctx.fillStyle='rgba(0,0,0,0.80)'; ctx.fillRect(0,0,W,H); drawVolumeSettings(); return; }
+  const opts=['JUGAR','JUGAR ONLINE','CÓMO JUGAR','AJUSTES'];
+  const pw=440, ph=246, px=W/2-pw/2, py=H-296;
   ctx.fillStyle='rgba(18,12,6,0.6)'; rrect(px,py,pw,ph,14); ctx.fill();
   ctx.strokeStyle='rgba(255,210,74,0.55)'; ctx.lineWidth=2; rrect(px,py,pw,ph,14); ctx.stroke();
   ctx.textAlign='center';
   opts.forEach((o,i)=>{
-    const yy=py+50+i*54;
-    if(i===mainSel){ ctx.fillStyle='rgba(255,210,74,0.22)'; ctx.fillRect(px+24,yy-32,pw-48,44); ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(px+24,yy-32,pw-48,44); }
-    ctx.fillStyle=i===mainSel?'#fff':'#ead9b6'; ctx.font='bold 26px Courier New';
+    const yy=py+46+i*50;
+    if(i===mainSel){ ctx.fillStyle='rgba(255,210,74,0.22)'; ctx.fillRect(px+24,yy-30,pw-48,42); ctx.strokeStyle='#ffd24a'; ctx.lineWidth=2; ctx.strokeRect(px+24,yy-30,pw-48,42); }
+    ctx.fillStyle=i===mainSel?'#fff':'#ead9b6'; ctx.font='bold 24px Courier New';
     ctx.fillText((i===mainSel?'▶ ':'')+o, W/2, yy);
   });
-  ctx.fillStyle='#d8c9a4'; ctx.font='12px Courier New'; ctx.fillText('↑↓ elegir   ·   Enter para seleccionar', W/2, py+ph-14);
+  ctx.fillStyle='#d8c9a4'; ctx.font='12px Courier New'; ctx.fillText('↑↓ elegir   ·   Enter para seleccionar', W/2, py+ph-12);
   ctx.textAlign='left';
 }
 
@@ -6570,9 +6571,17 @@ function drawLobby(){
 function handleMenuKey(code){
   if(state===STATE.MAINMENU){
     if(mainMenuT<4){ mainMenuT=99; return; }
-    if(code==='ArrowUp'||code==='KeyW') mainSel=(mainSel+2)%3;
-    if(code==='ArrowDown'||code==='KeyS') mainSel=(mainSel+1)%3;
-    if(code==='Enter'||code==='Space'){ if(mainSel===0){ NET.hosting=false; state=STATE.MODOS; modeSel=0; } else if(mainSel===1){ NET.hosting=true; state=STATE.MODOS; modeSel=0; } else { state=STATE.HELP; } }
+    if(mainView==='settings'){
+      if(code==='Escape'||code==='Enter'||code==='Space'){ mainView='main'; }
+      else if(code==='ArrowUp'||code==='KeyW') setSel=(setSel+1)%2;
+      else if(code==='ArrowDown'||code==='KeyS') setSel=(setSel+1)%2;
+      else if(code==='ArrowLeft'||code==='KeyA') adjustVol(setSel,-0.1);
+      else if(code==='ArrowRight'||code==='KeyD') adjustVol(setSel,0.1);
+      return;
+    }
+    if(code==='ArrowUp'||code==='KeyW') mainSel=(mainSel+3)%4;
+    if(code==='ArrowDown'||code==='KeyS') mainSel=(mainSel+1)%4;
+    if(code==='Enter'||code==='Space'){ if(mainSel===0){ NET.hosting=false; state=STATE.MODOS; modeSel=0; } else if(mainSel===1){ NET.hosting=true; state=STATE.MODOS; modeSel=0; } else if(mainSel===2){ state=STATE.HELP; } else { mainView='settings'; setSel=0; } }
   } else if(state===STATE.MODOS){
     if(code==='Escape'){ state=STATE.MAINMENU; mainSel=0; return; }
     // three modes: 0 HORDA · 1 MODO INFINITO · 2 PVP
