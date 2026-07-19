@@ -2200,7 +2200,7 @@ function tioSpawn(byIdx){
     maxhp:base*10, hp:base*10,   // a small fortune buys a big tank — he's meant to hold for rounds, not seconds
     speed:190, state:'intro', introT:Math.max(1.2,tioDur('INTRO',2.2)),
     dir8:2, moving:false, animT:0, shootCd:0, shootFlash:0, hitFlash:0, dmgGateT:0,
-    burstN:0, burstCd:0, kneelMissT:0,
+    burstN:0, burstCd:0, kneelMissT:0, magN:TIO_MAG, reloadT:0,
     aiTgt:null, aiTgtT:0, aiSide:0, aiStuckT:0, aiLX:TIO_SPOT.x, aiLY:TIO_SPOT.y, aiDetourT:0, aiDetourA:0,
     aiWX:TIO_SPOT.x, aiWY:TIO_SPOT.y, aiRepathT:0, guardIdx:byIdx, guardT:0,
     kills:0, tauntKills:0, tauntPose:1, tauntT:0, tauntCd:12, kneelT:0, kneelCd:rand(6,11),
@@ -2247,11 +2247,12 @@ function tioAim(t,te){
 const TIO_MUZZLE_LIFT=-30;   // his rifle rides at chest height — tracers DRAW there (physics stays at centre)
 const TIO_ENGAGE_R=340;      // reaction range: a shade beyond the Distracción's lure ring (280) — no cross-map sniping
 const TIO_DROP_R=430;        // an engaged target must slip this far away before he lets it go (no flap at the edge)
+const TIO_MAG=30;            // magazine size — a dry mag forces a real reload pause, HIS vulnerable window
 function fireTioBullet(t, te){
   const ang=Math.atan2(te.y-t.y, te.x-t.x), snap=Math.round(ang/(Math.PI/4))*(Math.PI/4);
   const cx=Math.cos(snap), cy=Math.sin(snap);
   const mz=20, bx=t.x+cx*mz, by=t.y+cy*mz;
-  bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, tioB:1, wk:'rapid', lvl:2, wmul:1, dy:TIO_MUZZLE_LIFT});
+  bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, tioB:1, wk:'rapid', lvl:0, wmul:1, dy:TIO_MUZZLE_LIFT});   // BASIC rapid rounds — no enhancement levels for hired help
   spark(bx,by+TIO_MUZZLE_LIFT,'#bfe4ff',3,130); try{ sfxGun(true, t.x, t.y, 'tio'); }catch(e){}   // muzzle flash at the gun, RÁPIDA loop on his OWN channel
 }
 // one voice line at a time, and never two too close together (the anti-spam gate every caller shares)
@@ -2299,28 +2300,39 @@ function updateTio(dt){
     if(guard) t.guardIdx=players.indexOf(guard);
   }
   // ---- pick a target: only enemies CLOSE enough to be a real threat (a shade beyond the
-  // Distracción's lure ring) make him react — no sniping specks across the map. A lock is sticky
-  // (~1s + a wider drop radius) so aim doesn't thrash in a crowd or flap at the range boundary.
-  t.aiTgtT-=dt;
-  let te=(t.aiTgt && !t.aiTgt.dead && t.aiTgtT>0 && dist(t.x,t.y,t.aiTgt.x,t.aiTgt.y)<TIO_DROP_R) ? t.aiTgt : null;
+  // Distracción's lure ring) make him react — no sniping specks across the map. ONE alien at a
+  // time: the lock holds until the target DIES or slips the drop radius, so a surrounding mob
+  // never turns him into a sprinkler spinning between eight of them. The single exception: a
+  // point-blank usurper (in his face while the locked one is still mid-range) steals the lock.
+  let te=(t.aiTgt && !t.aiTgt.dead && dist(t.x,t.y,t.aiTgt.x,t.aiTgt.y)<TIO_DROP_R) ? t.aiTgt : null;
+  if(te && dist(t.x,t.y,te.x,te.y)>200){
+    for(const e of enemies){ if(e.dead || e.dcLock || e===te) continue;
+      if(dist(t.x,t.y,e.x,e.y)<90){ te=e; t.aiTgt=e; break; } }
+  }
   if(!te){
     let tv=null, tvd=1e9, tn=null, tnd=1e9;
     for(const e of enemies){ if(e.dead || e.dcLock) continue;
       const d0=dist(t.x,t.y,e.x,e.y); if(d0>TIO_ENGAGE_R) continue;
       if(d0<tnd){tnd=d0;tn=e;}
       if(d0<tvd && npcShotLos(t.x,t.y,e.x,e.y)){ tvd=d0; tv=e; } }
-    te=tv||tn; t.aiTgt=te; t.aiTgtT=rand(0.9,1.5);
+    te=tv||tn; t.aiTgt=te;
   }
   const aim=te?tioAim(t,te):null, td=aim?aim.d:1e9;
   const canShoot=!!(aim && aim.aligned && aim.clear && td<TIO_DROP_R);
-  // gusts, not a hose: each burst empties a handful of rounds, then the trigger rests
+  // gusts, not a hose: each burst empties a handful of rounds, then the trigger rests — and a dry
+  // magazine forces a REAL reload, the window where aliens can actually reach him
   const burstFire=()=>{
-    if(t.burstCd>0) return;
-    if(!(t.burstN>0)) t.burstN=randi(5,11);   // squeeze a fresh gust
-    if(t.shootCd<=0){ fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25;
-      if(--t.burstN<=0) t.burstCd=rand(0.4,0.95); }   // let go of the trigger
+    if(t.reloadT>0 || t.burstCd>0) return;
+    if(!(t.burstN>0)) t.burstN=randi(4,9);   // squeeze a fresh gust
+    if(t.shootCd<=0){
+      fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25;
+      t.magN--; t.burstN--;
+      if(t.magN<=0){ t.magN=TIO_MAG; t.reloadT=rand(1.4,2.2); t.burstN=0; }   // dry — swap mags
+      else if(t.burstN<=0) t.burstCd=rand(0.4,0.95);   // let go of the trigger
+    }
   };
   if(t.burstCd>0) t.burstCd-=dt;
+  if(t.reloadT>0) t.reloadT-=dt;
   // how crowded is he? (kneeling in a mob's face is how mercenaries die)
   let close=0; for(const e of enemies){ if(!e.dead && dist(t.x,t.y,e.x,e.y)<110) close++; }
   if(t.state==='kneel'){
@@ -2358,6 +2370,7 @@ function updateTio(dt){
   if(te){
     if(wantA===null){
       if(!aim.clear){ wantA=npcSteer(t, te.x, te.y); }                       // wall between → whisker-steer around the house
+      else if(t.reloadT>0 && td<220){ wantA=npcSteer(t, t.x-aim.cx*230, t.y-aim.cy*230); }   // mid-reload with company closing → give ground until the mag's in
       else if(td<80){ wantA=npcSteer(t, t.x-aim.cx*220, t.y-aim.cy*220); }   // fighting withdrawal down the ray
       else if(!aim.aligned){                                                 // find the angle: strafe onto the nearest ray
         const sd=aim.ang + (aim.err>0 ? Math.PI/2 : -Math.PI/2);
