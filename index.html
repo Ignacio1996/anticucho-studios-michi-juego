@@ -1218,6 +1218,18 @@ function vendCost(v,p){
 }
 const VENDING_COST=50;                     // legacy constant (some help text) — real prices come from vendCost()
 let vendFlash=0;
+// Bicicletero — bike-repair shop building in the top-left corner of Las Palmas. Its footprint is
+// SOLID (players/enemies walk around it, bullets stop on it, see lpSolidAt); walk up to the front
+// and press the gear key to fully repair your Ticla for 50 soles (see tryBici).
+const LP_BICI_IMG=new Image(); LP_BICI_IMG.src='assets/lp_bicicletero.png';
+const LP_BICI={ dx:159, dy:373, w:623, h:623,      // image draw box (top-left x/y + size in world px)
+  sx0:292, sy0:470, sx1:648, sy1:886,              // solid footprint rect (world px)
+  ix:470, iy:918, r:104, cost:50 };                // front interaction point + reach radius + price
+function drawLpBici(){ const im=LP_BICI_IMG; if(!im.naturalWidth) return; const B=LP_BICI;
+  ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.ellipse(B.ix, B.sy1+4, (B.sx1-B.sx0)/2, 14, 0,0,TAU); ctx.fill();
+  ctx.drawImage(im, B.dx, B.dy, B.w, B.h); }
+function biciNear(p){ if(!survival||!p.alive) return null; const B=LP_BICI; return (dist(p.x,p.y,B.ix,B.iy)<B.r)?B:null; }
+function biciPlayerBike(p){ const idx=players.indexOf(p); return bikes.find(b=>b.owner===idx)||null; }
 const LP_TERRAIN_IMG=new Image(); LP_TERRAIN_IMG.src='assets/laspalmas_terrain.png';   // prop-free ground (background layers flattened)
 const LP_THUMB_IMG=new Image(); LP_THUMB_IMG.src='assets/laspalmas_thumb.png';         // map-select card art
 // Prop instances from the map pack: x,y = sprite CENTER; sy = sort_y (feet line); zt = z_tiebreak;
@@ -1252,7 +1264,8 @@ let LP_COL=null;
 function lpSolidCell(c,r){ if(c<0||r<0||c>=LP_COL_COLS||r>=LP_COL_ROWS) return true; const idx=r*LP_COL_COLS+c; return (LP_COL[idx>>3]>>(idx&7))&1; }
 function lpSolidAt(x,y){
   // each vending machine's lower body is solid (players/enemies walk around it, bullets stop on it)
-  if(survival){ for(const v of LP_VENDS){ if(x>v.x-v.w/2 && x<v.x+v.w/2 && y>v.y+26 && y<v.y+v.h) return true; } }
+  if(survival){ for(const v of LP_VENDS){ if(x>v.x-v.w/2 && x<v.x+v.w/2 && y>v.y+26 && y<v.y+v.h) return true; }
+    const B=LP_BICI; if(x>B.sx0 && x<B.sx1 && y>B.sy0 && y<B.sy1) return true; }   // the Bicicletero building
   return lpSolidCell(Math.floor(x/LP_COL_CELL), Math.floor(y/LP_COL_CELL));
 }
 // Bullets/projectiles fly OVER these water bodies (pool + jacuzzi) even though players/enemies can't
@@ -2749,7 +2762,7 @@ function tryVend(p){
     for(const b of bikes){ if(b.parked){ const d=dist(p.x,p.y,b.x,b.y); if(d<p.radius+28 && d<nbd){ nbd=d; nb=b; } } }
     if(nb){ mountBike(p,nb); return true; }
   }
-  const v=vendNear(p); if(!v) return false;
+  const v=vendNear(p); if(!v) return tryBici(p);   // no vending machine here — maybe the Bicicletero
   const cost=vendCost(v,p);
   if(cost==null){   // locked, hard stop
     if(v.type==='ticla'){ floatText(v.x, v.y-40, 'Ya tienes tu Ticla', '#9aa4b0'); playLock(); return true; }
@@ -2779,6 +2792,36 @@ function tryVend(p){
   }
   spark(v.x, v.y-6, '#ffe07a', 22, 170); cameraShake=4;
   return true;
+}
+// Bicicletero: gear key at the shopfront fully repairs the player's Ticla for 50 soles.
+function tryBici(p){
+  const B=biciNear(p); if(!B) return false;
+  const bk=biciPlayerBike(p);
+  if(!bk){ floatText(B.ix, B.iy-46, 'No tienes Ticla', '#9aa4b0'); playLock(); return true; }
+  if(bk.hp>=bk.maxhp){ floatText(B.ix, B.iy-46, 'Ticla al tope', '#ffcf9a'); playDenied(); return true; }
+  if((p.soles||0) < B.cost){ floatText(B.ix, B.iy-46, '¡'+(p.vendFlip?'Pobre de mierda':'Sigues misio')+'! ('+B.cost+' S/.)', '#ff9a7a'); playDenied(); return true; }
+  p.soles-=B.cost; vendFlash=0.5; bk.hp=bk.maxhp;
+  floatText(p.x, p.y-30, '¡TICLA REPARADA!', '#7fe0a0'); playCoin();
+  spark(B.ix, B.iy-6, '#7fe0a0', 22, 170); cameraShake=4;
+  return true;
+}
+// floating "[F] Reparar Ticla" prompt over the shopfront when a player stands at it
+function drawBiciPrompt(){
+  const B=LP_BICI;
+  for(const p of players){ if(biciNear(p)!==B) continue;
+    const bk=biciPlayerBike(p);
+    let txt, col;
+    if(!bk){ txt='No tienes Ticla'; col='#9aa4b0'; }
+    else if(bk.hp>=bk.maxhp){ txt='Ticla al tope'; col='#ffcf9a'; }
+    else if((p.soles||0)<B.cost){ txt=(p.vendFlip?'Pobre de mierda':'Sigues misio'); col='#ffcf9a'; }
+    else { const key=(players.indexOf(p)===0?'F':'.'); txt='Reparar Ticla ('+B.cost+' S/.)  ['+key+']'; col='#aef7c2'; }
+    ctx.font='bold 12px Courier New'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+    const tw=ctx.measureText(txt).width+18, ty=B.iy-46;   // just above the player at the shopfront
+    ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(B.ix-tw/2, ty-15, tw, 20, 4); ctx.fill();
+    ctx.fillStyle=col; ctx.fillText(txt, B.ix, ty);
+    ctx.textAlign='left';
+    break;   // one prompt is enough even if both players crowd the shop
+  }
 }
 function drawVending(){ for(const v of LP_VENDS) drawVend(v); }
 function drawVend(v){
@@ -4934,7 +4977,7 @@ function drawLpArena(){
   else { ctx.fillStyle='#4f8a3a'; ctx.fillRect(sx,sy,sw,sh); }
 }
 function drawArena(){
-  if(currentMap==='laspalmas'){ drawLpArena(); drawLpGround(); return; }
+  if(currentMap==='laspalmas'){ drawLpArena(); drawLpGround(); if(survival) drawLpBici(); return; }
   const tag=currentMap+'|'+WORLD_W+'|'+WORLD_H;
   if(!arenaBG || arenaTag!==tag){
     arenaBG=document.createElement('canvas'); arenaBG.width=WORLD_W; arenaBG.height=WORLD_H; buildArenaBG(arenaBG.getContext('2d'));
@@ -7958,6 +8001,7 @@ function _frameBody(now){
   drawables.sort((a,b)=>(a.sy-b.sy)||(a.zt-b.zt)||(a._i-b._i));
   for(const d of drawables){ const _m=ctx.getTransform(); if(_MO) ctx.translate(0,machuElev(d.x)); try{ d.f(); }catch(_e){ if(!_drawErr){ _drawErr=1; console.error('DRAW[drawable]', (_e&&_e.stack)||_e); } } ctx.setTransform(_m); }
   if(_LP){ for(const pr of LP_PROPS){ if(pr.fg){ try{ drawLpProp(pr); }catch(_e){} } } }   // foreground-plane props (e.g. water tower) draw on top
+  if(_LP && survival){ try{ drawBiciPrompt(); }catch(_e){} }   // Bicicletero "[F] Reparar" prompt
   for(const p of players){ if(!p.alive || !(p.oroCharge>0)) continue;
     const f=clamp(p.oroCharge/1.0,0,1), bw=72, bx=p.x-bw/2, by=p.y-p.radius-34+(_MO?machuElev(p.x):0);
     ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(bx-2,by-2,bw+4,13);
