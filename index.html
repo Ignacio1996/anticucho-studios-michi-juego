@@ -1892,7 +1892,7 @@ function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
-  if(t && turrets.length>before){ t.hp=t.maxhp=400; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // owner + enhancement (arrows do TURRET_FRAC damage)
+  if(t && turrets.length>before){ t.hp=t.maxhp=800; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // 800hp: it's a 120+ soles rare now, it should hold the line (was 400)
   sfxPlace(); return true;   // deploy thunk — the recorded turret sound now plays per ARROW instead
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
