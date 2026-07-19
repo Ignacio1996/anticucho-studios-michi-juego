@@ -1802,6 +1802,10 @@ function updateLeaves(dt){
     if(!gone && survival) for(const n of npcs){ if(n.npcState!=='active') continue;
       if(dist(l.x,l.y,n.x,n.y) < n.radius+9){ n.hitFlash=1.0; n.hp-=l.dmg; spark(n.x,n.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true; break; }
     }
+    // ...and the Super Ayuda (his death plays out in updateTio)
+    if(!gone && survival && tioTargetable() && dist(l.x,l.y,tio.x,tio.y) < tio.radius+9){
+      tio.hitFlash=1.0; tio.hp-=l.dmg; spark(tio.x,tio.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true;
+    }
     if(gone) leaves.splice(i,1);
   }
 }
@@ -2156,6 +2160,292 @@ function drawDecoy(d){
   }
   ctx.restore();
 }
+// ================= SUPER AYUDA — el Tío mercenario (Modo Infinito) =================
+// A 1500-soles bodyguard NPC. His silhouette (Tio_SHADOW) waits at a fixed spot on the grass strip
+// between the tennis court and the east sidewalk (never visible from the player spawn); walk up
+// with the gear key to hire him. He plants himself in the MACHO_1 pose while Tio_INTRO plays, then
+// escorts whichever player is nearest with an endless RÁPIDA. Walking and shooting share ONE step
+// clock, so mid-stride the walk frame swaps for the same-numbered shoot frame (walk-and-gun). On
+// his own he kneels to snipe (rooted while kneeling), taunts through the MACHO poses after a kill
+// streak, and banters sporadically. When he falls (Tio_DEATH + Tio_DEATHAUDIO) the body lingers a
+// while, then the shadow reappears on the spot and he can be hired again.
+const TIO_COST=1500;
+const TIO_SPOT={x:2836, y:1300, r:86};   // the grass strip between the tennis court fence and the east sidewalk (off-screen from the player spawn)
+const TIO_KEYS=['SHADOW','DEATH','MACHO_1','MACHO_2','MACHO_3','MACHO_4',
+  'EAST_w1','EAST_w2','NORTH_w1','NORTH_w2','NORTH_w3','SOUTH_W1','SOUTH_W2','SOUTH_W3',
+  'EAST_Shoot1','EAST_Shoot2','SOUTH_SHOOT1','SOUTH_SHOOT2','SOUTH_SHOOT3',
+  'SOUTH_kneelSHOOT','SOUTHEAST_kneelSHOOT','WEST_KneelSHOOT','NORTH_KneelSHOOT','NORTHWEST_KneelSHOOT'];
+const TIO_IMG={}; for(const k of TIO_KEYS){ const im=new Image(); im.src='assets/Tio_'+k+'.png'; TIO_IMG[k]=im; }
+const TIO_AUD_SRC={ INTRO:'assets/Tio_INTRO.mp3', DEATHAUDIO:'assets/Tio_DEATHAUDIO.mp3',
+  Kill8:'assets/Tio_Kill8.mp3', kneelLONG:'assets/Tio_kneelSHOOTAUDIO_LONG.mp3', KneelSnd:'assets/Tio_KneelSHOOTsound.mp3',
+  MUERTOS:'assets/Tio_extraMUERTOS.mp3', CHISTE:'assets/Tio_Marcianos_chiste.mp3', SAPITO:'assets/Tio_SAPITO.mp3' };
+const _tioEls={};
+function tioEl(k){ let a=_tioEls[k]; if(!a){ try{ a=new Audio(TIO_AUD_SRC[k]); a.preload='metadata'; _tioEls[k]=a; }catch(e){ return null; } } return a; }
+function playTio(k){ try{ const a=tioEl(k); if(a){ a.currentTime=0; a.volume=0.95*sfxVol; a.play().catch(()=>{}); } }catch(e){} }
+function tioDur(k,fb){ const a=_tioEls[k]; return (a && isFinite(a.duration) && a.duration>0.4) ? a.duration : fb; }
+function tioSay(k){ playTio(k); netQSnd('tioV',k); }
+const TIO_SHOOT_LINES=['Kill8','kneelLONG','KneelSnd'];   // combat barks (kneel/taunt/shooting)
+const TIO_IDLE_LINES=['MUERTOS','CHISTE','SAPITO'];       // strolling banter (rare while shooting)
+let tio=null;   // null → the shadow stands on the spot, buyable. Host-authoritative + replicated.
+const TIO_H=84;      // standing height on screen (a grown man — a head over the kids)
+const TIO_REF=929;   // SOUTH_W2's visible pixel height — the uniform-scale reference
+function tioTargetable(){ return !!(tio && tio.state!=='dead' && tio.state!=='intro'); }
+function tioSpawn(byIdx){
+  const base=(players[0]&&players[0].maxhp)||100;
+  tio={ id:_entId++, isNpc:true, isTio:true, x:TIO_SPOT.x, y:TIO_SPOT.y, radius:16, shields:0,
+    maxhp:base*10, hp:base*10,   // a small fortune buys a big tank — he's meant to hold for rounds, not seconds
+    speed:190, state:'intro', introT:Math.max(1.2,tioDur('INTRO',2.2)),
+    dir8:2, moving:false, animT:0, shootCd:0, shootFlash:0, hitFlash:0, dmgGateT:0,
+    aiTgt:null, aiTgtT:0, aiSide:0, aiStuckT:0, aiLX:TIO_SPOT.x, aiLY:TIO_SPOT.y, aiDetourT:0, aiDetourA:0,
+    aiWX:TIO_SPOT.x, aiWY:TIO_SPOT.y, aiRepathT:0, guardIdx:byIdx, guardT:0,
+    kills:0, tauntKills:0, tauntPose:1, tauntT:0, tauntCd:12, kneelT:0, kneelCd:rand(6,11),
+    sayGap:0, idleSayT:rand(8,16), shootSayT:rand(5,10), deadT:0 };
+  tioSay('INTRO');
+  spark(TIO_SPOT.x, TIO_SPOT.y-30, '#ffe07a', 24, 200); cameraShake=5;
+  floatText(TIO_SPOT.x, TIO_SPOT.y-58, '¡SUPER AYUDA!', '#ffe14a');
+}
+function tioNearSpot(p){ return survival && p.alive && !p.riding && dist(p.x,p.y,TIO_SPOT.x,TIO_SPOT.y)<TIO_SPOT.r; }
+function tryTioSpot(p){
+  if(!survival || tio || !tioNearSpot(p)) return false;
+  if((p.soles||0)<TIO_COST){ floatText(TIO_SPOT.x, TIO_SPOT.y-64, '¡'+(p.vendFlip?'Pobre de mierda':'Sigues misio')+'! ('+TIO_COST+' S/.)', '#ff9a7a'); playDenied(); return true; }
+  p.soles-=TIO_COST; vendFlash=0.5;
+  tioSpawn(players.indexOf(p));
+  return true;
+}
+// snap an angle to the 8 compass slots: 0=E 1=SE 2=S 3=SW 4=W 5=NW 6=N 7=NE
+function tioDir8(ang){ return ((Math.round(ang/(Math.PI/4))%8)+8)%8; }
+function fireTioBullet(t, te){
+  const ang=Math.atan2(te.y-t.y, te.x-t.x), snap=Math.round(ang/(Math.PI/4))*(Math.PI/4);
+  const cx=Math.cos(snap), cy=Math.sin(snap);
+  t.dir8=tioDir8(snap);
+  const mz=20, bx=t.x+cx*mz, by=t.y+cy*mz;
+  bullets.push({id:_entId++, x:bx, y:by, vx:cx*BULLET_SPD, vy:cy*BULLET_SPD, life:0.62, owner:0, pmul:1, fire:false, tioB:1, wk:'rapid', lvl:2, wmul:1});
+  spark(bx,by,'#bfe4ff',3,130); try{ sfxGun(true, t.x, t.y); }catch(e){}   // the RÁPIDA loop, proximity-faded
+}
+// one voice line at a time, and never two too close together (the anti-spam gate every caller shares)
+function tioTrySay(pool){
+  const t=tio; if(!t || t.sayGap>0) return false;
+  const k=pool[randi(0,pool.length-1)];
+  tioSay(k); t.sayGap=tioDur(k,3)+rand(4,8);
+  return true;
+}
+function updateTio(dt){
+  const t=tio; if(!t) return;
+  t.animT+=dt;
+  if(t.hitFlash>0) t.hitFlash-=dt; if(t.shootFlash>0) t.shootFlash-=dt;
+  if(t.shootCd>0) t.shootCd-=dt; if(t.sayGap>0) t.sayGap-=dt;
+  if(t.kneelCd>0) t.kneelCd-=dt; if(t.tauntCd>0) t.tauntCd-=dt;
+  if(t.state==='dead'){
+    t.deadT+=dt; t.moving=false;
+    if(t.deadT>=12) tio=null;   // body fades off — the shadow takes the spot back, buyable again
+    return;
+  }
+  if(t.state==='intro'){
+    t.introT-=dt; t.moving=false;
+    if(t.introT<=0) t.state='fight';
+    return;
+  }
+  if(t.hp<=0){   // felled — the DEATH pose lies where he dropped (enemy contact/shots got him)
+    t.hp=0; t.state='dead'; t.deadT=0; t.moving=false;
+    tioSay('DEATHAUDIO');
+    spark(t.x,t.y,'#ffd24a',22,190); cameraShake=6;
+    floatText(t.x,t.y-26,'El Tío cayó','#ffcf9a');
+    return;
+  }
+  if(t.state==='taunt'){
+    t.tauntT-=dt; t.moving=false;
+    if(t.tauntT<=0){ t.state='fight'; t.tauntKills=0; t.tauntCd=rand(18,30); }
+    return;
+  }
+  // ---- guard the nearest living player (re-checked on a slow clock so he can swap bodies) ----
+  const alive=players.filter(p=>p.alive && !p.departed);
+  t.guardT-=dt;
+  let guard=(t.guardIdx!=null && players[t.guardIdx] && players[t.guardIdx].alive && !players[t.guardIdx].departed) ? players[t.guardIdx] : null;
+  if(!guard || t.guardT<=0){
+    t.guardT=1.5; let bd=1e18;
+    for(const p of alive){ const d0=dist(p.x,p.y,t.x,t.y); if(d0<bd){ bd=d0; guard=p; } }
+    if(guard) t.guardIdx=players.indexOf(guard);
+  }
+  // ---- pick a target: prefer clear line of fire, lock ~1s so aim doesn't thrash in a crowd ----
+  t.aiTgtT-=dt;
+  let te=(t.aiTgt && !t.aiTgt.dead && t.aiTgtT>0) ? t.aiTgt : null;
+  if(!te){
+    let tv=null, tvd=1e9, tn=null, tnd=1e9;
+    for(const e of enemies){ if(e.dead || e.dcLock) continue;
+      const d0=dist(t.x,t.y,e.x,e.y); if(d0>760) continue;
+      if(d0<tnd){tnd=d0;tn=e;}
+      if(d0<640 && d0<tvd && npcShotLos(t.x,t.y,e.x,e.y)){ tvd=d0; tv=e; } }
+    te=tv||tn; t.aiTgt=te; t.aiTgtT=rand(0.9,1.5);
+  }
+  const td=te?dist(t.x,t.y,te.x,te.y):1e9;
+  const hasLos=te?npcShotLos(t.x,t.y,te.x,te.y):false;
+  // how crowded is he? (kneeling in a mob's face is how mercenaries die)
+  let close=0; for(const e of enemies){ if(!e.dead && dist(t.x,t.y,e.x,e.y)<110) close++; }
+  if(t.state==='kneel'){
+    t.kneelT-=dt; t.moving=false;
+    // rooted marksman: keeps firing from the knee — the audio may end long before he stands up
+    if(te && hasLos && td<680 && t.shootCd<=0){ fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25; }
+    else if(te){ t.dir8=tioDir8(Math.atan2(te.y-t.y,te.x-t.x)); }
+    if(t.kneelT<=0 || !te || close>=2){ t.state='fight'; t.kneelCd=rand(8,15); }
+    return;
+  }
+  // ---- taunt: a streak of kills earned a MACHO pose (only when nothing is breathing down his neck)
+  if(t.tauntKills>=10 && t.tauntCd<=0 && close===0 && !(te && td<260)){
+    t.state='taunt'; t.tauntPose=randi(1,4);
+    const k=TIO_SHOOT_LINES[randi(0,TIO_SHOOT_LINES.length-1)];
+    tioSay(k); t.sayGap=tioDur(k,2)+rand(4,8);
+    t.tauntT=tioDur(k,2);   // the pose holds exactly as long as the bark
+    return;
+  }
+  // ---- kneel: now and then he decides a firing position beats footwork (his call, not a rule) ----
+  if(te && hasLos && t.kneelCd<=0 && close===0 && td>170 && td<600 && Math.random()<0.65){
+    t.state='kneel'; t.kneelT=rand(2.2,4.5); t.kneelCd=rand(8,15);
+    t.dir8=tioDir8(Math.atan2(te.y-t.y,te.x-t.x));
+    if(Math.random()<0.7) tioTrySay(Math.random()<0.85 ? TIO_SHOOT_LINES : TIO_IDLE_LINES);
+    return;
+  }
+  // ---- movement: orbit the guarded player at a loose leash, close on targets, back off point-blank
+  let wantA=null;
+  if(t.aiDetourT>0){ t.aiDetourT-=dt; wantA=t.aiDetourA; }   // unsticking: hold the detour heading
+  else if(guard && dist(t.x,t.y,guard.x,guard.y)>320){ wantA=npcSteer(t, guard.x, guard.y); }   // leash first: cover your man
+  if(te){
+    if(wantA===null){
+      if(!hasLos || td>260){ wantA=npcSteer(t, te.x, te.y); }             // close in / flank, wall-aware
+      else if(td<80){ wantA=npcSteer(t, t.x*2-te.x, t.y*2-te.y); }       // too close → give ground
+    }
+    if(hasLos && td<640){
+      // combat barks — sparse, so the RÁPIDA doesn't turn him into a jukebox
+      t.shootSayT-=dt;
+      if(t.shootSayT<=0){ if(tioTrySay(Math.random()<0.85 ? TIO_SHOOT_LINES : TIO_IDLE_LINES)) t.shootSayT=rand(10,20); else t.shootSayT=2; }
+    }
+    if(hasLos && td<640 && t.shootCd<=0){ fireTioBullet(t,te); t.shootCd=0.07; t.shootFlash=0.25; }
+    else if(wantA===null){ t.dir8=tioDir8(Math.atan2(te.y-t.y,te.x-t.x)); }
+  } else if(guard && wantA===null){
+    // no work: drift to a fresh spot around his man so he reads as pacing a perimeter
+    t.aiRepathT-=dt;
+    if(t.aiRepathT<=0){ t.aiRepathT=rand(1.0,2.2);
+      for(let k=0;k<8;k++){ const a=Math.random()*TAU, r=rand(70,230), wx=guard.x+Math.cos(a)*r, wy=guard.y+Math.sin(a)*r;
+        if(!npcWalkBlocked(wx,wy)){ t.aiWX=wx; t.aiWY=wy; break; } } }
+    if(dist(t.x,t.y,t.aiWX,t.aiWY)>22) wantA=npcSteer(t, t.aiWX, t.aiWY);
+    // strolling banter, sporadic
+    t.idleSayT-=dt;
+    if(t.idleSayT<=0){ if(tioTrySay(TIO_IDLE_LINES)) t.idleSayT=rand(16,32); else t.idleSayT=3; }
+  }
+  if(wantA!==null){
+    let sp=t.speed;
+    if(guard && dist(t.x,t.y,guard.x,guard.y)>520) sp*=1.4;   // sprint to catch a runner (or a Ticla)
+    t.x+=Math.cos(wantA)*sp*dt; t.y+=Math.sin(wantA)*sp*dt;
+    t.moving=true;
+    if(!(t.shootFlash>0)) t.dir8=tioDir8(wantA);   // aim wins the facing while he's firing
+    resolveCollision(t);
+  } else t.moving=false;
+  // stuck watchdog: wanted to move but barely displaced → hard sideways detour (same trick as allies)
+  t.aiStuckT+=dt;
+  if(t.aiStuckT>=0.5){
+    if(t.moving && dist(t.x,t.y,t.aiLX,t.aiLY)<9){ t.aiSide=-(t.aiSide||1); t.aiDetourT=0.7; t.aiDetourA=(wantA===null?Math.random()*TAU:wantA)+t.aiSide*(Math.PI/2+rand(-0.3,0.3)); }
+    t.aiStuckT=0; t.aiLX=t.x; t.aiLY=t.y;
+  }
+  // marooned far off every screen (owner sprinted across the map): quietly hop to just outside the
+  // guard's view and walk back in — never visible on any player's screen
+  if(guard){
+    const camX2=clamp(guard.x-W/2,0,Math.max(0,WORLD_W-W)), camY2=clamp(guard.y-H/2,0,Math.max(0,WORLD_H-H));
+    const offScr=t.x<camX2-10||t.x>camX2+W+10||t.y<camY2-10||t.y>camY2+H+10;
+    t.aiOffT=offScr?(t.aiOffT||0)+dt:0;
+    if(offScr && t.aiOffT>4){
+      for(let k=0;k<50;k++){
+        const side=randi(0,3);
+        const x=side===0?camX2-46:side===1?camX2+W+46:camX2+rand(40,W-40);
+        const y=side===2?camY2-46:side===3?camY2+H+46:camY2+rand(40,H-40);
+        const cx2=clamp(x,40,WORLD_W-40), cy2=clamp(y,40,WORLD_H-40);
+        if(cx2>camX2-14&&cx2<camX2+W+14&&cy2>camY2-14&&cy2<camY2+H+14) continue;
+        { let seen=false; for(const q of players){ if(q&&q.alive&&!q.departed && Math.abs(cx2-q.x)<W/2+30 && Math.abs(cy2-q.y)<H/2+30){ seen=true; break; } } if(seen) continue; }
+        if(npcWalkBlocked(cx2,cy2)) continue;
+        t.x=cx2; t.y=cy2; t.aiOffT=0; t.aiTgt=null; t.aiDetourT=0; t.aiStuckT=0; t.aiLX=cx2; t.aiLY=cy2;
+        break;
+      }
+    }
+  }
+}
+// ---- Tio sprite pick: state + 8-dir facing → pose key/flip. Walking and shooting share the SAME
+// 4-beat step clock ([1,2,3,2] ping-pong; 2-frame east sets take beats %2), so switching between
+// the walk set and the shoot set lands on the same-numbered frame — walk-and-gun, mid-stride.
+function tioPose(t){
+  if(t.state==='dead')  return {k:'DEATH', fl:false};
+  if(t.state==='intro') return {k:'MACHO_1', fl:false};
+  if(t.state==='taunt') return {k:'MACHO_'+(t.tauntPose||1), fl:false};
+  const d=t.dir8;
+  if(t.state==='kneel'){
+    if(d===2) return {k:'SOUTH_kneelSHOOT', fl:false};
+    if(d===1) return {k:'SOUTHEAST_kneelSHOOT', fl:false};
+    if(d===3) return {k:'SOUTHEAST_kneelSHOOT', fl:true};
+    if(d===4) return {k:'WEST_KneelSHOOT', fl:false};
+    if(d===0) return {k:'WEST_KneelSHOOT', fl:true};
+    if(d===6) return {k:'NORTH_KneelSHOOT', fl:false};
+    if(d===5) return {k:'NORTHWEST_KneelSHOOT', fl:false};
+    return {k:'NORTHWEST_KneelSHOOT', fl:true};   // NE
+  }
+  const ph=Math.floor(t.animT*6)%4, f4=t.moving?[1,2,3,2][ph]:2, f2=t.moving?[1,2][ph%2]:2;
+  const sh=t.shootFlash>0;
+  if(d===6) return {k:'NORTH_w'+f4, fl:false};                        // no north shoot set — walk frames pull double duty
+  if(d===2||d===1||d===3) return {k:(sh?'SOUTH_SHOOT':'SOUTH_W')+f4, fl:d===3};   // SE as-is, SW flipped
+  if(d===7||d===0) return {k:sh?('EAST_Shoot'+f2):('EAST_w'+f2), fl:false};       // E / NE
+  return {k:sh?('EAST_Shoot'+f2):('EAST_w'+f2), fl:true};                          // W / NW
+}
+function drawTio(t){
+  const P=tioPose(t), img=TIO_IMG[P.k];
+  ctx.save();
+  if(t.state==='dead' && t.deadT>10) ctx.globalAlpha=clamp((12-t.deadT)/2,0,1);   // fade the last 2s
+  const feet=t.y+t.radius+2;
+  if(t.state!=='dead'){ ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(t.x,feet,13,5,0,0,TAU); ctx.fill(); }
+  const tb=img&&img.naturalWidth ? spriteTrim(img) : null;
+  if(tb){
+    const s=TIO_H/TIO_REF, DW=tb.w*s, DH=tb.h*s;
+    if(P.fl){ ctx.translate(t.x,0); ctx.scale(-1,1); ctx.translate(-t.x,0); }
+    ctx.drawImage(img, tb.x, tb.y, tb.w, tb.h, t.x-DW/2, feet-DH, DW, DH);
+  } else if(img && img.naturalWidth){
+    const DH=t.state==='dead'?40:TIO_H, DW=DH*img.naturalWidth/img.naturalHeight;
+    if(P.fl){ ctx.translate(t.x,0); ctx.scale(-1,1); ctx.translate(-t.x,0); }
+    ctx.drawImage(img, t.x-DW/2, feet-DH, DW, DH);
+  } else {
+    ctx.fillStyle='#caa66a'; ctx.fillRect(t.x-8, t.y-24, 16, 34);   // placeholder until the art loads
+  }
+  ctx.restore();
+  if(t.state!=='dead' && t.state!=='intro'){
+    // slim health bar riding above his head (he's an investment — you want to see it draining)
+    const hf=clamp(t.hp/t.maxhp,0,1), bw=44, bx=t.x-bw/2, by=t.y-TIO_H-2;
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(bx-1,by-1,bw+2,6);
+    ctx.fillStyle=hf>0.5?'#7fe07f':hf>0.25?'#ffd24a':'#ff6a5a'; ctx.fillRect(bx,by,bw*hf,4);
+  }
+}
+// the SHADOW silhouette + price plate on the hire spot (only while nobody has him out)
+function drawTioSpot(){
+  if(tio) return;
+  const img=TIO_IMG.SHADOW, tb=img&&img.naturalWidth ? spriteTrim(img) : null;
+  const X=TIO_SPOT.x, feet=TIO_SPOT.y+18;
+  ctx.save();
+  ctx.globalAlpha=0.75+0.15*Math.sin(time*2.2);   // a slow breathing pulse so the spot catches the eye
+  if(tb){ const s=TIO_H/TIO_REF, DW=tb.w*s, DH=tb.h*s; ctx.drawImage(img, tb.x, tb.y, tb.w, tb.h, X-DW/2, feet-DH, DW, DH); }
+  else if(img && img.naturalWidth){ const DH=TIO_H, DW=DH*img.naturalWidth/img.naturalHeight; ctx.drawImage(img, X-DW/2, feet-DH, DW, DH); }
+  ctx.restore();
+  // price plate under the silhouette
+  ctx.font='bold 10px Courier New'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  const plate='SUPER AYUDA · '+TIO_COST+' S/.', pw=ctx.measureText(plate).width+14;
+  ctx.fillStyle='rgba(0,0,0,0.66)'; rrect(X-pw/2, feet+6, pw, 16, 3); ctx.fill();
+  ctx.fillStyle='#ffe14a'; ctx.fillText(plate, X, feet+18);
+  // proximity prompt (same tone as the vending machines)
+  let near=null; for(const p of players){ if(tioNearSpot(p)){ near=p; break; } }
+  if(near){
+    const key=(players.indexOf(near)===0?'F':'.');
+    let txt, col;
+    if((near.soles||0)<TIO_COST){ txt=near.vendFlip?'Pobre de mierda':'Sigues misio'; col='#ffcf9a'; }
+    else { txt='Contratar  ['+key+']'; col='#aef7c2'; }
+    ctx.font='bold 11px Courier New';
+    const tw=ctx.measureText(txt).width+16;
+    ctx.fillStyle='rgba(0,0,0,0.72)'; rrect(X-tw/2, feet-TIO_H-30, tw, 18, 4); ctx.fill();
+    ctx.fillStyle=col; ctx.fillText(txt, X, feet-TIO_H-17);
+  }
+  ctx.textAlign='left';
+}
 // ================= TICLA — the bicycle (Modo Infinito) =================
 // Bought once at its own vending machine (200 soles base), spawns parked beside it, and lives in
 // the world forever: ride it, park it anywhere, come back for it later. Indestructible — the RISK
@@ -2395,7 +2685,9 @@ function updateBullets(dt){
         const d=Math.hypot(b.vx,b.vy)||1, k=b.fire?90:150;   // knockback punch
         e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
         if(b.fire){ igniteEnemy(e, b.owner); spark(e.x,e.y,'#ff9a2a',6,120); } else spark(e.x,e.y,'#ffd0d0',5,90);
-        if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner); const vo=b.npc||owner; if(vo) playPunchSound(vo); }   // voice on KILL (NPC ally uses its own voice), throttled per character
+        if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner);
+          if(b.tioB){ if(tio){ tio.kills++; tio.tauntKills++; } }   // the Tío tallies toward his taunt (his barks are his own audio, not a character voice)
+          else { const vo=b.npc||owner; if(vo) playPunchSound(vo); } }   // voice on KILL (NPC ally uses its own voice), throttled per character
         hit=true; break;
       }
     }
@@ -2762,6 +3054,7 @@ function tryVend(p){
     for(const b of bikes){ if(b.parked){ const d=dist(p.x,p.y,b.x,b.y); if(d<p.radius+28 && d<nbd){ nbd=d; nb=b; } } }
     if(nb){ mountBike(p,nb); return true; }
   }
+  if(tryTioSpot(p)) return true;   // standing on the Super Ayuda spot — hire (or get laughed at)
   const v=vendNear(p); if(!v) return tryBici(p);   // no vending machine here — maybe the Bicicletero
   const cost=vendCost(v,p);
   if(cost==null){   // locked, hard stop
@@ -3603,6 +3896,7 @@ function nearestTarget(e){
   const r=nearestPlayer(e); let best=r.p, bd=r.d;
   if(survival) for(const n of npcs){ if(n.npcState!=='active') continue;
     const d=dist(e.x,e.y,n.x,n.y); if(d<bd){bd=d;best=n;} }
+  if(survival && tioTargetable()){ const d=dist(e.x,e.y,tio.x,tio.y); if(d<bd){bd=d;best=tio;} }   // the Super Ayuda draws aggro like any ally
   return {p:best,d:bd};
 }
 
@@ -3624,6 +3918,7 @@ function buildFlow(){
   // recruited AI allies attract enemies too (the field descends to the nearest seed, so the swarm
   // naturally splits between players and allies)
   if(survival) for(const n of npcs){ if(n.npcState!=='active') continue; const c=Math.max(0,Math.min(flowCols-1,Math.floor(n.x/flowCell))), r=Math.max(0,Math.min(flowRows-1,Math.floor(n.y/flowCell))); const idx=r*flowCols+c; if(dist[idx]<0){ dist[idx]=0; q.push(idx); } }
+  if(survival && tioTargetable()){ const c=Math.max(0,Math.min(flowCols-1,Math.floor(tio.x/flowCell))), r=Math.max(0,Math.min(flowRows-1,Math.floor(tio.y/flowCell))); const idx=r*flowCols+c; if(dist[idx]<0){ dist[idx]=0; q.push(idx); } }
   let head=0;
   while(head<q.length){ const idx=q[head++]; const r=(idx/flowCols)|0, c=idx%flowCols, d0=dist[idx];
     const nb=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -4293,11 +4588,11 @@ function drawNpc(n){
 }
 function startSurvival(){
   state=STATE.PLAY; round=1; survTime=0; survSpawnT=0; kills=0; lpBreakT=0; breakTimer=0; lpRunSaved=false;
-  npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0;
+  npcs.length=0; refillNpcQueue(); npcSpawnT=14; corpses.length=0; tio=null;
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; bikes.length=0; lpCrateT=6;
   for(const p of players){ p.riding=null; p._rideHits=0; p._rideAcc=0; p._stun=0; p._remount=0; }
-  for(const p of players){ p.soles=0; }   // everyone starts a run misio — the machines are the save-up goal
+  for(const p of players){ p.soles=1500; }   // TEST: arranca con 1500 para probar al Super Ayuda (volver a 0 antes de publicar)
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
@@ -4344,6 +4639,7 @@ function updateSurvival(dt){
   lpSpeedPenalty(dt);   // Modo Infinito ONLY (called from updateSurvival): every 5 hits costs one white-running-shoe speed level
   for(const p of players){ if(p.dmgGateT>0) p.dmgGateT-=dt; }        // contact-damage gate windows tick down
   for(const n of npcs){ if(n.dmgGateT>0) n.dmgGateT-=dt; }
+  if(tio && tio.dmgGateT>0) tio.dmgGateT-=dt;
   const nParty=activePlayerCount();
   const aliveN = enemies.reduce((a,e)=>a+(e.dead?0:1),0);
   lpEnemyN=aliveN;
@@ -4426,7 +4722,7 @@ function updatePlay(dt){
   updateEnemies(dt);
   updateEffects(dt);
   updateLeaves(dt);
-  if(survival){ updateBullets(dt); updateGrenades(dt); updateMines(dt); updateBurns(dt); updateDecoys(dt); updateBikes(dt); }
+  if(survival){ updateBullets(dt); updateGrenades(dt); updateMines(dt); updateBurns(dt); updateDecoys(dt); updateBikes(dt); updateTio(dt); }
   updateRays(dt);
   updateIceBeams(dt);
   updateHearts(dt);
@@ -5945,6 +6241,17 @@ function drawHUD(){
         ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.strokeRect(bx2,ay+2,bw2,7);
         ay+=40;
       }
+      if(tio && tio.state!=='dead'){   // the hired gun gets the same slim strip bar
+        const bw2=110, bx2=W-16-bw2;
+        ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(bx2-8,ay-14,bw2+16,34);
+        ctx.textAlign='right'; ctx.fillStyle='#ffe14a'; ctx.font='bold 10px Courier New';
+        ctx.fillText('SUPER AYUDA', W-16, ay-3);
+        const hf=clamp(tio.hp/tio.maxhp,0,1);
+        ctx.fillStyle='#333'; ctx.fillRect(bx2,ay+2,bw2,7);
+        ctx.fillStyle=hf>0.5?'#7fe07f':hf>0.25?'#ffd24a':'#ff6a5a'; ctx.fillRect(bx2,ay+2,bw2*hf,7);
+        ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1; ctx.strokeRect(bx2,ay+2,bw2,7);
+        ay+=40;
+      }
       ctx.textAlign='center';
     }
   } else if(state===STATE.PLAY){
@@ -6879,7 +7186,7 @@ function startGame(){
   camX=clamp(sx0-W/2,0,Math.max(0,WORLD_W-W)); camY=clamp(sy0base-H/2,0,Math.max(0,WORLD_H-H));
   round=0; score=0; particles.length=0; enemies.length=0;
   apuchis.length=0; lpItems.length=0; fx_effects.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; rays.length=0; iceBeams.length=0; amuleto=null; nuggets.length=0; wallets.length=0; walletGot={evan:false,brian:false};
-  bossDrops.length=0; bombs.length=0; mines.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0;
+  bossDrops.length=0; bombs.length=0; mines.length=0; incaWalls.length=0; turrets.length=0; turretArrows.length=0; gearBag.length=0; tio=null;
   // remember who played WHICH character this game (host + each connection) BEFORE the reset:
   // REINTENTAR must keep every person on the character they chose — the old code re-randomized
   // (netSelPicks was consumed by the first start), swapping people's characters on every retry
@@ -7981,6 +8288,11 @@ function _frameBody(now){
                    ...(_LP?incaWalls.filter(w=>inV(w.x,w.y)):incaWalls).map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...(_LP?turrets.filter(t=>inV(t.x,t.y)):turrets).map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
   if(_LP && survival){ for(const v of LP_VENDS){ if(inV(v.x,v.y)) drawables.push({y:v.y+v.h, x:v.x, sy:v.y+v.h, zt:0, f:()=>drawVend(v)}); } }   // each vending machine z-sorts like a prop
+  if(_LP && survival){
+    if(!tio && inV(TIO_SPOT.x,TIO_SPOT.y)) drawables.push({y:TIO_SPOT.y, x:TIO_SPOT.x, sy:TIO_SPOT.y+20, zt:0, f:()=>drawTioSpot()});   // the hire-spot shadow z-sorts like a prop
+    // the Super Ayuda: standing he sorts by his feet; his DEATH pose lies flat on the ground plane like corpses
+    if(tio && inV(tio.x,tio.y)) drawables.push({y:tio.y, x:tio.x, sy:(tio.state==='dead')?tio.y-1e5:tio.y+tio.radius+2, zt:(tio.state==='dead')?-1:0, f:()=>drawTio(tio)});
+  }
   if(currentMap==='machu'){ for(const o of obstacles){ if(o.t==='hut1'||o.t==='hut2'||o.t==='hut3'||o.t==='inti'){ drawables.push({y:o.y+o.h, x:o.x+o.w/2, sy:o.y+o.h, zt:0, f:()=>drawProp(o)}); } } }
   // props are BOTTOM-anchored and can be very tall (palms up to ~780px), so cull by the full sprite
   // rect [sy-h, sy] — a palm whose feet are far below the screen can still poke its crown into view
@@ -8161,6 +8473,7 @@ const NET_SND={
   skd:_sndXY('skd'),
   slsp:a=>{ if(a&&typeof a==='object') sfxSlimeSplash(a.x,a.y,a.i); },
   aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
+  tioV:k=>playTio(k),
   lock:()=>playLock(), deny:()=>playDenied()
 };
 let gLastEvt=0, gEvtSynced=false;
@@ -8206,6 +8519,12 @@ function netSerPlayer(p){
     weapon:p.weapon||'pistol', ammo:p.ammo||{}, enh:p.enh||{}, nadeArmed:!!p.nadeArmed, nadeCharge:p.nadeCharge||0,
     riding:!!p.riding, vf:p.vendFlip?1:0 };
 }
+// the Super Ayuda is a singleton: one tiny record (or null) rides every survival snapshot — guests
+// tick his walk clock locally, and his voice lines travel as 'tioV' events, not state
+function netSerTio(){ return tio?{ x:Math.round(tio.x*10)/10, y:Math.round(tio.y*10)/10,
+  hp:Math.round(tio.hp), mh:tio.maxhp, st:tio.state, d8:tio.dir8, mv:tio.moving?1:0,
+  sh:tio.shootFlash>0?1:0, tp:tio.tauntPose||1, hf:Math.round(tio.hitFlash*100)/100,
+  dT:Math.round((tio.deadT||0)*10)/10 }:null; }
 function netSerializeSnapshot(){
   const seq=++netSeq, kf=(seq % NET_KEYFRAME === 0), estatic={}, ids=new Set();
   for(const e of enemies){
@@ -8224,6 +8543,7 @@ function netSerializeSnapshot(){
     npcs: npcs.map(n=>({id:n.id, kind:n.kind, x:Math.round(n.x*10)/10, y:Math.round(n.y*10)/10,
       st:n.npcState==='active'?1:0, hp:Math.round(n.hp), maxhp:n.maxhp, dir:n.dir, mv:n.moving?1:0,
       pa:n.punchAnim, hf:n.hitFlash, fx:n.facing.x, fy:n.facing.y})),
+    tio: netSerTio(),
     corpses: corpses.map(c=>({id:c.id, kind:c.kind, x:c.x, y:c.y, t:Math.round(c.t*10)/10})),
     lpItems: lpItems.map(it=>({id:it.id, kind:it.kind, x:it.x, y:it.y})),
     hearts:  hearts.map(h=>({x:h.x, y:h.y})),
@@ -8251,6 +8571,7 @@ function netSerializeSnapshotLP(){
     npcs: npcs.map(n=>({id:n.id, kind:n.kind, x:Math.round(n.x*10)/10, y:Math.round(n.y*10)/10,
       st:n.npcState==='active'?1:0, hp:Math.round(n.hp), maxhp:n.maxhp, dir:n.dir, mv:n.moving?1:0,
       pa:n.punchAnim, hf:n.hitFlash, fx:n.facing.x, fy:n.facing.y})),
+    tio: netSerTio(),
     hearts: hearts.map(h=>({x:h.x, y:h.y})),
     amuleto: null,
     rays: rays.map(netSerEnt), ice: iceBeams.map(netSerEnt), wallets: [],
@@ -8673,6 +8994,18 @@ function netApplyGuest(dt){
       seenN[sn.id]=1; npcs.push(o);
     }
     for(const id in gNpcMap){ if(!seenN[id]) delete gNpcMap[id]; }
+  }
+  // Super Ayuda — singleton: pose/state replicate, the step clock ticks locally, position interpolates
+  { const sT=src.tio;
+    if(!sT) tio=null;
+    else {
+      if(!tio || !tio._guest) tio={_guest:1, animT:Math.random()*10, radius:16, kills:0, tauntKills:0};
+      tio.hp=sT.hp; tio.maxhp=sT.mh; tio.state=sT.st; tio.dir8=sT.d8||2; tio.moving=!!sT.mv;
+      tio.shootFlash=sT.sh?0.2:0; tio.tauntPose=sT.tp||1; tio.hitFlash=sT.hf||0; tio.deadT=sT.dT||0;
+      if(interp && a.tio){ tio.x=a.tio.x+(sT.x-a.tio.x)*alpha; tio.y=a.tio.y+(sT.y-a.tio.y)*alpha; }
+      else { tio.x=sT.x; tio.y=sT.y; }
+      tio.animT+=dt;
+    }
   }
   lpItems.length=0; for(const it of (cur.lpItems||[])) lpItems.push({id:it.id, kind:it.kind, x:it.x, y:it.y, bob:time*6, spawn:1});
   hearts.length=0; for(const h of cur.hearts) hearts.push({x:h.x, y:h.y, bob:time*4, spin:time*3, life:16});
