@@ -4715,7 +4715,7 @@ function startSurvival(){
   try{ lpMusicStart(); }catch(e){}   // ensure the playlist is rolling now that the round is live
   apuchis.length=0; lpItems.length=0; leaves.length=0; bullets.length=0; grenades.length=0; mines.length=0; hearts.length=0; fx_effects.length=0; nuggets.length=0; decoys.length=0; bikes.length=0; lpCrateT=6;
   for(const p of players){ p.riding=null; p._rideHits=0; p._rideAcc=0; p._stun=0; p._remount=0; }
-  for(const p of players){ p.soles=1500; }   // TEST: arranca con 1500 para probar al Super Ayuda (volver a 0 antes de publicar)
+  for(const p of players){ p.soles=0; }   // everyone starts a run misio — the machines (and the Super Ayuda) are the save-up goal
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
