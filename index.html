@@ -222,6 +222,7 @@ function initAudio(){
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
+    try{ sfxBuffer(WSFX.gun); for(const f of WSFX.fb) sfxBuffer(f); sfxBuffer(WSFX.slimehit); sfxBuffer(WSFX.turret); }catch(e){}
     // ...and the character voices a moment later (after the sprite burst), so the FIRST death/select
     // of a match doesn't wait on a network fetch — that lag was audible on CDN-hosted builds
     try{ setTimeout(()=>{ try{
@@ -233,8 +234,28 @@ function initAudio(){
   try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState() || (NET.role==='guest' && NET.nsel)){ if(currentMap==='laspalmas' && (state===STATE.NETSELECT || (NET.role==='guest' && NET.nsel))){ /* Las Palmas playlist owns the pick screen — don't mix the menu track in */ } else if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
 function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
+// vending "denied" buzzer (no money / health already full): the classic harsh EERGH error sound —
+// a short dissonant two-oscillator sawtooth buzz sliding down. Synthesized, no asset needed. This
+// replaces the plin at the machines (the plin doubles as Freddy's hit sound, which made no sense
+// coming out of a vending machine in Modo Infinito).
+function playDenied(){
+  try{
+    if(!actx){ return; }
+    const t0=actx.currentTime, g=actx.createGain();
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(0.30,t0+0.015);
+    g.gain.setValueAtTime(0.30,t0+0.16);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+0.26);
+    g.connect(sfxGain||actx.destination);
+    for(const f of [98,124]){   // minor-second clash = instant "wrong!"
+      const o=actx.createOscillator();
+      o.type='sawtooth'; o.frequency.setValueAtTime(f,t0); o.frequency.linearRampToValueAtTime(f*0.82,t0+0.24);
+      o.connect(g); o.start(t0); o.stop(t0+0.27);
+    }
+  }catch(e){}
+}
 // "locked" clunk for the enhance machine: two short falling square blips, synthesized so it needs no
-// asset and can't be mistaken for the plin (plin = "no money", lock = "this can NEVER be bought")
+// asset and can't be mistaken for the buzzer (buzzer = "no money", lock = "this can NEVER be bought")
 function playLock(){
   try{
     if(!actx){ playPlin(); return; }
@@ -480,21 +501,48 @@ function _proxGain(x,y){
   const d=Math.hypot(x-(camX+W/2), y-(camY+H/2));
   return clamp(1 - Math.max(0,d-380)/900, 0, 1);
 }
-function sfxGun(rapid,x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime; if(t-_lastGunT<0.02) return; _lastGunT=t;
-  _tone(t,rapid?0.06:0.09,(rapid?0.14:0.2)*g,'square',rapid?820:640,rapid?260:150);
-  _noise(t,0.045,(rapid?0.14:0.2)*g,'highpass',rapid?1400:900);
+// ---- Recorded weapon SFX (Weapons_SFX pack in assets/sfx_*.mp3) ----
+// assets/sfx_bike_useexit.mp3 is staged for the upcoming bike — intentionally NOT wired yet.
+const WSFX={ gun:'assets/sfx_gun.mp3',
+  fb:['assets/sfx_fb1.mp3','assets/sfx_fb2.mp3','assets/sfx_fb3.mp3','assets/sfx_fb4.mp3','assets/sfx_fb5.mp3'],
+  rapid:'assets/sfx_rapidloop.mp3', nadepin:'assets/sfx_nadepin.mp3', nadethrow:'assets/sfx_nadethrow.mp3',
+  nadeboom:'assets/sfx_nadeboom.mp3', mineboom:'assets/sfx_mineboom.mp3', blockplace:'assets/sfx_blockplace.mp3',
+  aletoss:'assets/sfx_aletoss.mp3', slimehit:'assets/sfx_slimehit.mp3', turret:'assets/sfx_turretshot.mp3' };
+function sfxGun(rapid,x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return;
+  if(rapid){ _rapidFeed(g); return; }   // held RÁPIDA = one resumable loop, not per-shot blips
+  if(actx){ const t=actx.currentTime; if(t-_lastGunT<0.02) return; _lastGunT=t; }
+  playSfx(WSFX.gun, 0.5*g);
 }catch(e){} }
-function sfxFireShot(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime;   // whooshy incendiary round
-  _tone(t,0.12,0.16*g,'sawtooth',520,120); _noise(t,0.16,0.14*g,'bandpass',1200,300);
+// RÁPIDA: a single looping clip that plays while shot events stream in and PAUSES (keeping its
+// position) ~150ms after they stop — re-opening fire resumes mid-loop, so bursts never start on
+// the exact same spot of the recording twice.
+let _rapidEl=null, _rapidUntil=0;
+function _rapidFeed(g){
+  if(!_rapidEl){ try{ _rapidEl=new Audio(WSFX.rapid); _rapidEl.loop=true; }catch(e){ return; } }
+  _rapidUntil=performance.now()+150;
+  try{ _rapidEl.volume=clamp(0.55*g,0,1)*sfxVol; if(_rapidEl.paused) _rapidEl.play().catch(()=>{}); }catch(e){}
+}
+setInterval(()=>{ try{ if(_rapidEl && !_rapidEl.paused && performance.now()>_rapidUntil) _rapidEl.pause(); }catch(e){} }, 60);
+// FUEGO cycles FB1→FB5 in order, one per shot, then loops
+let _fbIdx=0;
+function sfxFireShot(x,y){ try{ const g=_proxGain(x,y); const s=WSFX.fb[_fbIdx]; _fbIdx=(_fbIdx+1)%WSFX.fb.length;
+  if(g<0.04) return; playSfx(s, 0.55*g);
 }catch(e){} }
-function sfxLaunch(){ if(!actx) return; try{ const t=actx.currentTime;   // grenade launcher thunk
+function sfxLaunch(){ if(!actx) return; try{ const t=actx.currentTime;   // generic launcher thunk (legacy fallback)
   _tone(t,0.14,0.32,'sine',190,60); _noise(t,0.06,0.16,'lowpass',700);
 }catch(e){} }
-function sfxBoom(){ if(!actx) return; try{ const t=actx.currentTime;   // explosion
+function sfxNadePin(){ try{ playSfx(WSFX.nadepin, 0.5); }catch(e){} }        // spacebar held: pin out, charging the lob
+function sfxNadeThrow(){ try{ playSfx(WSFX.nadethrow, 0.6); }catch(e){} }    // spacebar released: grenade away
+function sfxNadeBoom(){ try{ playSfx(WSFX.nadeboom, 0.8); }catch(e){} }
+function sfxMineBoom(){ try{ playSfx(WSFX.mineboom, 0.8); }catch(e){} }
+function sfxBlockPlace(){ try{ playSfx(WSFX.blockplace, 0.6); }catch(e){} }
+function sfxAleToss(){ try{ playSfx(WSFX.aletoss, 0.7); }catch(e){} }        // la Distracción leaves Alessito's hand
+function sfxSlimeHit(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.slimehit, 0.55*g); }catch(e){} }
+function sfxBoom(){ if(!actx) return; try{ const t=actx.currentTime;   // explosion (Alessito's blast + legacy)
   _noise(t,0.45,0.5,'lowpass',1800,150); _tone(t,0.4,0.42,'sine',120,38); _tone(t,0.12,0.2,'square',90,40);
 }catch(e){} }
 function sfxPlace(){ if(!actx) return; try{ const t=actx.currentTime; _tone(t,0.09,0.2,'square',300,160); _noise(t,0.05,0.12,'lowpass',900); }catch(e){} }
-function sfxTurretShot(){ if(!actx) return; try{ const t=actx.currentTime; _tone(t,0.07,0.14,'triangle',900,500); _noise(t,0.03,0.08,'highpass',2000); }catch(e){} }
+function sfxTurretShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.turret, 0.5*g); }catch(e){} }
 
 const FREDDY_CELL={w:106,h:138};
 const FREDDY_PUNCH_DUR=0.22;
@@ -1113,12 +1161,17 @@ const LP_VENDING  ={x:2060, y:498,  w:VEND_W, h:VEND_H, r:VEND_R, type:'weapon'}
 const LP_VEND_HEAL={x:735,  y:1690, w:VEND_W, h:VEND_H, r:VEND_R, type:'heal'};     // bottom-left of the pool building
 const LP_VEND_ENH ={x:1235, y:470,  w:VEND_W, h:VEND_H, r:VEND_R, type:'enh'};      // right edge of the playground sand
 const LP_VENDS=[LP_VENDING, LP_VEND_HEAL, LP_VEND_ENH];
-// Base prices per machine; every round past the 1st adds +10% (rounded to 5) so the shop stays
-// "equally hard" as kills (and soles income) grow with the rounds.
+// Price curve: flat 5-round blocks early — you can't even scrape 50 soles in round 1, so per-round
+// bumps there were pure punishment — then per-round growth from round 16 on, paced to how income
+// actually grows (enemy count ≈ linear-plus), so buying perks stays "about the same effort" forever:
+//   rondas 1-5: ×1 · 6-10: ×1.25 · 11-15: ×1.5 · 16+: +10% of base each round
+function vendMult(){ return round<=5?1 : round<=10?1.25 : round<=15?1.5 : 1.5+0.10*(round-15); }
 // The enhance machine prices by TIER of the weapon you're holding (0→1, 1→2, 2→3), so vendCost
 // needs the near player; it returns null when that weapon can't be enhanced (maxed out, or a
 // weapon with no upgrade path like the Distracción) — callers show it locked + play the lock clunk.
-const VEND_BASE={weapon:50, heal:60};
+// weapon machine sells ONLY the rare trio (torreta / bloques / Distracción) — priced so it takes
+// real saving-up: ~3-4 rounds of full income early, just over a round of income deep in a run
+const VEND_BASE={weapon:120, heal:60};
 const ENH_COSTS=[50,90,110];
 function vendCost(v,p){
   let b=VEND_BASE[v.type]||50;
@@ -1129,7 +1182,7 @@ function vendCost(v,p){
       b=ENH_COSTS[Math.min(lvl,ENH_COSTS.length-1)];
     } else b=ENH_COSTS[0];
   }
-  return Math.max(b, Math.round(b*(1+0.10*Math.max(0,round-1))/5)*5);
+  return Math.max(b, Math.round(b*vendMult()/5)*5);
 }
 const VENDING_COST=50;                     // legacy constant (some help text) — real prices come from vendCost()
 let vendFlash=0;
@@ -1588,8 +1641,14 @@ function drawLpItems(){ for(const it of lpItems) drawLpItem(it); }
 let lpCrateT=10;
 // weighted crate loot table — common ammo drops often, the powerful placeables are rare
 // rapid-fire, grenades, mines and fire (the ammo consumables) dominate; blocks/turrets/decoy are rare
-const CRATE_LOOT=[['rapid',12],['fire',7],['grenade',8],['mine',7],['block',2],['torreta',1],['decoy',2]];
+// Map crates rain the COMMON weapons; the rare/powerful trio (torreta, bloques, Distracción) is
+// vending-machine exclusive — that's what the big save-up price at the ARMAS machine buys you.
+const CRATE_LOOT=[['rapid',12],['fire',7],['grenade',8],['mine',7]];
 function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r=Math.random()*tot; for(const w of CRATE_LOOT){ r-=w[1]; if(r<=0) return w[0]; } return 'rapid'; }
+const VEND_RARES=['torreta','block','decoy'];
+// only offer rares the buyer can actually carry more of — never silently eat 120+ soles for nothing
+function vendRareRoom(p,k){ const a=(p.ammo&&p.ammo[k])||0; return k==='torreta'?a<WEAPONS.torreta.ammoMax : k==='decoy'?a<1 : a<WEAPONS.block.ammoMax*3; }
+function pickVendRare(p){ const av=VEND_RARES.filter(k=>vendRareRoom(p,k)); return av.length?av[randi(0,av.length-1)]:null; }
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
 const CRATE_LIFE=55;   // crates linger a while so a distant one is worth walking to before it fades
 function spawnWeaponCrate(){
@@ -1651,10 +1710,18 @@ function updateLeaves(dt){
         if(circleRectCollide(l.x,l.y,7,w)){ hitWall(w,l.dmg||8); spark(l.x,l.y,'#c9c2b2',5,80); gone=true; break; }
       }
     }
+    // Las Palmas: enemy shots collide with the same solids as player bullets (pool stays open) —
+    // the Egg alien's slime ball can't reach through houses anymore, and it splats on the wall
+    if(!gone && currentMap==='laspalmas' && lpSolidAt(l.x,l.y) && !lpBulletPass(l.x,l.y)){
+      spark(l.x,l.y, l.plasma?'#8fe0ff':'#c9c2b2', 6, 95);
+      if(l.plasma) sfxSlimeHit(l.x,l.y);
+      gone=true;
+    }
     if(!gone) for(const p of players){ if(!p.alive) continue;
       const _py=p.y+(currentMap==='machu'?machuElev(p.x):0);
       if(dist(l.x,l.y,p.x,_py) < p.radius+9){
         p.hitFlash=1.0; cameraShake=3;
+        if(l.plasma) sfxSlimeHit(l.x,l.y);   // slime splash on impact
         if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',10,140); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
         else { p.hp-=l.dmg; spark(p.x,p.y,'#ff5050',6,100); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,p.color,20,180);} }
         gone=true; break;
@@ -1662,7 +1729,7 @@ function updateLeaves(dt){
     }
     // enemy shots also hurt recruited AI allies (death handled by updateNpcs)
     if(!gone && survival) for(const n of npcs){ if(n.npcState!=='active') continue;
-      if(dist(l.x,l.y,n.x,n.y) < n.radius+9){ n.hitFlash=1.0; n.hp-=l.dmg; spark(n.x,n.y,'#ff5050',6,100); gone=true; break; }
+      if(dist(l.x,l.y,n.x,n.y) < n.radius+9){ n.hitFlash=1.0; n.hp-=l.dmg; spark(n.x,n.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true; break; }
     }
     if(gone) leaves.splice(i,1);
   }
@@ -1726,7 +1793,7 @@ function segPtDist2(ax,ay,bx,by,px,py){
 const WEAPONS={
   pistol:  {name:'PISTOLA',  col:'#fff6d6', auto:false, cd:0.16, ammoMax:0 },   // unlimited
   rapid:   {name:'RÁPIDA',   col:'#7fd4ff', auto:true,  cd:0.06, ammoMax:110},
-  fire:    {name:'FUEGO',    col:'#ff7a2a', auto:false, cd:0.30, ammoMax:26},   // ignites + spreads
+  fire:    {name:'FUEGO',    col:'#ff7a2a', auto:false, cd:0.45, ammoMax:26},   // ignites + spreads; deliberate trigger — slower than the pistol
   grenade: {name:'GRANADAS', col:'#8ac24a', auto:false, cd:0.5,  ammoMax:8 },
   mine:    {name:'MINAS',    col:'#ff5a4a', auto:false, cd:0.4,  ammoMax:5 },   // proximity blast
   block:   {name:'BLOQUES',  col:'#d8d2c2', auto:false, cd:0.28, ammoMax:12},   // concrete barricade
@@ -1766,7 +1833,7 @@ function tryShoot(p){
   if(p.special==='safiro'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireLightning(p,'#7ad0ff',215); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'SAFIRO agotado','#5aa0ff'); } return; }
   const wk=(p.weapon&&WEAPONS[p.weapon])?p.weapon:'pistol', W=WEAPONS[wk];
   p.cooldown=W.cd; p.punchAnim=CHARS[p.kind].pd;
-  if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxLaunch(); return; }
+  if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxNadeThrow(); return; }
   if(wk==='fire'){ fireBullet(p,true); consumeAmmo(p,'fire'); sfxFireShot(p.x,p.y); return; }
   if(wk==='mine'){ if(placeMine(p)) consumeAmmo(p,'mine'); return; }
   if(wk==='block'){ if(placeBlockLP(p)) consumeAmmo(p,'block'); else p.cooldown=0.1; return; }
@@ -1784,7 +1851,7 @@ function placeMine(p){
 // a mine wipes out everything caught in the blast outright (bosses just take a heavy hit)
 function mineBlast(x,y,owner,rad){
   const R=rad||120;
-  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=12; sfxBoom();
+  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=12; sfxMineBoom();
   fx_effects.push({kind:'shock', x, y, r:R, life:0.4, max:0.4});
   const ow=players[owner], bossDmg=ow?effDmg(ow)*2.5:70;
   // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
@@ -1819,19 +1886,19 @@ function placeBlockLP(p){
   incaWalls.push(rect); obstacles.push(rect);   // obstacles is empty on Las Palmas; lpResolve reads incaWalls directly
   resolveCollision(p);
   for(const e of enemies){ if(!e.dead && circleRectCollide(e.x,e.y,e.radius,rect)) resolveCollision(e); }
-  spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); sfxPlace(); return true;
+  spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); sfxBlockPlace(); return true;
 }
 function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
   if(t && turrets.length>before){ t.hp=t.maxhp=400; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // owner + enhancement (arrows do TURRET_FRAC damage)
-  sfxTurretShot(); return true;
+  sfxPlace(); return true;   // deploy thunk — the recorded turret sound now plays per ARROW instead
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
 const grenades=[];
 function explodeAt(x,y,radius,frac,owner){
-  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=11; sfxBoom();
+  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=11; sfxNadeBoom();
   fx_effects.push({kind:'shock', x, y, r:radius, life:0.4, max:0.4});
   // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
   for(const e of enemies.slice()){ if(e.dead||e.dcLock) continue; const d=dist(x,y,e.x,e.y); if(d<radius+(e.footR||e.radius)){
@@ -1893,7 +1960,7 @@ function throwDecoy(p,power){
   let fx=p.facing.x, fy=p.facing.y; if(!fx&&!fy){fy=1;} const l=Math.hypot(fx,fy)||1; fx/=l; fy/=l;
   const spd=320+power*620;
   decoys.push({ id:_entId++, x:p.x, y:p.y, vx:fx*spd, vy:fy*spd, phase:'fly', pose:'TOSS', flip:fx<0, t:0, owner:players.indexOf(p) });
-  sfxLaunch();
+  sfxAleToss();
 }
 function updateDecoys(dt){
   for(let i=decoys.length-1;i>=0;i--){
@@ -2299,9 +2366,9 @@ function tryVend(p){
     floatText(v.x, v.y-40, ENHANCEABLE.has(wk) ? nm+' al máximo' : nm+' no se puede mejorar', '#9aa4b0');
     playLock(); return true;
   }
-  if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡Sigues misio! ('+cost+' S/.)', '#ff9a7a'); playPlin(); return true; }
+  if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡Sigues misio! ('+cost+' S/.)', '#ff9a7a'); playDenied(); return true; }
   if(v.type==='heal'){
-    if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playPlin(); return true; }
+    if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playDenied(); return true; }
     p.soles-=cost; vendFlash=0.5; p.hp=p.maxhp;
     floatText(p.x, p.y-30, '¡VIDA LLENA!', '#ff7ab0'); playPickup();
   } else if(v.type==='enh'){
@@ -2311,8 +2378,10 @@ function tryVend(p){
     if(wk==='torreta') bumpPlacedTurrets(players.indexOf(p), p.enh[wk]);   // already-placed turrets upgrade too
     floatText(p.x, p.y-30, (WEAPONS[wk]?WEAPONS[wk].name:wk)+' NIVEL '+p.enh[wk], '#7fd4ff'); playCoin();
   } else {
+    const rk=pickVendRare(p);
+    if(!rk){ floatText(v.x, v.y-40, '¡Ya llevas todo al tope!', '#ffcf9a'); playDenied(); return true; }
     p.soles-=cost; vendFlash=0.5;
-    giveWeapon(p, pickCrateKind());   // giveWeapon already floats the weapon name + plays a coin
+    giveWeapon(p, rk);   // rare-only stock; giveWeapon floats the name + plays a coin
   }
   spark(v.x, v.y-6, '#ffe07a', 22, 170); cameraShake=4;
   return true;
@@ -2330,7 +2399,7 @@ function drawVend(v){
   // glass window with a teaser inside
   ctx.fillStyle='#16222d'; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.fill();
   ctx.strokeStyle='#3a5060'; ctx.lineWidth=1; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.stroke();
-  if(v.type==='weapon'){ try{ drawWeaponCrate(x-6, top+40, 'rapid'); }catch(e){} }
+  if(v.type==='weapon'){ try{ drawWeaponCrate(x-6, top+40, VEND_RARES[Math.floor(time/1.4)%VEND_RARES.length]); }catch(e){} }   // teaser cycles the rare stock
   else if(v.type==='heal'){ ctx.fillStyle='#ff5fa0'; ctx.font='bold 22px Courier New'; ctx.textAlign='center'; ctx.fillText('♥', x-6, top+48); }
   else { ctx.fillStyle='#7fd4ff'; ctx.font='bold 20px Courier New'; ctx.textAlign='center'; ctx.fillText('▲', x-6, top+47); }
   ctx.strokeStyle='rgba(255,255,255,0.16)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x-w/2+11, top+24); ctx.lineTo(x-w/2+11, top+h-26); ctx.stroke();
@@ -2732,7 +2801,7 @@ function updateGear(dt){
   for(const t of turrets){
     if(t.hitFlash>0) t.hitFlash-=dt;
     t.cd-=dt;
-    const trange=t.beef?640:560, treload=t.beef?1.4:3, tspd=t.beef?460:340;   // beefed turret fires a bit less often (was 0.9s) — less OP
+    const trange=t.beef?640:560, treload=t.beef?2.4:3, tspd=t.beef?460:340;   // beefed turret reload 1.4->2.4s: one extra breath between arrows
     let aim=null, ad=1e9;
     for(const e of enemies){ if(e.dead) continue; const dd=dist(t.x,t.y,e.x,e.y); if(dd<ad){ad=dd;aim=e;} }
     if(aim) t.ang=Math.atan2(aim.y-(t.y-26), aim.x-t.x);
@@ -2746,7 +2815,7 @@ function updateGear(dt){
         // Modo Infinito: the arrow's kill power scales with the turret's enhancement (no one-shot until enh3)
         const frac=survival ? WENH_TURRET[Math.min(ENH_MAX, t.enh||0)] : 1;
         turretArrows.push({x:t.x, y:t.y-26, vx:Math.cos(a)*tspd, vy:Math.sin(a)*tspd, life:2.2, spin:a, beef:t.beef, frac});
-        t.ang=a; t.cd=treload; spark(t.x,t.y-26,'#d8c89a',4,60);
+        t.ang=a; t.cd=treload; spark(t.x,t.y-26,'#d8c89a',4,60); sfxTurretShot(t.x,t.y);
       } else t.cd=0.4;   // everything walled off — retry soon instead of waiting the full 3s
     }
   }
@@ -2995,12 +3064,13 @@ function updatePlayers(dt){
           // hold to build a power meter that ping-pongs 0..1; release to lob at that strength
           // (the Distracción throws exactly like a grenade, it just doesn't bounce or explode on landing)
           if(ks[c.punch]){
-            if(!p.nadeArmed && p.cooldown<=0 && (p.ammo&&p.ammo[p.weapon]>0)){ p.nadeArmed=true; p.nadeCharge=0; p.nadeDir=1; }
+            if(!p.nadeArmed && p.cooldown<=0 && (p.ammo&&p.ammo[p.weapon]>0)){ p.nadeArmed=true; p.nadeCharge=0; p.nadeDir=1;
+              if(p.weapon==='grenade') sfxNadePin(); }   // pin comes out the moment the charge starts
             if(p.nadeArmed){ p.nadeCharge+=p.nadeDir*dt*1.5; if(p.nadeCharge>=1){p.nadeCharge=1;p.nadeDir=-1;} else if(p.nadeCharge<=0){p.nadeCharge=0;p.nadeDir=1;} }
           } else if(p.nadeArmed){
             p.nadeArmed=false;
             if(p.weapon==='decoy'){ throwDecoy(p, p.nadeCharge); consumeAmmo(p,'decoy'); }
-            else { throwGrenade(p, p.nadeCharge); consumeAmmo(p,'grenade'); sfxLaunch(); }
+            else { throwGrenade(p, p.nadeCharge); consumeAmmo(p,'grenade'); sfxNadeThrow(); }
             p.cooldown=WEAPONS.grenade.cd; p.punchAnim=CHARS[p.kind].pd; p.nadeCharge=0;
           }
         } else {
@@ -5874,7 +5944,7 @@ function drawPauseSurvival(){
   ctx.textAlign='left';
   // the three vending machines \u2014 what each sells, where it sits, and how prices work
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('M\u00c1QUINAS  \u00b7 compra: F / .', mx+18, py+132);
-  const VM=[['#e05a5a','ARMAS','arma al azar \u00b7 clubhouse'],
+  const VM=[['#e05a5a','ARMAS','torreta/bloques/Ale \u00b7 clubhouse'],
             ['#e05a9a','VIDA','vida llena \u00b7 piscina'],
             ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque']];
   let vy=py+154;
@@ -5885,7 +5955,7 @@ function drawPauseSurvival(){
     vy+=34;
   }
   ctx.fillStyle='#8a97a4'; ctx.font='10px Courier New';
-  wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Todos los precios suben cada ronda.', mx+18, vy+4, mw-32, 13);
+  wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Los precios suben cada 5 rondas.', mx+18, vy+4, mw-32, 13);
   const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
              ['#8ac24a','CAJAS','arma al azar']];
@@ -7452,8 +7522,14 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   const _sg=sfxGun; sfxGun=function(r,x,y){ netQSnd('gun',{r:r?1:0, x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sg(r,x,y); };
   const _sf=sfxFireShot; sfxFireShot=function(x,y){ netQSnd('fshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sf(x,y); };
   sfxLaunch=wrapSnd('lnch',sfxLaunch); sfxBoom=wrapSnd('boom',sfxBoom);
-  sfxPlace=wrapSnd('plc',sfxPlace);   sfxTurretShot=wrapSnd('tshot',sfxTurretShot);
+  sfxPlace=wrapSnd('plc',sfxPlace);
+  const _st=sfxTurretShot; sfxTurretShot=function(x,y){ netQSnd('tshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _st(x,y); };
+  const _sh=sfxSlimeHit;   sfxSlimeHit=function(x,y){ netQSnd('slh',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sh(x,y); };
+  sfxNadePin=wrapSnd('npin',sfxNadePin);     sfxNadeThrow=wrapSnd('nthrow',sfxNadeThrow);
+  sfxNadeBoom=wrapSnd('nboom',sfxNadeBoom);  sfxMineBoom=wrapSnd('mboom',sfxMineBoom);
+  sfxBlockPlace=wrapSnd('bplc',sfxBlockPlace); sfxAleToss=wrapSnd('aleT',sfxAleToss);
   playLock=wrapSnd('lock',playLock);   // enhance-machine "locked" clunk reaches guest buyers too
+  playDenied=wrapSnd('deny',playDenied);   // vending "no money" buzzer too
   const _pps=playPunchSound;   // punch voices key off the puncher's character
   playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
 }
@@ -7466,9 +7542,13 @@ const NET_SND={
   sel:k=>playCharSelect(k), pboom:()=>playPvpBoom(),
   gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxGun(a),
   fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
-  lnch:()=>sfxLaunch(), boom:()=>sfxBoom(), plc:()=>sfxPlace(), tshot:()=>sfxTurretShot(),
+  lnch:()=>sfxLaunch(), boom:()=>sfxBoom(), plc:()=>sfxPlace(),
+  tshot:a=>(a&&typeof a==='object')?sfxTurretShot(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxTurretShot(),
+  slh:a=>(a&&typeof a==='object')?sfxSlimeHit(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxSlimeHit(),
+  npin:()=>sfxNadePin(), nthrow:()=>sfxNadeThrow(), nboom:()=>sfxNadeBoom(), mboom:()=>sfxMineBoom(),
+  bplc:()=>sfxBlockPlace(), aleT:()=>sfxAleToss(),
   aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
-  lock:()=>playLock()
+  lock:()=>playLock(), deny:()=>playDenied()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
