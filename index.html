@@ -21,6 +21,8 @@
   #introvideo{ display:none; position:fixed; inset:0; width:100vw; height:100vh; object-fit:contain; background:#000; z-index:80; }
   #introskip{ display:none; position:fixed; bottom:22px; right:22px; z-index:81; background:rgba(0,0,0,.55); color:#fff; font:bold 15px 'Courier New',monospace; padding:9px 18px; border:2px solid rgba(255,255,255,.7); border-radius:8px; cursor:pointer; letter-spacing:1px; }
   #introskip:hover{ background:rgba(0,0,0,.8); }
+  #introsnd{ display:none; position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:81; background:rgba(0,0,0,.6); color:#ffe14a; font:bold 14px 'Courier New',monospace; padding:9px 16px; border:2px solid rgba(255,225,74,.55); border-radius:8px; letter-spacing:1px; animation:sndpulse 1.3s ease-in-out infinite; pointer-events:none; }
+  @keyframes sndpulse{ 0%,100%{ opacity:.55; } 50%{ opacity:1; } }
   #netbanner{ display:none; position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:60; background:#2a1f14; color:#e8dcc0; font:13px 'Courier New',monospace; padding:8px 14px; border:2px solid #c0504a; border-radius:6px; }
   #netui{ display:none; position:fixed; top:8px; right:8px; z-index:40; background:rgba(26,20,16,.92); color:#e8dcc0; font:12px 'Courier New',monospace; padding:8px 10px; border:1px solid #5a4632; border-radius:6px; max-width:320px; }
   #netstatus{ margin-bottom:6px; line-height:1.35; }
@@ -51,6 +53,7 @@
   <source src="assets/laspalmas_intro.webm" type="video/webm">
 </video>
 <button id="introskip">SALTAR ▶▶</button>
+<div id="introsnd">🔇 HAZ CLIC O PULSA UNA TECLA PARA ACTIVAR EL SONIDO</div>
 <div id="netbanner"></div>
 <div id="netui">
   <div id="netstatus">Iniciando red…</div>
@@ -2295,13 +2298,31 @@ function drawReviveCountdowns(){
   for(const p of players){
     if(!p || p.alive || p.pending || p.departed || p.fell) continue;
     const rem=REVIVE_GRACE-(p.deadT||0);
-    if(rem<=0) continue;
+    if(rem<=0){
+      // window closed: the corpse can't be revived anymore — tell teammates not to run back for it
+      if((p.deadT||0)<CORPSE_LIFE){
+        ctx.save(); ctx.textAlign='center';
+        ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(p.x-86,p.y-52,172,18);
+        ctx.font='bold 10px Courier New'; ctx.fillStyle='#9fb0bd'; ctx.fillText('VUELVE LA PRÓXIMA RONDA', p.x, p.y-39);
+        ctx.restore(); ctx.textAlign='left';
+      }
+      continue;
+    }
     const secs=Math.ceil(rem), blink=rem<5 && Math.floor(time*4)%2===0;
     ctx.save(); ctx.textAlign='center';
     ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(p.x-86,p.y-58,172,30);
     ctx.font='bold 14px Courier New';
     ctx.fillStyle=blink?'#ffffff':(rem<5?'#ff8a6a':'#ffe14a'); ctx.fillText('¡REVÍVELO! '+secs, p.x, p.y-45);
     ctx.font='8px Courier New'; ctx.fillStyle='#ffefb8'; ctx.fillText('a tiempo = conserva todo su equipo', p.x, p.y-34);
+    ctx.restore(); ctx.textAlign='left';
+  }
+  // the dead player's OWN screen: once the window closes they're spectating — say what happens next
+  const me=players[NET.role==='guest'?NET.slot:0];
+  if(me && !me.alive && !me.pending && !me.departed && !me.fell && (me.deadT||0)>REVIVE_GRACE && state===STATE.PLAY){
+    ctx.save(); ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(camX+W/2-215,camY+64,430,42);
+    ctx.font='bold 15px Courier New'; ctx.fillStyle='#ffd24a'; ctx.fillText('YA NO TE PUEDEN REVIVIR', camX+W/2, camY+82);
+    ctx.font='11px Courier New'; ctx.fillStyle='#c8d2da'; ctx.fillText('vuelves al empezar la próxima ronda · A/D: cambiar de vista', camX+W/2, camY+98);
     ctx.restore(); ctx.textAlign='left';
   }
 }
@@ -2813,11 +2834,13 @@ const REVIVE_GRACE=15;
 function updateRevive(dt){
   if(players.length<2) return;
   for(const dead of players){ if(dead.alive) continue; if(dead.fell) continue; if(dead.deathAnim!=null) continue; if(dead.departed) continue;   // can't revive a disconnected guest
+    if(dead.pending) continue;                                             // mid-round joiner waiting for the next round \u2014 not a corpse
+    if(survival && (dead.deadT||0)>REVIVE_GRACE){ dead.reviveProgress=0; continue; }   // rescue window closed: they spectate and re-enter next round
     let reviver=null;
     for(const q of players){ if(!q.alive) continue; if(dist(q.x,q.y,dead.x,dead.y)<q.radius+24){ reviver=q; break; } }
     if(reviver){
       dead.reviveProgress=(dead.reviveProgress||0)+dt;
-      if(dead.reviveProgress>=reviveNeed()){ dead.x=reviver.x+(reviver.facing&&reviver.facing.x<0?38:-38); dead.y=reviver.y; dead.alive=true; dead.fell=false; dead.hp=survival?dead.maxhp:Math.round(dead.maxhp*0.5); dead.reviveProgress=0; dead.shieldFlash=0; resolveCollision(dead); spark(dead.x,dead.y,'#aef7c2',22,170); floatText(dead.x,dead.y-30,'\u00a1REVIVIDO!','#aef7c2'); }
+      if(dead.reviveProgress>=reviveNeed()){ dead.x=reviver.x+(reviver.facing&&reviver.facing.x<0?38:-38); dead.y=reviver.y; dead.alive=true; dead.fell=false; dead.hp=survival?Math.round(dead.maxhp*0.75):Math.round(dead.maxhp*0.5); dead.reviveProgress=0; dead.shieldFlash=0; resolveCollision(dead); spark(dead.x,dead.y,'#aef7c2',22,170); floatText(dead.x,dead.y-30,'\u00a1REVIVIDO!','#aef7c2'); }
     } else dead.reviveProgress=0;
   }
 }
@@ -3844,15 +3867,26 @@ let introUnmute=null;   // guest clip started muted (no gesture yet): first key/
 // Silence EVERY music element — the intro clip is the only thing that should be audible.
 function silenceAllMusic(){ try{ lpMusicStop(); [menuMusic,bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,deathMusic,losAndesMusic].forEach(m=>{ if(m) m.pause(); }); }catch(e){} }
 // The intro's baked-in audio (Alfredo) was recorded quiet; route the <video> through a Web Audio
-// gain > 1 so it plays back noticeably louder. A MediaElementSource can be created only once per
-// element, so cache it.
-let _introSrcNode=null, _introGain=null;
+// gain > 1 so it plays back noticeably louder — then through a DynamicsCompressor so the boost
+// doesn't blow headphones on the track's loud spikes: quiet dialogue stays at normal loudness,
+// anything crossing the threshold gets squashed 7:1 instead of clipping at 3× raw. A
+// MediaElementSource can be created only once per element, so cache the whole chain.
+let _introSrcNode=null, _introGain=null, _introComp=null;
 function boostIntroAudio(v){
   try{
     if(!actx) return;
     if(actx.state==='suspended') actx.resume();   // routed audio is silent if the context is parked
-    if(!_introSrcNode){ _introSrcNode=actx.createMediaElementSource(v); _introGain=actx.createGain(); _introSrcNode.connect(_introGain); _introGain.connect(actx.destination); }
-    _introGain.gain.value=3.0;   // ~+9.5dB over the raw track
+    if(!_introSrcNode){
+      _introSrcNode=actx.createMediaElementSource(v); _introGain=actx.createGain();
+      _introSrcNode.connect(_introGain);
+      try{
+        _introComp=actx.createDynamicsCompressor();
+        _introComp.threshold.value=-20; _introComp.knee.value=18; _introComp.ratio.value=7;
+        _introComp.attack.value=0.003; _introComp.release.value=0.25;
+        _introGain.connect(_introComp); _introComp.connect(actx.destination);
+      }catch(e){ _introComp=null; _introGain.connect(actx.destination); }
+    }
+    _introGain.gain.value=_introComp?3.0:2.55;   // no compressor available → trim the boost ~15% instead
   }catch(e){}
 }
 function playLasPalmasIntro(onDone){
@@ -3905,19 +3939,26 @@ function playIntroGuest(){
   try{ v.load(); v.currentTime=0; }catch(e){}
   // Autoplay policy: a guest who hasn't touched the page yet can't start an UNMUTED video — that
   // used to leave the clip frozen on its first frame. Fall back to a MUTED start (always allowed),
-  // and un-mute on the guest's first key/click/tap (a real gesture also lets the boost ctx resume).
+  // show a pulsing "click/press a key for sound" banner so they know ONE gesture fixes it, and
+  // un-mute on that first key/click/tap (a real gesture also lets the boost ctx resume).
   // The guest key handler swallows events (stopImmediatePropagation), so it calls introUnmute itself.
+  const sndHint=on=>{ try{ const h=document.getElementById('introsnd'); if(h) h.style.display=on?'block':'none'; }catch(e){} };
   const pr=v.play();
   if(pr&&pr.catch) pr.catch(()=>{ try{ v.muted=true; const p2=v.play(); if(p2&&p2.catch) p2.catch(()=>{}); }catch(e){} });
+  // the banner also covers the sneakier failure: unmuted play was ALLOWED but the boost context is
+  // still parked (WebAudio-routed sound stays silent until a gesture resumes it)
+  setTimeout(()=>{ try{ if(introPlaying && (v.muted || (actx && actx.state==='suspended'))) sndHint(true); }catch(e){} }, 500);
   introUnmute=()=>{
-    if(!introPlaying){ introUnmute=null; return; }
+    if(!introPlaying){ introUnmute=null; sndHint(false); return; }
     try{ boostIntroAudio(v); v.muted=false; if(v.paused){ const p3=v.play(); if(p3&&p3.catch) p3.catch(()=>{}); } }catch(e){}
+    sndHint(false);
   };
 }
 function endIntroGuest(){
   const v=document.getElementById('introvideo'), skip=document.getElementById('introskip');
   introPlaying=false; introSkip=null; introUnmute=null;
   try{ if(v){ v.pause(); v.onended=v.onerror=null; v.style.display='none'; } }catch(e){}
+  try{ const h=document.getElementById('introsnd'); if(h) h.style.display='none'; }catch(e){}
   if(skip) skip.style.display='none';
 }
 // Online host path (lobby ENTER): playLasPalmasIntro rolls the clip (with a working SALTAR) while
@@ -3969,7 +4010,8 @@ const npcs=[];
 let npcQueue=[], npcSpawnT=14;
 // Allies come ONLY from this mode's playable roster, minus every character a PRESENT player holds.
 // E.g. 4 players online and nobody chose Flash → Flash is the only ally that game. A leaver's
-// character returns to the pool: their model vanished and Modo Infinito has no mid-run rejoins.
+// character returns to the pool; a mid-game joiner claims theirs back OUT of the pool (the host
+// join handler despawns any NPC of that kind and filters the queue).
 function npcRoster(){ return SURV_CHAR_LIST.filter(k=>!players.some(p=>p.kind===k && !p.departed)); }
 function refillNpcQueue(){ npcQueue=npcRoster(); for(let i=npcQueue.length-1;i>0;i--){ const j=randi(0,i); const t=npcQueue[i]; npcQueue[i]=npcQueue[j]; npcQueue[j]=t; } }
 function makeNpc(kind,x,y){
@@ -4165,18 +4207,21 @@ function startSurvival(){
   startLpRound(true);
 }
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
-// FULL health next to a survivor — same rhythm as Horda's round start
+// FULL health next to a survivor (stripped at the 15s mark, so they come back with the basic gun),
+// and mid-game joiners (pending) enter fresh at the map spawn point by the water tower
 function startLpRound(first){
   spawnQueue=lpQuota(round, activePlayerCount());
   survSpawnT=first?2.0:1.0;
   if(!first){
     const anchor=players.find(pp=>pp.alive);
     for(const p of players){ if(!p.alive && !p.departed){
-      if(anchor){ p.x=anchor.x+rand(-46,46); p.y=anchor.y+rand(-34,34); }
+      const joining=p.pending;
+      if(joining){ p.x=LP_SPAWN.x+rand(-34,34); p.y=LP_SPAWN.y+rand(-26,26); }
+      else if(anchor){ p.x=anchor.x+rand(-46,46); p.y=anchor.y+rand(-34,34); }
       p.pending=false; p.alive=true; p.fell=false; p.deathAnim=null; p.deadT=0; p.hp=p.maxhp;
       p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p);
       if(p.netRemote) p.netRemote.grace=0.5;
-      spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,'RENACE','#aef7c2');
+      spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,joining?'¡ENTRA!':'RENACE','#aef7c2');
     } }
   }
 }
@@ -6359,10 +6404,10 @@ function drawPauseSurvival(){
   ctx.textAlign='left';
   // the three vending machines \u2014 what each sells, where it sits, and how prices work
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('M\u00c1QUINAS  \u00b7 compra: F / .', mx+18, py+132);
-  const VM=[['#e05a5a','ESPECIAL','torreta/bloques/Ale \u00b7 clubhouse'],
-            ['#e05a9a','VIDA','vida llena \u00b7 piscina'],
-            ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque'],
-            ['#2f9a55','TICLA','tu bici \u00b7 playa (se desgasta)']];
+  const VM=[['#e05a5a','ESPECIAL \u00b7 150','torreta/bloques/Ale \u00b7 clubhouse'],
+            ['#e05a9a','VIDA \u00b7 50','vida llena \u00b7 piscina'],
+            ['#4a9ae0','MEJORA \u00b7 50/100/150','sube el arma en mano \u00b7 parque'],
+            ['#2f9a55','TICLA \u00b7 300','tu bici \u00b7 playa (se desgasta)']];
   let vy=py+152;
   for(const m of VM){
     ctx.fillStyle=m[0]; rrectPath(mx+18,vy-10,13,13,3); ctx.fill();
@@ -6371,11 +6416,11 @@ function drawPauseSurvival(){
     vy+=30;
   }
   ctx.fillStyle='#8a97a4'; ctx.font='10px Courier New';
-  wrapText('Precios fijos: VIDA 50 \u00b7 ESPECIAL 150 \u00b7 TICLA 300 \u00b7 MEJORA 50/100/150 por nivel (la Distracci\u00f3n no se mejora).', mx+18, vy+4, mw-32, 13);
+  wrapText('Precios fijos toda la partida (la Distracci\u00f3n no se mejora).', mx+18, vy+4, mw-32, 13);
   const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
              ['#8ac24a','CAJAS','arma al azar']];
-  let my=vy+72;
+  let my=vy+44;
   for(const g of POW){
     ctx.fillStyle=g[0]; ctx.beginPath(); ctx.arc(mx+26,my-4,6,0,TAU); ctx.fill();
     ctx.fillStyle=g[0]; ctx.font='bold 13px Courier New'; ctx.fillText(g[1], mx+38, my);
@@ -6383,7 +6428,7 @@ function drawPauseSurvival(){
     my+=22;
   }
   ctx.fillStyle='#ff7a7a'; ctx.font='bold 11px Courier New';
-  wrapText('\u26a0 Al morir: si te reviven en 15s conservas TODO (armas, mejoras, Ticla). Despu\u00e9s, revives desde cero.', mx+18, py+ph-46, mw-32, 13);
+  wrapText('\u26a0 Al morir: si te reviven en 15s conservas TODO (con 75% de vida). Despu\u00e9s ya no hay revivir: vuelves la pr\u00f3xima ronda desde cero.', mx+18, py+ph-58, mw-32, 13);
 
   // ---- LEADERBOARD panel (right) ----
   const rx=754, rw=W-rx-40;
@@ -6430,7 +6475,7 @@ function drawLobby(){
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText(lobbyMode==='pvp'?'SALA ONLINE — PVP':'SALA ONLINE', W/2, 96);
   ctx.fillStyle='#8cc24a'; ctx.font='16px Courier New';
-  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-5 jugadores · comparte el enlace (hasta 4 amigos)':('Comparte el enlace con tus amigos (hasta '+(lobbyCap()-1)+')'), W/2, 134);
+  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-5 jugadores · comparte el enlace con tus amigos':'Comparte el enlace con tus amigos', W/2, 134);
   ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
   ctx.fillText(NET.link || 'Generando enlace…', W/2, 178);
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
@@ -7872,7 +7917,7 @@ function _frameBody(now){
   if(state===STATE.OVER) safe('over',drawOver);                                          // fell-through survival FIN panel over the real world
   if(NET.role==='guest' && state===STATE.PLAY){
     const meP=players[NET.slot];
-    const lpSpectator = survival && NET.guestReady && (!meP || meP.departed);   // Modo Infinito: no mid-run joins — watching until the next game
+    const lpSpectator = survival && NET.guestReady && (!meP || meP.departed);   // no seat this run (dropped slot) — watching until the next game
     if(lpSpectator || (meP && meP.pending && !meP.departed)) safe('joinwait',()=>drawGuestJoinWaiting(lpSpectator));
   }
 
@@ -8555,8 +8600,9 @@ function drawGuestWaiting(){
   ctx.fillText((NET.conn && NET.conn.open) ? 'Esperando al anfitrión…' : 'Conectando con el anfitrión…', W/2, H/2+6);
   ctx.textAlign='left';
 }
-// Guest joined while a round was in progress: show a banner until the next round brings them in.
-// lpSpectator: Modo Infinito has no mid-run joins — they watch until the next game starts.
+// Guest joined while a round was in progress: show a banner until the next round brings them in
+// (Modo Infinito seats mid-game joiners as pending — they enter at the spawn point next round).
+// lpSpectator: no seat at all (departed placeholder) — they watch until the next game starts.
 function drawGuestJoinWaiting(lpSpectator){
   ctx.save();
   const bw=Math.min(460,W-40), bh=74, bx=(W-bw)/2, by=H-bh-24;
@@ -8572,6 +8618,17 @@ function drawGuestJoinWaiting(lpSpectator){
 }
 
 try{ initAudio(); }catch(e){}
+// Autoplay: browsers usually refuse un-muted sound until the first real gesture, but not always
+// (returning players with autoplay permission, the desktop wrapper, kiosk builds). Keep quietly
+// re-trying so the menu music starts the INSTANT the browser allows it — at page-open where
+// permitted, otherwise on the first click/tap/key (the gesture listeners above call initAudio too;
+// this loop just catches the cases where the gesture's own attempt raced or was swallowed).
+const _musicKick=setInterval(()=>{ try{
+  if(introPlaying) return;   // the Las Palmas clip owns the speakers — don't fight it
+  initAudio();
+  const on=[menuMusic,bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,losAndesMusic,deathMusic].some(m=>m&&!m.paused) || (lpMx||[]).some(m=>m&&!m.paused);
+  if(on) clearInterval(_musicKick);   // audio is audibly unlocked — normal state handling owns it from here
+}catch(e){} }, 700);
 // Dev hook (only when the page is opened with #dbg) — lets automated tests jump the local player
 // around and inspect Modo Infinito props. Inert in normal play.
 if(location.hash==='#dbg'){ window.__dbg={
@@ -8818,7 +8875,7 @@ requestAnimationFrame(frame);
     peer.on('open', id => {
       NET.link = location.origin + location.pathname + '?r=' + id;
       if(linkBox) linkBox.value = NET.link;
-      setStatus('Comparte el enlace con hasta '+(lobbyCap()-1)+' amigos. Cuando estén conectados, empieza la partida.');
+      setStatus('Comparte el enlace con tus amigos. Cuando estén conectados, empieza la partida.');
     });
     // Drop a guest connection and (unless soft) mark their player departed. Shared by the per-conn
     // 'close' handler, the same-peer reconnect dedupe, and the silence prune below. soft = the same
@@ -8887,10 +8944,25 @@ requestAnimationFrame(frame);
       // if a game is already running, slot this guest in live
       if(inGame()){
         guest.grace=0.6;   // hold host-authoritative pos briefly until the guest's pose stream catches up
-        // Modo Infinito: NO joins mid-run (fresh or returning) — this also prevents a late joiner
-        // taking a character that's currently walking around as an NPC helper. They spectate and
-        // enter normally when the next game starts.
-        if(!survival){
+        // Modo Infinito mid-game join: seat them PENDING (hidden, untouchable) — they enter fresh at
+        // the map spawn point when the next round starts (startLpRound). A returning slot keeps its
+        // character; a new joiner gets a roster character no present player holds.
+        if(survival){
+          const old=players[guest.slot];
+          const taken=new Set(players.filter(pp=>!pp.departed).map(pp=>pp.kind));
+          let kind=(old && old.kind && !taken.has(old.kind)) ? old.kind : null;
+          if(!kind){ const free=SURV_CHAR_LIST.filter(k=>!taken.has(k)); kind=free.length?free[randi(0,free.length-1)]:'alfredo'; }
+          // that character may be on the map as an NPC ally (idle or fighting) — it's the player's now
+          for(let i=npcs.length-1;i>=0;i--){ if(npcs[i].kind===kind){ spark(npcs[i].x,npcs[i].y,npcs[i].color,14,140); npcs.splice(i,1); } }
+          npcQueue=npcQueue.filter(k=>k!==kind);
+          const p=makePlayer(kind, LP_SPAWN.x, LP_SPAWN.y, REMOTE);
+          p.keysrc=guest.keys; p.netRemote=guest;
+          p.pending=true; p.alive=false; p.hp=0; p.soles=0;
+          seatPlayer(p);
+          mode=2;   // a solo online host is no longer solo
+          floatText(LP_SPAWN.x, LP_SPAWN.y-30, '¡J'+(guest.slot+1)+' entra la próxima ronda!', '#aef7c2');
+        }
+        else {
           const sy=(currentMap==='stonebridge')?344:WORLD_H/2;
           // a slot's character is LOCKED for the whole game: whoever fills this slot again (a
           // dropped player reconnecting) gets the SAME character they chose — never a reshuffle.
