@@ -4062,6 +4062,7 @@ function makeNpc(kind,x,y){
   n.aiSide=Math.random()<0.5?-1:1; n.aiStuckT=0; n.aiLX=x; n.aiLY=y; n.aiDetourT=0; n.aiDetourA=0; n.aiReturn=false;
   n.aiTgt=null; n.aiTgtT=0;   // target lock: commit to one enemy ~1s so aim/facing doesn't thrash in a crowd
   n.aiOffT=0;                 // seconds spent fully off-screen (catch-up teleport timer)
+  n.aiFleeT=0; n._hf=0;       // survival instinct: flee window + hit edge tracker
   return n;
 }
 // -- NPC navigation brains --
@@ -4165,20 +4166,31 @@ function updateNpcs(dt){
       if(!n.aiReturn && (n.x<camX+70||n.x>camX+W-70||n.y<camY+70||n.y>camY+H-70)) n.aiReturn=true;
       else if(n.aiReturn && (dist(n.x,n.y,host.x,host.y)<180 || (n.x>camX+W*0.3&&n.x<camX+W*0.7&&n.y>camY+H*0.32&&n.y<camY+H*0.68))) n.aiReturn=false;
     }
+    // ---- survival instinct: the ally does NOT want to die ----
+    // Getting punched with enemies on top, or 2+ already inside punching range, arms a flee window:
+    // it runs from the mob's centre of mass (wall-aware) and only then worries about shooting.
+    // (Replaces the old "3+ crowding → stand and blast" rule, which face-tanked whole swarms.)
+    let close=0, mobX=0, mobY=0;
+    for(const e of enemies){ if(e.dead) continue; const d0=dist(n.x,n.y,e.x,e.y); if(d0<120){ close++; mobX+=e.x; mobY+=e.y; } }
+    const _phf=n._hf||0;
+    if(n.hitFlash>_phf+0.02 && close>0) n.aiFleeT=Math.max(n.aiFleeT||0, 1.1);   // just took a hit at close quarters
+    n._hf=n.hitFlash;
+    if(close>=2) n.aiFleeT=Math.max(n.aiFleeT||0, 0.7);                          // pre-emptive: two already in its face
+    if(n.aiFleeT>0) n.aiFleeT-=dt;
+    let fleeing=false;
     let wantA=null;
     if(n.aiDetourT>0){ n.aiDetourT-=dt; wantA=n.aiDetourA; }                            // unsticking: hold the detour heading briefly
+    else if(n.aiFleeT>0 && close>0){                                                    // escape FIRST — shooting continues while running
+      const ex=n.x-mobX/close, ey=n.y-mobY/close, el=Math.hypot(ex,ey)||1;
+      wantA=npcSteer(n, n.x+ex/el*220, n.y+ey/el*220); fleeing=true;
+    }
     else if(n.aiReturn && host){ wantA=npcSteer(n, host.x, host.y); }                   // head back to the centre (around walls)
     if(te){
       n.aiShootCd-=dt;
       if(wantA===null){
-        // wide deadband: close in above 190, retreat below 70, otherwise HOLD GROUND and shoot —
-        // and when 3+ enemies are crowding it, stop retreating entirely (backing away from one just
-        // walks into another and it jitters): stand and blast, taking hits like anyone surrounded
+        // wide deadband: close in above 190, retreat below 70, otherwise hold ground and shoot
         if(!hasLos || td>190){ wantA=npcSteer(n, te.x, te.y); }                         // flank/close in, wall-aware
-        else if(td<70){
-          let near=0; for(const e of enemies){ if(!e.dead && dist(n.x,n.y,e.x,e.y)<130){ near++; if(near>=3) break; } }
-          if(near<3) wantA=npcSteer(n, n.x*2-te.x, n.y*2-te.y);                         // clear behind → back off (wall-aware)
-        }
+        else if(td<70){ wantA=npcSteer(n, n.x*2-te.x, n.y*2-te.y); }                    // too close → back off (wall-aware)
       }
       // it can still fire on visible enemies while retreating — a fighting withdrawal, not a panic
       if(hasLos && n.aiShootCd<=0 && td<560){ fireNpcBullet(n, te.x, te.y); n.aiShootCd=rand(0.3,0.55); }
@@ -4190,6 +4202,7 @@ function updateNpcs(dt){
     }
     let mx=0,my=0; if(wantA!==null){ mx=Math.cos(wantA); my=Math.sin(wantA); }
     if(mx||my){ let sp=effSpeed(n);
+      if(fleeing) sp*=1.25;   // adrenaline: actually break away from the swarm instead of pacing it
       // owner pedaling away on the Ticla: the ally sprints to keep up (and the invisible offscreen
       // catch-up hop below covers the rest)
       if(host && host.riding && dist(n.x,n.y,host.x,host.y)>320) sp*=1.45;
