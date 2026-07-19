@@ -1184,23 +1184,17 @@ const LP_VEND_HEAL={x:735,  y:1690, w:VEND_W, h:VEND_H, r:VEND_R, type:'heal'}; 
 const LP_VEND_ENH ={x:1235, y:470,  w:VEND_W, h:VEND_H, r:VEND_R, type:'enh'};      // right edge of the playground sand
 const LP_VEND_TICLA={x:1500, y:4415, w:VEND_W, h:VEND_H, r:VEND_R, type:'ticla'};   // bike rack on the beach road (south palms block)
 const LP_VENDS=[LP_VENDING, LP_VEND_HEAL, LP_VEND_ENH, LP_VEND_TICLA];
-// Price curve: flat 5-round blocks early — you can't even scrape 50 soles in round 1, so per-round
-// bumps there were pure punishment — then per-round growth from round 16 on, paced to how income
-// actually grows (enemy count ≈ linear-plus), so buying perks stays "about the same effort" forever:
-//   rondas 1-5: ×1 · 6-10: ×1.25 · 11-15: ×1.5 · 16+: +10% of base each round
-function vendMult(){ return round<=5?1 : round<=10?1.25 : round<=15?1.5 : 1.5+0.10*(round-15); }
+// ALL prices are FLAT — a savings goal that moves while you're collecting feels like a glitch
+// (same reasoning that already made the Ticla flat). Difficulty scales by enemy count, not by taxes.
 // The enhance machine prices by TIER of the weapon you're holding (0→1, 1→2, 2→3), so vendCost
 // needs the near player; it returns null when that weapon can't be enhanced (maxed out, or a
 // weapon with no upgrade path like the Distracción) — callers show it locked + play the lock clunk.
-// weapon machine sells ONLY the rare trio (torreta / bloques / Distracción) — priced so it takes
-// real saving-up: ~3-4 rounds of full income early, just over a round of income deep in a run
-const VEND_BASE={weapon:120, heal:60, ticla:300};   // the Ticla is the luxury purchase (it wears out — see bike hp)
-const ENH_COSTS=[50,90,110];
+const VEND_BASE={weapon:150, heal:50, ticla:300};   // the Ticla is the luxury purchase (it wears out — see bike hp)
+const ENH_COSTS=[50,100,150];   // per level of the weapon in hand — each level costs more, on every weapon
 function vendCost(v,p){
   let b=VEND_BASE[v.type]||50;
   if(v.type==='ticla'){
     if(p && bikes.some(bk=>bk.owner===players.indexOf(p))) return null;   // one Ticla per player — yours is out there somewhere
-    return b;   // FLAT price: a savings goal that moves while you're collecting feels like a glitch
   }
   if(v.type==='enh'){
     if(p){
@@ -1209,7 +1203,7 @@ function vendCost(v,p){
       b=ENH_COSTS[Math.min(lvl,ENH_COSTS.length-1)];
     } else b=ENH_COSTS[0];
   }
-  return Math.max(b, Math.round(b*vendMult()/5)*5);
+  return b;
 }
 const VENDING_COST=50;                     // legacy constant (some help text) — real prices come from vendCost()
 let vendFlash=0;
@@ -1675,7 +1669,20 @@ function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r
 const VEND_RARES=['torreta','block','decoy'];
 // only offer rares the buyer can actually carry more of — never silently eat 120+ soles for nothing
 function vendRareRoom(p,k){ const a=(p.ammo&&p.ammo[k])||0; return k==='torreta'?a<WEAPONS.torreta.ammoMax : k==='decoy'?a<1 : a<WEAPONS.block.ammoMax*3; }
-function pickVendRare(p){ const av=VEND_RARES.filter(k=>vendRareRoom(p,k)); return av.length?av[randi(0,av.length-1)]:null; }
+// Shuffled-bag draw instead of a uniform roll: each player cycles through the WHOLE rare trio
+// (random order) before any kind repeats, so the Distracción actually shows up in every run
+// instead of losing coin-flips all night. Kinds the buyer can't carry more of are skipped at
+// draw time but stay in the bag — still owed once there's room. Host-only state (purchases
+// resolve on the host sim), so _rareBag never needs to travel in snapshots.
+function pickVendRare(p){
+  const av=VEND_RARES.filter(k=>vendRareRoom(p,k)); if(!av.length) return null;
+  let bag=p._rareBag;
+  if(!bag || !bag.some(k=>av.includes(k))){
+    bag=p._rareBag=VEND_RARES.slice();
+    for(let i=bag.length-1;i>0;i--){ const j=randi(0,i), t=bag[i]; bag[i]=bag[j]; bag[j]=t; }
+  }
+  return bag.splice(bag.findIndex(k=>av.includes(k)),1)[0];
+}
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
 const CRATE_LIFE=45;   // each crate lives ~45s, blinks its last seconds (pickupBlinkHide), then rotates elsewhere
 function crateMax(){ return 5+activePlayerCount(); }   // pool size scales with the party
@@ -6364,7 +6371,7 @@ function drawPauseSurvival(){
     vy+=30;
   }
   ctx.fillStyle='#8a97a4'; ctx.font='10px Courier New';
-  wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Los precios suben cada 5 rondas.', mx+18, vy+4, mw-32, 13);
+  wrapText('Precios fijos: VIDA 50 \u00b7 ESPECIAL 150 \u00b7 TICLA 300 \u00b7 MEJORA 50/100/150 por nivel (la Distracci\u00f3n no se mejora).', mx+18, vy+4, mw-32, 13);
   const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
              ['#8ac24a','CAJAS','arma al azar']];
