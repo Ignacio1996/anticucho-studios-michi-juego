@@ -999,6 +999,24 @@ addEventListener('keydown', e => {
     // dead online host: A / D hop between the teammates still fighting
     if(NET.hosting && lp && !lp.alive && !lp.departed && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight'))
       specCycle((e.code==='KeyA'||e.code==='ArrowLeft')?-1:1);
+    // ---- soles transfer menus (host + local co-op). Guests handle theirs inside the swallow. ----
+    if(NET.role!=='guest'){
+      const p0=players[0], p1=players[1], p1Local=p1 && !p1.netRemote;
+      if(e.code==='KeyP' && p0 && p0.alive){ const st=xferState(p0); st.open=!st.open; st.amt=10; }
+      if(e.code==='BracketLeft' && p1Local && p1.alive){ const st=xferState(p1); st.open=!st.open; st.amt=10; }
+      const m0=p0 && p0._xfer && p0._xfer.open && p0.alive;
+      const m1=p1Local && p1._xfer && p1._xfer.open && p1.alive;
+      if(m0){ const st=p0._xfer;
+        if(e.code==='ArrowUp') st.sel--; else if(e.code==='ArrowDown') st.sel++;
+        else if(e.code==='ArrowLeft') st.amt=Math.max(10,st.amt-10); else if(e.code==='ArrowRight') st.amt=Math.min(990,st.amt+10);
+        else if(e.code==='Enter'){ const t=xferTargets(0); if(t.length){ st.sel=((st.sel%t.length)+t.length)%t.length; doTransfer(0, t[st.sel], st.amt); } }
+      }
+      if(m1){ const st=p1._xfer;
+        if(e.code==='KeyW') st.sel--; else if(e.code==='KeyS') st.sel++;
+        else if(e.code==='KeyA') st.amt=Math.max(10,st.amt-10); else if(e.code==='KeyD') st.amt=Math.min(990,st.amt+10);
+        else if(e.code==='Enter'){ const t=xferTargets(1); if(t.length){ st.sel=((st.sel%t.length)+t.length)%t.length; doTransfer(1, t[st.sel], st.amt); } }
+      }
+    }
   }
   // menu/shop interactions
   handleMenuKey(e.code);
@@ -1756,30 +1774,36 @@ function updateLeaves(dt){
     if(gone) leaves.splice(i,1);
   }
 }
+// Las Palmas z-sorts each projectile into the world (see the drawables list) so a slime ball can
+// pass BEHIND houses / the water tower like every other entity; other maps draw the flat pass.
 function drawLeaves(){
-  for(const l of leaves){
+  if(currentMap==='laspalmas') return;   // LP: leaves render via the depth-sorted drawables instead
+  for(const l of leaves) drawLeaf(l);
+}
+function drawLeaf(l){
+  {
     ctx.save(); ctx.translate(l.x,l.y); ctx.rotate(l.spin);
     if(l.arrow){
       ctx.fillStyle='#6a4a28'; ctx.fillRect(-13,-1.5,22,3);
       ctx.fillStyle='#cfd6dd'; ctx.beginPath(); ctx.moveTo(9,-5); ctx.lineTo(17,0); ctx.lineTo(9,5); ctx.closePath(); ctx.fill();
       ctx.fillStyle='#d8c89a'; ctx.beginPath(); ctx.moveTo(-13,-5); ctx.lineTo(-8,0); ctx.lineTo(-13,5); ctx.closePath(); ctx.fill();
-      ctx.restore(); continue;
+      ctx.restore(); return;
     }
     if(l.fire){
       const fl=2*Math.sin(performance.now()/40+l.x);
       ctx.fillStyle='rgba(255,120,30,0.45)'; ctx.beginPath(); ctx.arc(0,0,11+fl,0,TAU); ctx.fill();
       ctx.fillStyle='#ff7a1a'; ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.fill();
       ctx.fillStyle='#ffd24a'; ctx.beginPath(); ctx.arc(-1,-1,3.5,0,TAU); ctx.fill();
-      ctx.restore(); continue;
+      ctx.restore(); return;
     }
-    if(l.spit){ ctx.fillStyle='rgba(180,210,140,0.45)'; ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.fill(); ctx.fillStyle='#cfe6a0'; ctx.beginPath(); ctx.arc(0,0,4.5,0,TAU); ctx.fill(); ctx.fillStyle='#eef7d0'; ctx.beginPath(); ctx.arc(-1.2,-1.2,2,0,TAU); ctx.fill(); ctx.restore(); continue; }
+    if(l.spit){ ctx.fillStyle='rgba(180,210,140,0.45)'; ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.fill(); ctx.fillStyle='#cfe6a0'; ctx.beginPath(); ctx.arc(0,0,4.5,0,TAU); ctx.fill(); ctx.fillStyle='#eef7d0'; ctx.beginPath(); ctx.arc(-1.2,-1.2,2,0,TAU); ctx.fill(); ctx.restore(); return; }
     if(l.plasma){   // bright light-blue plasma ball with a glowing halo + sparkle core
       const pl=2.2*Math.sin(performance.now()/45+l.x);
       ctx.fillStyle='rgba(120,220,255,0.35)'; ctx.beginPath(); ctx.arc(0,0,12+pl,0,TAU); ctx.fill();
       ctx.fillStyle='rgba(150,235,255,0.6)'; ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fill();
       ctx.fillStyle='#bff0ff'; ctx.beginPath(); ctx.arc(0,0,5,0,TAU); ctx.fill();
       ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.arc(-1.4,-1.4,2.2,0,TAU); ctx.fill();
-      ctx.restore(); continue;
+      ctx.restore(); return;
     }
     ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(0,6,8,3,0,0,TAU); ctx.fill();
     ctx.fillStyle='#7a6f64'; ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fill();
@@ -2592,6 +2616,61 @@ const VEND_META={
   enh:   {label:'MEJORA', body:'#3a7ac0', lit:'#4a9ae0', dark:'#132f5a'},
   ticla: {label:'TICLA',  body:'#2f9a55', lit:'#4ec97a', dark:'#0f3a20'},
 };
+// ---- Soles transfers between teammates (the "yapeo"): P (J1/host/guests) or [ (J2 local co-op)
+// opens a translucent side menu; the sender keeps moving/shooting with their own keys while the
+// menu navigates with the OTHER hand (J1/guest: arrows+Enter · J2: W/S/A/D+Enter). Host applies
+// all transfers; guests request theirs over the wire ({mt} packet).
+function xferTargets(meIdx){
+  const t=[]; for(let i=0;i<players.length;i++){ const q=players[i]; if(!q || i===meIdx || q.departed || q.pending) continue; t.push(i); } return t;
+}
+function doTransfer(fromI,toI,amt){
+  const a=players[fromI], b=players[toI];
+  if(!a || !b || fromI===toI || b.departed || b.pending) return;
+  amt=Math.max(10, Math.min(990, Math.round(amt/10)*10));
+  if(!a.alive || (a.soles||0)<amt){ floatText(a.x,a.y-30,'¡Sigues misio!','#ff9a7a'); playDenied(); return; }
+  a.soles-=amt; b.soles=(b.soles||0)+amt;
+  floatText(a.x,a.y-30,'-'+amt+' S/.','#ffe07a');
+  floatText(b.x,b.y-30,'+'+amt+' S/. de '+(a.name||'?'),'#7fe0a0');
+  playCoin();
+}
+function xferState(p){ return p._xfer || (p._xfer={open:false, sel:0, amt:10}); }
+function drawXferPanel(x0, st, meIdx, meSoles, keysHint){
+  const targets=xferTargets(meIdx);
+  const rows=Math.max(1,targets.length), ph=86+rows*22;
+  ctx.save();
+  ctx.fillStyle='rgba(10,16,22,0.72)'; rrect(x0,120,214,ph,8); ctx.fill();
+  ctx.strokeStyle='rgba(255,224,122,0.5)'; ctx.lineWidth=1.5; rrect(x0,120,214,ph,8); ctx.stroke();
+  ctx.textAlign='left'; ctx.font='bold 13px Courier New'; ctx.fillStyle='#ffe07a';
+  ctx.fillText('ENVIAR SOLES', x0+12, 140);
+  ctx.font='9px Courier New'; ctx.fillStyle='#8fa0ae'; ctx.fillText(keysHint, x0+12, 154);
+  if(!targets.length){ ctx.fillStyle='#9aa4b0'; ctx.font='11px Courier New'; ctx.fillText('No hay compañeros', x0+12, 178); ctx.restore(); return; }
+  st.sel=((st.sel%targets.length)+targets.length)%targets.length;
+  let ry=176;
+  for(let k=0;k<targets.length;k++){
+    const q=players[targets[k]], sel=(k===st.sel);
+    if(sel){ ctx.fillStyle='rgba(255,224,122,0.16)'; ctx.fillRect(x0+6,ry-13,202,18); }
+    ctx.font='bold 12px Courier New'; ctx.fillStyle=q.color||'#fff';
+    ctx.fillText((sel?'▸ ':'  ')+(q.name||'?'), x0+12, ry);
+    ctx.font='10px Courier New'; ctx.fillStyle='#c8d2da'; ctx.textAlign='right';
+    ctx.fillText('S/. '+(q.soles||0), x0+204, ry); ctx.textAlign='left';
+    ry+=22;
+  }
+  ctx.font='bold 12px Courier New'; ctx.fillStyle='#aef7c2';
+  ctx.fillText('Monto: ◀ '+st.amt+' S/. ▶', x0+12, ry+6);
+  ctx.font='9px Courier New'; ctx.fillStyle='#8fa0ae';
+  ctx.fillText('Enter: enviar · tienes S/. '+(meSoles||0), x0+12, ry+20);
+  ctx.restore();
+}
+function drawXferMenus(){
+  if(!survival || state!==STATE.PLAY) return;
+  if(NET.role==='guest'){
+    if(gXfer.open && players[NET.slot]) drawXferPanel(W-234, gXfer, NET.slot, players[NET.slot].soles, '[P] cierra · flechas eligen');
+    return;
+  }
+  const p0=players[0], p1=players[1];
+  if(p0 && p0._xfer && p0._xfer.open && p0.alive) drawXferPanel(W-234, p0._xfer, 0, p0.soles, '[P] cierra · flechas eligen');
+  if(p1 && !p1.netRemote && p1._xfer && p1._xfer.open && p1.alive) drawXferPanel(20, p1._xfer, 1, p1.soles, '[ cierra · W/S eligen · A/D monto');
+}
 function vendNear(p){ if(!survival||!p.alive) return null; let best=null,bd=1e9; for(const v of LP_VENDS){ const d=dist(p.x,p.y,v.x,v.y+v.h*0.5); if(d<v.r && d<bd){ bd=d; best=v; } } return best; }
 function nearVending(p){ return !!vendNear(p); }   // kept for callers that only need a boolean
 // improve every turret this player already placed, so a mid-fight upgrade lifts the whole line
@@ -3320,6 +3399,13 @@ function updatePlayers(dt){
           if(last==='u') my=-1; else if(last==='d') my=1; else if(last==='l') mx=-1; else if(last==='r') mx=1; }
       }
       if(p._stun>0){ mx=0; my=0; }   // just crashed off the Ticla — brief daze
+      // shared-screen co-op: an open transfer menu borrows the OTHER pad's keys (P1's menu uses the
+      // arrows = J2's movement; J2's menu uses WASD = J1's movement) — freeze that victim briefly
+      if(survival && NET.role!=='guest'){
+        const p0=players[0], p1=players[1];
+        if(p0 && p0!==p && p0._xfer && p0._xfer.open && p0.alive && c.up==='ArrowUp'){ mx=0; my=0; p.moving=false; }
+        if(p1 && p1!==p && !p1.netRemote && p1._xfer && p1._xfer.open && p1.alive && c.up==='KeyW'){ mx=0; my=0; p.moving=false; }
+      }
       p.moving=!!(mx||my);
       if(mx||my){
         const l=Math.hypot(mx,my); mx/=l; my/=l;
@@ -6250,6 +6336,7 @@ function drawPauseSurvival(){
   ctx.fillText('J1: WASD \u00b7 Espacio dispara \u00b7 cambiar arma: E  (o 1-7 / rueda) \u00b7 comprar: F', px+18, wy+30);
   ctx.fillText('J2: Flechas \u00b7 Coma (,) dispara \u00b7 cambiar arma: / \u00b7 comprar: Punto (.)', px+18, wy+48);
   ctx.fillText('TICLA: [F] montar y bajar \u00b7 disparo = timbre \u00b7 atropella (no puedes recoger nada montado)', px+18, wy+66);
+  ctx.fillText('[P] enviar soles a un compa\u00f1ero (J2: tecla [ ) \u00b7 flechas: elegir y monto \u00b7 Enter: enviar', px+18, wy+84);
 
   // ---- PODERES panel (middle) ----
   const mx=488, mw=250;
@@ -7566,6 +7653,7 @@ function drawSnow(dt){
   ctx.globalAlpha=1; ctx.restore();
 }
 let gSpecIdx=null;   // Modo Infinito online: index of the living teammate a dead player is spectating
+const gXfer={open:false, sel:0, amt:10};   // guest's local soles-transfer menu (sends {mt} to the host)
 // dead spectator taps A / D (or arrows) to hop between the teammates still fighting
 function specCycle(dir){
   const me=players[NET.role==='guest'?NET.slot:0];
@@ -7715,6 +7803,7 @@ function _frameBody(now){
                    ...(survival?bikes.filter(b=>b.parked&&inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y+8,zt:0,f:()=>drawTiclaParked(b)})),
                    ...(survival?corpses.filter(c=>inV(c.x,c.y)):[]).map(c=>({y:c.y,x:c.x,sy:c.y-1e5,zt:-1,f:()=>drawDeathPose(c.kind,c.x,c.y,c.y,c.t)})),   // fallen allies lie flat on the ground plane
                    ...(survival?bullets.filter(b=>inV(b.x,b.y)):[]).map(b=>({y:b.y,x:b.x,sy:b.y,zt:0,f:()=>drawBullet(b)})),   // shots hide behind trees/houses like everyone else
+                   ...(_LP?leaves.filter(l=>inV(l.x,l.y)):[]).map(l=>({y:l.y,x:l.x,sy:l.y,zt:0,f:()=>drawLeaf(l)})),   // enemy slime balls z-sort too — no more floating over the water tower
                    ...(_LP?incaWalls.filter(w=>inV(w.x,w.y)):incaWalls).map(w=>({y:w.y+w.h,x:w.x+w.w/2,sy:w.y+w.h,zt:0,f:()=>drawIncaBlock(w)})),
                    ...(_LP?turrets.filter(t=>inV(t.x,t.y)):turrets).map(t=>({y:t.y+4,x:t.x,sy:t.y+4,zt:0,f:()=>drawTurret(t)}))];
   if(_LP && survival){ for(const v of LP_VENDS){ if(inV(v.x,v.y)) drawables.push({y:v.y+v.h, x:v.x, sy:v.y+v.h, zt:0, f:()=>drawVend(v)}); } }   // each vending machine z-sorts like a prop
@@ -7767,6 +7856,7 @@ function _frameBody(now){
   if(_LP) safe('lptint',drawLasPalmasTint);   // post-apocalyptic reddish haze over the whole scene
   safe('hud',drawHUD);
   if(_LP) safe('mates',drawTeammateArrows);
+  if(_LP && survival) safe('xfer',drawXferMenus);   // soles-transfer side menus (translucent, screen-space)
   safe('bossbars',drawBossBars);
   if(state===STATE.BREAK) safe('breakui',drawBreakUI);
   if(state===STATE.INTRO) safe('introui',drawIntroUI);
@@ -8517,6 +8607,8 @@ requestAnimationFrame(frame);
     keysObj['Period']     = !!d.g;
     // guest's weapon choice: host adopts it (only if that slot is actually owned on the authoritative side)
     if(d.w && players[guest.slot] && weaponOwned(players[guest.slot], d.w)) players[guest.slot].weapon=d.w;
+    // guest asks to send soles to a teammate — the host validates and applies (floatText + coin replicate back)
+    if(d.mt && survival && players[guest.slot]) doTransfer(guest.slot, d.mt.to|0, d.mt.amt|0);
     // client-authoritative movement: adopt the pose the guest simulated locally (its own player runs
     // with zero input latency). Attacks/damage stay host-authoritative via the keys above.
     if(typeof d.x==='number' && typeof d.y==='number'){
@@ -8625,6 +8717,25 @@ requestAnimationFrame(frame);
           if(c==='ArrowUp'||c==='ArrowDown'||c==='KeyW'||c==='KeyS') pauseSel=(pauseSel+1)%2;
           else if(c==='Enter'){ if(pauseSel===1){ pauseView='settings'; setSel=0; } else if(NET.conn && NET.conn.open){ try{ NET.conn.send({pt:1}); }catch(_e){} } }
         }
+      }
+      // ---- guest soles-transfer menu: P toggles; while open the ARROWS + Enter drive the menu
+      // instead of movement (WASD still moves and Space still shoots) ----
+      if(down && survival && state===STATE.PLAY && e.code==='KeyP' && !gk[e.code]){
+        gXfer.open=!gXfer.open; gXfer.amt=10;
+        gk['ArrowUp']=gk['ArrowDown']=gk['ArrowLeft']=gk['ArrowRight']=false; sendInput(true);
+      }
+      if(gXfer.open && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter'].indexOf(e.code)>=0){
+        if(down && !gk['_x'+e.code]){
+          if(e.code==='ArrowUp') gXfer.sel--; else if(e.code==='ArrowDown') gXfer.sel++;
+          else if(e.code==='ArrowLeft') gXfer.amt=Math.max(10,gXfer.amt-10); else if(e.code==='ArrowRight') gXfer.amt=Math.min(990,gXfer.amt+10);
+          else if(e.code==='Enter'){
+            const t=xferTargets(NET.slot);
+            if(t.length && NET.conn && NET.conn.open){ gXfer.sel=((gXfer.sel%t.length)+t.length)%t.length;
+              try{ NET.conn.send({mt:{to:t[gXfer.sel], amt:gXfer.amt}}); }catch(_e){} }
+          }
+        }
+        gk['_x'+e.code]=down;   // private edge tracker — the real gk arrow states stay false while the menu is open
+        e.preventDefault(); e.stopImmediatePropagation(); return;
       }
       if(gk[e.code]!==down){ gk[e.code]=down; sendInput(false); }   // fire the moment a key toggles
       e.preventDefault();
