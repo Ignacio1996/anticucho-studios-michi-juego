@@ -504,6 +504,12 @@ function _proxGain(x,y){
   const d=Math.hypot(x-(camX+W/2), y-(camY+H/2));
   return clamp(1 - Math.max(0,d-380)/900, 0, 1);
 }
+// explosions carry farther than clicks and clatter: same idea, looser curve (~2 screens of reach)
+function _proxGainFar(x,y){
+  if(x==null || !Number.isFinite(x)) return 1;
+  const d=Math.hypot(x-(camX+W/2), y-(camY+H/2));
+  return clamp(1 - Math.max(0,d-600)/1700, 0, 1);
+}
 // ---- Recorded weapon SFX (Weapons_SFX pack in assets/sfx_*.mp3) ----
 // assets/sfx_bike_useexit.mp3 is staged for the upcoming bike — intentionally NOT wired yet.
 const WSFX={ gun:'assets/sfx_gun.mp3',
@@ -534,21 +540,23 @@ function sfxFireShot(x,y){ try{ const g=_proxGain(x,y); const s=WSFX.fb[_fbIdx];
 function sfxLaunch(){ if(!actx) return; try{ const t=actx.currentTime;   // generic launcher thunk (legacy fallback)
   _tone(t,0.14,0.32,'sine',190,60); _noise(t,0.06,0.16,'lowpass',700);
 }catch(e){} }
-function sfxNadePin(){ try{ playSfx(WSFX.nadepin, 0.5); }catch(e){} }        // spacebar held: pin out, charging the lob
-function sfxNadeThrow(){ try{ playSfx(WSFX.nadethrow, 0.6); }catch(e){} }    // spacebar released: grenade away
-function sfxNadeBoom(){ try{ playSfx(WSFX.nadeboom, 0.8); }catch(e){} }
-function sfxMineBoom(){ try{ playSfx(WSFX.mineboom, 0.8); }catch(e){} }
-function sfxBlockPlace(){ try{ playSfx(WSFX.blockplace, 0.6); }catch(e){} }
-function sfxAleToss(){ try{ playSfx(WSFX.aletoss, 0.7); }catch(e){} }        // la Distracción leaves Alessito's hand
+// All the one-shot weapon sounds are proximity-scaled too (someone across the map pulling pins
+// and dropping blocks used to play at full volume on every screen); booms use the far curve.
+function sfxNadePin(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.nadepin, 0.5*g); }catch(e){} }        // spacebar held: pin out, charging the lob
+function sfxNadeThrow(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.nadethrow, 0.6*g); }catch(e){} }    // spacebar released: grenade away
+function sfxNadeBoom(x,y){ try{ const g=_proxGainFar(x,y); if(g<0.04) return; playSfx(WSFX.nadeboom, 0.8*g); }catch(e){} }
+function sfxMineBoom(x,y){ try{ const g=_proxGainFar(x,y); if(g<0.04) return; playSfx(WSFX.mineboom, 0.8*g); }catch(e){} }
+function sfxBlockPlace(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.blockplace, 0.6*g); }catch(e){} }
+function sfxAleToss(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.aletoss, 0.7*g); }catch(e){} }        // la Distracción leaves Alessito's hand
 function sfxSlimeHit(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.slimehit, 0.55*g); }catch(e){} }
 // Ticla runs over a slime: one of three squishy splash takes, chosen at random (i is passed over
 // the net so every machine hears the SAME take)
 const WSFX_SPLASH=['assets/sfx_slimesplash1.mp3','assets/sfx_slimesplash2.mp3','assets/sfx_slimesplash3.mp3'];
 function sfxSlimeSplash(x,y,i){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX_SPLASH[(i|0)%3], 0.7*g); }catch(e){} }
-function sfxBoom(){ if(!actx) return; try{ const t=actx.currentTime;   // explosion (Alessito's blast + legacy)
-  _noise(t,0.45,0.5,'lowpass',1800,150); _tone(t,0.4,0.42,'sine',120,38); _tone(t,0.12,0.2,'square',90,40);
+function sfxBoom(x,y){ if(!actx) return; try{ const g=_proxGainFar(x,y); if(g<0.04) return; const t=actx.currentTime;   // explosion (Alessito's blast + legacy)
+  _noise(t,0.45,0.5*g,'lowpass',1800,150); _tone(t,0.4,0.42*g,'sine',120,38); _tone(t,0.12,0.2*g,'square',90,40);
 }catch(e){} }
-function sfxPlace(){ if(!actx) return; try{ const t=actx.currentTime; _tone(t,0.09,0.2,'square',300,160); _noise(t,0.05,0.12,'lowpass',900); }catch(e){} }
+function sfxPlace(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime; _tone(t,0.09,0.2*g,'square',300,160); _noise(t,0.05,0.12*g,'lowpass',900); }catch(e){} }
 function sfxTurretShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.turret, 0.5*g); }catch(e){} }
 
 const FREDDY_CELL={w:106,h:138};
@@ -1889,7 +1897,7 @@ function tryShoot(p){
   if(p.special==='safiro'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireLightning(p,'#7ad0ff',215); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'SAFIRO agotado','#5aa0ff'); } return; }
   const wk=(p.weapon&&WEAPONS[p.weapon])?p.weapon:'pistol', W=WEAPONS[wk];
   p.cooldown=W.cd; p.punchAnim=CHARS[p.kind].pd;
-  if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxNadeThrow(); return; }
+  if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxNadeThrow(p.x,p.y); return; }
   if(wk==='fire'){ fireBullet(p,true); consumeAmmo(p,'fire'); sfxFireShot(p.x,p.y); return; }
   if(wk==='mine'){ if(placeMine(p)) consumeAmmo(p,'mine'); return; }
   if(wk==='block'){ if(placeBlockLP(p)) consumeAmmo(p,'block'); else p.cooldown=0.1; return; }
@@ -1902,7 +1910,7 @@ const mines=[];
 function placeMine(p){
   const rad=120*(survival?wRadMul(p,'mine'):1);   // enhancement widens the blast
   mines.push({ id:_entId++, x:Math.round(p.x), y:Math.round(p.y), arm:1.0, owner:players.indexOf(p), rad });   // ~1s to arm
-  spark(p.x,p.y,'#ff5a4a',8,90); sfxPlace(); floatText(p.x,p.y-24,'MINA','#ff8a6a'); return true;
+  spark(p.x,p.y,'#ff5a4a',8,90); sfxPlace(p.x,p.y); floatText(p.x,p.y-24,'MINA','#ff8a6a'); return true;
 }
 // Friendly fire, sting-not-slaughter: explosions HURT players caught in them — the punishment for
 // stepping on a mine or hugging a grenade — but they can never kill: 20% of max HP, floored at 1.
@@ -1919,7 +1927,7 @@ function blastHurtPlayers(x,y,R){
 // a mine wipes out everything caught in the blast outright (bosses just take a heavy hit)
 function mineBlast(x,y,owner,rad){
   const R=rad||120;
-  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=12; sfxMineBoom();
+  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=12; sfxMineBoom(x,y);
   fx_effects.push({kind:'shock', x, y, r:R, life:0.4, max:0.4});
   const ow=players[owner], bossDmg=ow?effDmg(ow)*2.5:70;
   // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
@@ -1957,19 +1965,19 @@ function placeBlockLP(p){
   incaWalls.push(rect); obstacles.push(rect);   // obstacles is empty on Las Palmas; lpResolve reads incaWalls directly
   resolveCollision(p);
   for(const e of enemies){ if(!e.dead && circleRectCollide(e.x,e.y,e.radius,rect)) resolveCollision(e); }
-  spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); sfxBlockPlace(); return true;
+  spark(rect.x+GRID/2, rect.y+GRID/2, '#d8d2c2', 10, 110); sfxBlockPlace(rect.x+GRID/2, rect.y+GRID/2); return true;
 }
 function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
   if(t && turrets.length>before){ t.hp=t.maxhp=800; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // 800hp: it's a 120+ soles rare now, it should hold the line (was 400)
-  sfxPlace(); return true;   // deploy thunk — the recorded turret sound now plays per ARROW instead
+  sfxPlace(p.x,p.y); return true;   // deploy thunk — the recorded turret sound now plays per ARROW instead
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
 const grenades=[];
 function explodeAt(x,y,radius,frac,owner){
-  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=11; sfxNadeBoom();
+  spark(x,y,'#ffd24a',26,240); spark(x,y,'#ff6a2a',16,170); cameraShake=11; sfxNadeBoom(x,y);
   fx_effects.push({kind:'shock', x, y, r:radius, life:0.4, max:0.4});
   // copy: killEnemy splices the live array mid-loop, which skipped the enemy right after each kill
   for(const e of enemies.slice()){ if(e.dead||e.dcLock) continue; const d=dist(x,y,e.x,e.y); if(d<radius+(e.footR||e.radius)){
@@ -2032,7 +2040,7 @@ function throwDecoy(p,power){
   let fx=p.facing.x, fy=p.facing.y; if(!fx&&!fy){fy=1;} const l=Math.hypot(fx,fy)||1; fx/=l; fy/=l;
   const spd=320+power*620;
   decoys.push({ id:_entId++, x:p.x, y:p.y, vx:fx*spd, vy:fy*spd, phase:'fly', pose:'TOSS', flip:fx<0, t:0, owner:players.indexOf(p) });
-  sfxAleToss();
+  sfxAleToss(p.x,p.y);
 }
 function updateDecoys(dt){
   for(let i=decoys.length-1;i>=0;i--){
@@ -2068,7 +2076,7 @@ function updateDecoys(dt){
 }
 function decoyBoom(d){
   d.phase='dead'; d.pose='DEATH'; d.flip=false; d.t=0;
-  spark(d.x,d.y,'#ffd24a',30,260); spark(d.x,d.y,'#ff9a2a',22,190); cameraShake=13; sfxBoom();
+  spark(d.x,d.y,'#ffd24a',30,260); spark(d.x,d.y,'#ff9a2a',22,190); cameraShake=13; sfxBoom(d.x,d.y);
   fx_effects.push({kind:'shock', x:d.x, y:d.y, r:ALE_BOOM_R, life:0.5, max:0.5});
   const ow=players[d.owner]||null;
   // everyone he pulled in dies with him (dcLock, wherever crowd pressure left them), plus anything
@@ -2164,8 +2172,8 @@ const BIKE_SPEED=1.85, BIKE_RIDER_H=60, BIKE_PARKED_H=34;
 // bike sounds fade with distance like gunfire — a bell across the map shouldn't ring in your ear
 function sfxBikeUse(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx('assets/sfx_bike_useexit.mp3', 0.6*g); }catch(e){} }
 function sfxBikeRing(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx('assets/sfx_bike_ring.mp3', 0.65*g); }catch(e){} }
-function sfxSkid(){ if(!actx) return; try{ const t=actx.currentTime;   // short tire scrub on a hard turn
-  _noise(t,0.13,0.2,'highpass',2400); _noise(t,0.09,0.1,'bandpass',900,500); }catch(e){} }
+function sfxSkid(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime;   // short tire scrub on a hard turn
+  _noise(t,0.13,0.2*g,'highpass',2400); _noise(t,0.09,0.1*g,'bandpass',900,500); }catch(e){} }
 const BIKE_HP=120;   // wear pool: each ram chips it (small 2, egg 6) — a Ticla lasts a few rounds of plowing
 function spawnTicla(v,ownerIdx){
   let bx=v.x, by=v.y+v.h+40;
@@ -3461,7 +3469,7 @@ function updatePlayers(dt){
         if(p.riding){
           // skid when flipping direction at speed: momentum drops and dust kicks — the grid feels physical
           if(p._rideDir && p._rideDir!==p.dir && (p._rideAcc||0)>0.5){
-            p._rideAcc=0.4; sfxSkid();
+            p._rideAcc=0.4; sfxSkid(p.x,p.y);
             fx_effects.push({kind:'dust', x:Math.round(p.x), y:Math.round(p.y+p.radius*0.7), life:0.35, max:0.35});
           }
           p._rideDir=p.dir;
@@ -3485,12 +3493,12 @@ function updatePlayers(dt){
           // (the Distracción throws exactly like a grenade, it just doesn't bounce or explode on landing)
           if(ks[c.punch]){
             if(!p.nadeArmed && p.cooldown<=0 && (p.ammo&&p.ammo[p.weapon]>0)){ p.nadeArmed=true; p.nadeCharge=0; p.nadeDir=1;
-              if(p.weapon==='grenade') sfxNadePin(); }   // pin comes out the moment the charge starts
+              if(p.weapon==='grenade') sfxNadePin(p.x,p.y); }   // pin comes out the moment the charge starts
             if(p.nadeArmed){ p.nadeCharge+=p.nadeDir*dt*1.5; if(p.nadeCharge>=1){p.nadeCharge=1;p.nadeDir=-1;} else if(p.nadeCharge<=0){p.nadeCharge=0;p.nadeDir=1;} }
           } else if(p.nadeArmed){
             p.nadeArmed=false;
             if(p.weapon==='decoy'){ throwDecoy(p, p.nadeCharge); consumeAmmo(p,'decoy'); }
-            else { throwGrenade(p, p.nadeCharge); consumeAmmo(p,'grenade'); sfxNadeThrow(); }
+            else { throwGrenade(p, p.nadeCharge); consumeAmmo(p,'grenade'); sfxNadeThrow(p.x,p.y); }
             p.cooldown=WEAPONS.grenade.cd; p.punchAnim=CHARS[p.kind].pd; p.nadeCharge=0;
           }
         } else {
@@ -8014,16 +8022,19 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   // Gun/fire shots carry the SHOOTER's position so every machine applies its own proximity falloff.
   const _sg=sfxGun; sfxGun=function(r,x,y){ netQSnd('gun',{r:r?1:0, x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sg(r,x,y); };
   const _sf=sfxFireShot; sfxFireShot=function(x,y){ netQSnd('fshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sf(x,y); };
-  sfxLaunch=wrapSnd('lnch',sfxLaunch); sfxBoom=wrapSnd('boom',sfxBoom);
-  sfxPlace=wrapSnd('plc',sfxPlace);
-  const _st=sfxTurretShot; sfxTurretShot=function(x,y){ netQSnd('tshot',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _st(x,y); };
-  const _sh=sfxSlimeHit;   sfxSlimeHit=function(x,y){ netQSnd('slh',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _sh(x,y); };
-  sfxNadePin=wrapSnd('npin',sfxNadePin);     sfxNadeThrow=wrapSnd('nthrow',sfxNadeThrow);
-  sfxNadeBoom=wrapSnd('nboom',sfxNadeBoom);  sfxMineBoom=wrapSnd('mboom',sfxMineBoom);
-  sfxBlockPlace=wrapSnd('bplc',sfxBlockPlace); sfxAleToss=wrapSnd('aleT',sfxAleToss);
-  const _bku=sfxBikeUse;  sfxBikeUse =function(x,y){ netQSnd('bkuse', {x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _bku(x,y); };
-  const _bkr=sfxBikeRing; sfxBikeRing=function(x,y){ netQSnd('bkring',{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return _bkr(x,y); };
-  sfxSkid=wrapSnd('skd',sfxSkid);
+  sfxLaunch=wrapSnd('lnch',sfxLaunch);
+  // positional wrap: send the sound's WORLD coords so every machine applies its own proximity falloff
+  const wrapSndXY=(n,fn)=>function(x,y,extra){ netQSnd(n,{x:Number.isFinite(x)?Math.round(x):null, y:Number.isFinite(y)?Math.round(y):null}); return fn(x,y,extra); };
+  sfxBoom=wrapSndXY('boom',sfxBoom);
+  sfxPlace=wrapSndXY('plc',sfxPlace);
+  sfxTurretShot=wrapSndXY('tshot',sfxTurretShot);
+  sfxSlimeHit=wrapSndXY('slh',sfxSlimeHit);
+  sfxNadePin=wrapSndXY('npin',sfxNadePin);     sfxNadeThrow=wrapSndXY('nthrow',sfxNadeThrow);
+  sfxNadeBoom=wrapSndXY('nboom',sfxNadeBoom);  sfxMineBoom=wrapSndXY('mboom',sfxMineBoom);
+  sfxBlockPlace=wrapSndXY('bplc',sfxBlockPlace); sfxAleToss=wrapSndXY('aleT',sfxAleToss);
+  sfxBikeUse=wrapSndXY('bkuse',sfxBikeUse);
+  sfxBikeRing=wrapSndXY('bkring',sfxBikeRing);
+  sfxSkid=wrapSndXY('skd',sfxSkid);
   const _ss=sfxSlimeSplash; sfxSlimeSplash=function(x,y,i){ netQSnd('slsp',{x:Math.round(x),y:Math.round(y),i:i|0}); return _ss(x,y,i); };
   playLock=wrapSnd('lock',playLock);   // enhance-machine "locked" clunk reaches guest buyers too
   playDenied=wrapSnd('deny',playDenied);   // vending "no money" buzzer too
@@ -8031,6 +8042,17 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
 }
 const gPunchP={};   // guest: per-kind stand-in players so the sumac/shooshy voice cadence counters persist
+// guest-side dispatch for positional sounds: unpack {x,y} and let the local sfx apply ITS OWN
+// proximity falloff against this machine's camera (null coords → legacy global behavior)
+function _sndXY(n){
+  return a=>{
+    const f={boom:sfxBoom, plc:sfxPlace, tshot:sfxTurretShot, slh:sfxSlimeHit, npin:sfxNadePin,
+             nthrow:sfxNadeThrow, nboom:sfxNadeBoom, mboom:sfxMineBoom, bplc:sfxBlockPlace,
+             aleT:sfxAleToss, bkuse:sfxBikeUse, bkring:sfxBikeRing, skd:sfxSkid}[n];
+    if(!f) return;
+    if(a&&typeof a==='object') f(a.x==null?undefined:a.x, a.y==null?undefined:a.y); else f();
+  };
+}
 const NET_SND={
   hit:()=>playHitThud(), pk:()=>playPickup(), coin:()=>playCoin(), oro:()=>playOroPower(),
   zap:()=>playZapSound(), beam:()=>playBeamSound(), cam:()=>playCameraClick(), magic:()=>playMagic(),
@@ -8039,14 +8061,11 @@ const NET_SND={
   sel:k=>playCharSelect(k), pboom:()=>playPvpBoom(),
   gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxGun(a),
   fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
-  lnch:()=>sfxLaunch(), boom:()=>sfxBoom(), plc:()=>sfxPlace(),
-  tshot:a=>(a&&typeof a==='object')?sfxTurretShot(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxTurretShot(),
-  slh:a=>(a&&typeof a==='object')?sfxSlimeHit(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxSlimeHit(),
-  npin:()=>sfxNadePin(), nthrow:()=>sfxNadeThrow(), nboom:()=>sfxNadeBoom(), mboom:()=>sfxMineBoom(),
-  bplc:()=>sfxBlockPlace(), aleT:()=>sfxAleToss(),
-  bkuse:a=>(a&&typeof a==='object')?sfxBikeUse(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxBikeUse(),
-  bkring:a=>(a&&typeof a==='object')?sfxBikeRing(a.x==null?undefined:a.x, a.y==null?undefined:a.y):sfxBikeRing(),
-  skd:()=>sfxSkid(),
+  lnch:()=>sfxLaunch(),
+  boom:_sndXY('boom'), plc:_sndXY('plc'), tshot:_sndXY('tshot'), slh:_sndXY('slh'),
+  npin:_sndXY('npin'), nthrow:_sndXY('nthrow'), nboom:_sndXY('nboom'), mboom:_sndXY('mboom'),
+  bplc:_sndXY('bplc'), aleT:_sndXY('aleT'), bkuse:_sndXY('bkuse'), bkring:_sndXY('bkring'),
+  skd:_sndXY('skd'),
   slsp:a=>{ if(a&&typeof a==='object') sfxSlimeSplash(a.x,a.y,a.i); },
   aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
   lock:()=>playLock(), deny:()=>playDenied()
