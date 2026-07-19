@@ -6475,7 +6475,7 @@ function drawLobby(){
   ctx.fillStyle='#ffe9b0'; ctx.font='bold 34px Courier New';
   ctx.fillText(lobbyMode==='pvp'?'SALA ONLINE — PVP':'SALA ONLINE', W/2, 96);
   ctx.fillStyle='#8cc24a'; ctx.font='16px Courier New';
-  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-5 jugadores · comparte el enlace (hasta 4 amigos)':('Comparte el enlace con tus amigos (hasta '+(lobbyCap()-1)+')'), W/2, 134);
+  ctx.fillText(lobbyMode==='pvp'?'Duelo explosivo 2-5 jugadores · comparte el enlace con tus amigos':'Comparte el enlace con tus amigos', W/2, 134);
   ctx.fillStyle='#cdbb96'; ctx.font='13px Courier New';
   ctx.fillText(NET.link || 'Generando enlace…', W/2, 178);
   ctx.fillStyle='#9a8f75'; ctx.font='12px Courier New';
@@ -8875,7 +8875,7 @@ requestAnimationFrame(frame);
     peer.on('open', id => {
       NET.link = location.origin + location.pathname + '?r=' + id;
       if(linkBox) linkBox.value = NET.link;
-      setStatus('Comparte el enlace con hasta '+(lobbyCap()-1)+' amigos. Cuando estén conectados, empieza la partida.');
+      setStatus('Comparte el enlace con tus amigos. Cuando estén conectados, empieza la partida.');
     });
     // Drop a guest connection and (unless soft) mark their player departed. Shared by the per-conn
     // 'close' handler, the same-peer reconnect dedupe, and the silence prune below. soft = the same
