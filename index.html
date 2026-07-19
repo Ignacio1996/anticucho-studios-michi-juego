@@ -1904,6 +1904,18 @@ function placeMine(p){
   mines.push({ id:_entId++, x:Math.round(p.x), y:Math.round(p.y), arm:1.0, owner:players.indexOf(p), rad });   // ~1s to arm
   spark(p.x,p.y,'#ff5a4a',8,90); sfxPlace(); floatText(p.x,p.y-24,'MINA','#ff8a6a'); return true;
 }
+// Friendly fire, sting-not-slaughter: explosions HURT players caught in them — the punishment for
+// stepping on a mine or hugging a grenade — but they can never kill: 20% of max HP, floored at 1.
+const BLAST_PLAYER_FRAC=0.2;
+function blastHurtPlayers(x,y,R){
+  for(const p of players){
+    if(!p.alive || p.pending) continue;
+    if(dist(x,y,p.x,p.y) >= R+p.radius) continue;
+    const dmg=Math.round(p.maxhp*BLAST_PLAYER_FRAC);
+    p.hp=Math.max(1, p.hp-dmg);
+    p.hitFlash=1.0; spark(p.x,p.y,'#ff9a5a',10,150); floatText(p.x,p.y-26,'-'+dmg,'#ff9a7a');
+  }
+}
 // a mine wipes out everything caught in the blast outright (bosses just take a heavy hit)
 function mineBlast(x,y,owner,rad){
   const R=rad||120;
@@ -1916,12 +1928,15 @@ function mineBlast(x,y,owner,rad){
     e.hitFlash=0.16; e.stagger=0.3; spark(e.x,e.y,'#ff9a2a',6,140);
     if(e.hp<=0){ e.hp=0; killEnemy(e, ow); }
   } }
+  blastHurtPlayers(x,y,R);
 }
 function updateMines(dt){
   for(let i=mines.length-1;i>=0;i--){ const m=mines[i];
     if(m.arm>0){ m.arm-=dt; continue; }
     let boom=false;
     for(const e of enemies){ if(!e.dead && dist(m.x,m.y,e.x,e.y)<(e.footR||e.radius)+16){ boom=true; break; } }
+    // players set mines off too — watch where you step (the arm delay is your window to walk away)
+    if(!boom) for(const p of players){ if(p.alive && !p.pending && dist(m.x,m.y,p.x,p.y)<p.radius+16){ boom=true; break; } }
     if(boom){ mineBlast(m.x,m.y,m.owner,m.rad); mines.splice(i,1); }
   }
 }
@@ -1963,6 +1978,7 @@ function explodeAt(x,y,radius,frac,owner){
     const dd=d||1, k=280*Math.max(0.2,1-d/(radius+40)); e.vx+=(e.x-x)/dd*k; e.vy+=(e.y-y)/dd*k;
     if(e.hp<=0) killEnemy(e, owner||null);
   } }
+  blastHurtPlayers(x,y,radius);
 }
 function throwGrenade(p,power){
   power=(power==null?1:clamp(power,0,1));
