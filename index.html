@@ -2567,7 +2567,7 @@ function drawNugget(g){
 function drawNuggets(){ for(const g of nuggets) drawNugget(g); }
 // ---- Vending machines: proximity buy for soles (weapon crate / full heal / weapon upgrade) ----
 const VEND_META={
-  weapon:{label:'ARMAS',  body:'#b83a3a', lit:'#e05a5a', dark:'#5a1a1a'},
+  weapon:{label:'ESPECIAL', body:'#b83a3a', lit:'#e05a5a', dark:'#5a1a1a'},   // sells only the rare trio — "ARMAS" read like common guns
   heal:  {label:'VIDA',   body:'#c0407a', lit:'#e05a9a', dark:'#5a1236'},
   enh:   {label:'MEJORA', body:'#3a7ac0', lit:'#4a9ae0', dark:'#132f5a'},
   ticla: {label:'TICLA',  body:'#2f9a55', lit:'#4ec97a', dark:'#0f3a20'},
@@ -2623,8 +2623,8 @@ function drawVend(v){
   ctx.fillStyle=lit?M.lit:M.body; rrect(x-w/2, top, w, h, 6); ctx.fill();
   ctx.fillStyle='rgba(0,0,0,0.18)'; rrect(x-w/2, top, 8, h, 6); ctx.fill();
   ctx.strokeStyle=M.dark; ctx.lineWidth=2; rrect(x-w/2, top, w, h, 6); ctx.stroke();
-  ctx.fillStyle='#ffe14a'; ctx.font='bold 10px Courier New'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  ctx.fillText(M.label, x-8, top+13);
+  ctx.fillStyle='#ffe14a'; ctx.font=(M.label.length>6?'bold 8px Courier New':'bold 10px Courier New'); ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillText(M.label, x-8, top+13);   // long labels (ESPECIAL) shrink to stay inside the machine body
   // glass window with a teaser inside
   ctx.fillStyle='#16222d'; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.fill();
   ctx.strokeStyle='#3a5060'; ctx.lineWidth=1; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.stroke();
@@ -6238,7 +6238,7 @@ function drawPauseSurvival(){
   ctx.textAlign='left';
   // the three vending machines \u2014 what each sells, where it sits, and how prices work
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('M\u00c1QUINAS  \u00b7 compra: F / .', mx+18, py+132);
-  const VM=[['#e05a5a','ARMAS','torreta/bloques/Ale \u00b7 clubhouse'],
+  const VM=[['#e05a5a','ESPECIAL','torreta/bloques/Ale \u00b7 clubhouse'],
             ['#e05a9a','VIDA','vida llena \u00b7 piscina'],
             ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque'],
             ['#2f9a55','TICLA','tu bici \u00b7 playa (se desgasta)']];
