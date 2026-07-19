@@ -233,8 +233,28 @@ function initAudio(){
   try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState() || (NET.role==='guest' && NET.nsel)){ if(currentMap==='laspalmas' && (state===STATE.NETSELECT || (NET.role==='guest' && NET.nsel))){ /* Las Palmas playlist owns the pick screen — don't mix the menu track in */ } else if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
 function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
+// vending "denied" buzzer (no money / health already full): the classic harsh EERGH error sound —
+// a short dissonant two-oscillator sawtooth buzz sliding down. Synthesized, no asset needed. This
+// replaces the plin at the machines (the plin doubles as Freddy's hit sound, which made no sense
+// coming out of a vending machine in Modo Infinito).
+function playDenied(){
+  try{
+    if(!actx){ return; }
+    const t0=actx.currentTime, g=actx.createGain();
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(0.30,t0+0.015);
+    g.gain.setValueAtTime(0.30,t0+0.16);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+0.26);
+    g.connect(sfxGain||actx.destination);
+    for(const f of [98,124]){   // minor-second clash = instant "wrong!"
+      const o=actx.createOscillator();
+      o.type='sawtooth'; o.frequency.setValueAtTime(f,t0); o.frequency.linearRampToValueAtTime(f*0.82,t0+0.24);
+      o.connect(g); o.start(t0); o.stop(t0+0.27);
+    }
+  }catch(e){}
+}
 // "locked" clunk for the enhance machine: two short falling square blips, synthesized so it needs no
-// asset and can't be mistaken for the plin (plin = "no money", lock = "this can NEVER be bought")
+// asset and can't be mistaken for the buzzer (buzzer = "no money", lock = "this can NEVER be bought")
 function playLock(){
   try{
     if(!actx){ playPlin(); return; }
@@ -1121,7 +1141,9 @@ function vendMult(){ return round<=5?1 : round<=10?1.25 : round<=15?1.5 : 1.5+0.
 // The enhance machine prices by TIER of the weapon you're holding (0→1, 1→2, 2→3), so vendCost
 // needs the near player; it returns null when that weapon can't be enhanced (maxed out, or a
 // weapon with no upgrade path like the Distracción) — callers show it locked + play the lock clunk.
-const VEND_BASE={weapon:50, heal:60};
+// weapon machine sells ONLY the rare trio (torreta / bloques / Distracción) — priced so it takes
+// real saving-up: ~3-4 rounds of full income early, just over a round of income deep in a run
+const VEND_BASE={weapon:120, heal:60};
 const ENH_COSTS=[50,90,110];
 function vendCost(v,p){
   let b=VEND_BASE[v.type]||50;
@@ -1591,8 +1613,14 @@ function drawLpItems(){ for(const it of lpItems) drawLpItem(it); }
 let lpCrateT=10;
 // weighted crate loot table — common ammo drops often, the powerful placeables are rare
 // rapid-fire, grenades, mines and fire (the ammo consumables) dominate; blocks/turrets/decoy are rare
-const CRATE_LOOT=[['rapid',12],['fire',7],['grenade',8],['mine',7],['block',2],['torreta',1],['decoy',2]];
+// Map crates rain the COMMON weapons; the rare/powerful trio (torreta, bloques, Distracción) is
+// vending-machine exclusive — that's what the big save-up price at the ARMAS machine buys you.
+const CRATE_LOOT=[['rapid',12],['fire',7],['grenade',8],['mine',7]];
 function pickCrateKind(){ let tot=0; for(const w of CRATE_LOOT) tot+=w[1]; let r=Math.random()*tot; for(const w of CRATE_LOOT){ r-=w[1]; if(r<=0) return w[0]; } return 'rapid'; }
+const VEND_RARES=['torreta','block','decoy'];
+// only offer rares the buyer can actually carry more of — never silently eat 120+ soles for nothing
+function vendRareRoom(p,k){ const a=(p.ammo&&p.ammo[k])||0; return k==='torreta'?a<WEAPONS.torreta.ammoMax : k==='decoy'?a<1 : a<WEAPONS.block.ammoMax*3; }
+function pickVendRare(p){ const av=VEND_RARES.filter(k=>vendRareRoom(p,k)); return av.length?av[randi(0,av.length-1)]:null; }
 const ORO_MAX=100;     // gold nuggets needed to charge the ORO special (was 50)
 const CRATE_LIFE=55;   // crates linger a while so a distant one is worth walking to before it fades
 function spawnWeaponCrate(){
@@ -2302,9 +2330,9 @@ function tryVend(p){
     floatText(v.x, v.y-40, ENHANCEABLE.has(wk) ? nm+' al máximo' : nm+' no se puede mejorar', '#9aa4b0');
     playLock(); return true;
   }
-  if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡Sigues misio! ('+cost+' S/.)', '#ff9a7a'); playPlin(); return true; }
+  if((p.soles||0) < cost){ floatText(v.x, v.y-40, '¡Sigues misio! ('+cost+' S/.)', '#ff9a7a'); playDenied(); return true; }
   if(v.type==='heal'){
-    if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playPlin(); return true; }
+    if(p.hp>=p.maxhp){ floatText(v.x, v.y-40, 'Vida al tope', '#ffcf9a'); playDenied(); return true; }
     p.soles-=cost; vendFlash=0.5; p.hp=p.maxhp;
     floatText(p.x, p.y-30, '¡VIDA LLENA!', '#ff7ab0'); playPickup();
   } else if(v.type==='enh'){
@@ -2314,8 +2342,10 @@ function tryVend(p){
     if(wk==='torreta') bumpPlacedTurrets(players.indexOf(p), p.enh[wk]);   // already-placed turrets upgrade too
     floatText(p.x, p.y-30, (WEAPONS[wk]?WEAPONS[wk].name:wk)+' NIVEL '+p.enh[wk], '#7fd4ff'); playCoin();
   } else {
+    const rk=pickVendRare(p);
+    if(!rk){ floatText(v.x, v.y-40, '¡Ya llevas todo al tope!', '#ffcf9a'); playDenied(); return true; }
     p.soles-=cost; vendFlash=0.5;
-    giveWeapon(p, pickCrateKind());   // giveWeapon already floats the weapon name + plays a coin
+    giveWeapon(p, rk);   // rare-only stock; giveWeapon floats the name + plays a coin
   }
   spark(v.x, v.y-6, '#ffe07a', 22, 170); cameraShake=4;
   return true;
@@ -2333,7 +2363,7 @@ function drawVend(v){
   // glass window with a teaser inside
   ctx.fillStyle='#16222d'; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.fill();
   ctx.strokeStyle='#3a5060'; ctx.lineWidth=1; rrect(x-w/2+7, top+20, w-26, h-42, 3); ctx.stroke();
-  if(v.type==='weapon'){ try{ drawWeaponCrate(x-6, top+40, 'rapid'); }catch(e){} }
+  if(v.type==='weapon'){ try{ drawWeaponCrate(x-6, top+40, VEND_RARES[Math.floor(time/1.4)%VEND_RARES.length]); }catch(e){} }   // teaser cycles the rare stock
   else if(v.type==='heal'){ ctx.fillStyle='#ff5fa0'; ctx.font='bold 22px Courier New'; ctx.textAlign='center'; ctx.fillText('♥', x-6, top+48); }
   else { ctx.fillStyle='#7fd4ff'; ctx.font='bold 20px Courier New'; ctx.textAlign='center'; ctx.fillText('▲', x-6, top+47); }
   ctx.strokeStyle='rgba(255,255,255,0.16)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x-w/2+11, top+24); ctx.lineTo(x-w/2+11, top+h-26); ctx.stroke();
@@ -5877,7 +5907,7 @@ function drawPauseSurvival(){
   ctx.textAlign='left';
   // the three vending machines \u2014 what each sells, where it sits, and how prices work
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('M\u00c1QUINAS  \u00b7 compra: F / .', mx+18, py+132);
-  const VM=[['#e05a5a','ARMAS','arma al azar \u00b7 clubhouse'],
+  const VM=[['#e05a5a','ARMAS','torreta/bloques/Ale \u00b7 clubhouse'],
             ['#e05a9a','VIDA','vida llena \u00b7 piscina'],
             ['#4a9ae0','MEJORA','sube el arma en mano \u00b7 parque']];
   let vy=py+154;
@@ -7457,6 +7487,7 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   sfxLaunch=wrapSnd('lnch',sfxLaunch); sfxBoom=wrapSnd('boom',sfxBoom);
   sfxPlace=wrapSnd('plc',sfxPlace);   sfxTurretShot=wrapSnd('tshot',sfxTurretShot);
   playLock=wrapSnd('lock',playLock);   // enhance-machine "locked" clunk reaches guest buyers too
+  playDenied=wrapSnd('deny',playDenied);   // vending "no money" buzzer too
   const _pps=playPunchSound;   // punch voices key off the puncher's character
   playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
 }
@@ -7471,7 +7502,7 @@ const NET_SND={
   fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
   lnch:()=>sfxLaunch(), boom:()=>sfxBoom(), plc:()=>sfxPlace(), tshot:()=>sfxTurretShot(),
   aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
-  lock:()=>playLock()
+  lock:()=>playLock(), deny:()=>playDenied()
 };
 let gLastEvt=0, gEvtSynced=false;
 function netPlayEvts(d){
