@@ -1113,8 +1113,11 @@ const LP_VENDING  ={x:2060, y:498,  w:VEND_W, h:VEND_H, r:VEND_R, type:'weapon'}
 const LP_VEND_HEAL={x:735,  y:1690, w:VEND_W, h:VEND_H, r:VEND_R, type:'heal'};     // bottom-left of the pool building
 const LP_VEND_ENH ={x:1235, y:470,  w:VEND_W, h:VEND_H, r:VEND_R, type:'enh'};      // right edge of the playground sand
 const LP_VENDS=[LP_VENDING, LP_VEND_HEAL, LP_VEND_ENH];
-// Base prices per machine; every round past the 1st adds +10% (rounded to 5) so the shop stays
-// "equally hard" as kills (and soles income) grow with the rounds.
+// Price curve: flat 5-round blocks early — you can't even scrape 50 soles in round 1, so per-round
+// bumps there were pure punishment — then per-round growth from round 16 on, paced to how income
+// actually grows (enemy count ≈ linear-plus), so buying perks stays "about the same effort" forever:
+//   rondas 1-5: ×1 · 6-10: ×1.25 · 11-15: ×1.5 · 16+: +10% of base each round
+function vendMult(){ return round<=5?1 : round<=10?1.25 : round<=15?1.5 : 1.5+0.10*(round-15); }
 // The enhance machine prices by TIER of the weapon you're holding (0→1, 1→2, 2→3), so vendCost
 // needs the near player; it returns null when that weapon can't be enhanced (maxed out, or a
 // weapon with no upgrade path like the Distracción) — callers show it locked + play the lock clunk.
@@ -1129,7 +1132,7 @@ function vendCost(v,p){
       b=ENH_COSTS[Math.min(lvl,ENH_COSTS.length-1)];
     } else b=ENH_COSTS[0];
   }
-  return Math.max(b, Math.round(b*(1+0.10*Math.max(0,round-1))/5)*5);
+  return Math.max(b, Math.round(b*vendMult()/5)*5);
 }
 const VENDING_COST=50;                     // legacy constant (some help text) — real prices come from vendCost()
 let vendFlash=0;
@@ -5885,7 +5888,7 @@ function drawPauseSurvival(){
     vy+=34;
   }
   ctx.fillStyle='#8a97a4'; ctx.font='10px Courier New';
-  wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Todos los precios suben cada ronda.', mx+18, vy+4, mw-32, 13);
+  wrapText('MEJORA: 3 niveles por arma \u2014 50, 90 y 110 S/. (la Distracci\u00f3n no se mejora). Los precios suben cada 5 rondas.', mx+18, vy+4, mw-32, 13);
   const POW=[['#dfeaff','ZAPATILLA','+ velocidad'],
              ['#ff5a6a','CORAZ\u00d3N','+ vida'],
              ['#8ac24a','CAJAS','arma al azar']];
