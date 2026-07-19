@@ -2387,18 +2387,30 @@ function updateBullets(dt){
     if(hit || b.life<=0 || b.x<0||b.y<0||b.x>WORLD_W||b.y>WORLD_H){ bullets.splice(i,1); }
   }
 }
-// ---- Fire: incendiary rounds ignite enemies, the flames spread to whoever they touch and burn HP away ----
-function igniteEnemy(e,owner){ if(e.boss) { e.burnT=Math.max(e.burnT||0,2.5); } else { e.burnT=4.5; } e.burnOwner=owner; }
+// ---- Fire: incendiary rounds ignite enemies, the flames spread to whoever they touch ----
+// Two tiers of burn: a DIRECT hit (lit up by the shot itself) burns all the way to death, while an
+// enemy merely INFECTED by the spreading flames chars down to a sliver (~6% HP) and stops there —
+// crippled and one tap from dead, but the contagion alone doesn't finish them.
+function igniteEnemy(e,owner,spread){
+  if(e.boss){ e.burnT=Math.max(e.burnT||0,2.5); } else { e.burnT=4.5; }
+  e.burnOwner=owner;
+  if(!spread) e.burnFatal=true;   // sticky: once shot-lit, a later re-ignition still burns fatal
+}
 function updateBurns(dt){
   for(const e of enemies){ if(e.dead || !(e.burnT>0)) continue;
     e.burnT-=dt;
-    const dps=e.maxhp*(e.boss?0.06:0.22);   // burns HP down; bosses resist
-    e.hp-=dps*dt;
+    // fatal (shot-lit) burn runs a touch hotter so 4.5s always covers 100% even without the
+    // shot's own damage; bosses resist either way
+    const dps=e.maxhp*(e.boss?0.06:(e.burnFatal?0.24:0.22));
+    if(!e.boss && !e.burnFatal){
+      const floor=e.maxhp*0.06;
+      if(e.hp>floor) e.hp=Math.max(floor, e.hp-dps*dt);   // spread burn never kills on its own
+    } else e.hp-=dps*dt;
     if(Math.random()<0.5) spark(e.x,e.y-e.radius*0.4,(Math.random()<0.5?'#ff7a2a':'#ffd24a'),1,60);
     if(e.hp<=0){ const owner=players[e.burnOwner]; killEnemy(e, owner); continue; }
     // spread to any non-burning enemy pressed against this one
     for(const o of enemies){ if(o===e||o.dead||o.burnT>0) continue;
-      if(dist(e.x,e.y,o.x,o.y) < (e.footR||e.radius)+(o.footR||o.radius)+4){ o.burnT=Math.min(e.burnT,3.2)+0.6; o.burnOwner=e.burnOwner; }
+      if(dist(e.x,e.y,o.x,o.y) < (e.footR||e.radius)+(o.footR||o.radius)+4){ igniteEnemy(o, e.burnOwner, true); o.burnT=Math.min(e.burnT,3.2)+0.6; }
     }
   }
 }
