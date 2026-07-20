@@ -566,7 +566,7 @@ function sfxBoom(x,y){ if(!actx) return; try{ const g=_proxGainFar(x,y); if(g<0.
 }catch(e){} }
 function sfxPlace(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime; _tone(t,0.09,0.2*g,'square',300,160); _noise(t,0.05,0.12*g,'lowpass',900); }catch(e){} }
 function sfxTurretShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.turret, 0.5*g); }catch(e){} }
-function sfxEscoShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.esco, 0.75*g); }catch(e){} }   // ESCOPETA blast
+function sfxEscoShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.esco, 0.38*g); }catch(e){} }   // ESCOPETA blast (recording runs hot — played at about half gain)
 
 const FREDDY_CELL={w:106,h:138};
 const FREDDY_PUNCH_DUR=0.22;
