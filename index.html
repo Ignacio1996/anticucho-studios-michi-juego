@@ -225,7 +225,7 @@ function initAudio(){
     applyMusicVol();
     // warm the buffer cache for the most frequent SFX so even their first play skips the element fallback
     try{ sfxBuffer(AUDIO_SRC.plin); sfxBuffer(AUDIO_SRC.plin2); sfxBuffer(AUDIO_SRC.wow); }catch(e){}
-    try{ sfxBuffer(WSFX.gun); for(const f of WSFX.fb) sfxBuffer(f); sfxBuffer(WSFX.slimehit); sfxBuffer(WSFX.turret); }catch(e){}
+    try{ sfxBuffer(WSFX.gun); for(const f of WSFX.fb) sfxBuffer(f); sfxBuffer(WSFX.slimehit); sfxBuffer(WSFX.turret); sfxBuffer(WSFX.esco); }catch(e){}
     // ...and the character voices a moment later (after the sprite burst), so the FIRST death/select
     // of a match doesn't wait on a network fetch — that lag was audible on CDN-hosted builds
     try{ setTimeout(()=>{ try{
@@ -236,7 +236,7 @@ function initAudio(){
   }
   try{ if(actx && actx.state==='suspended') actx.resume(); if(introPlaying){ /* Las Palmas intro clip owns the audio — never resurrect a music track under it */ } else if(state===STATE.LOADING){ /* no music until the menu is ready */ } else if(isMenuState() || (NET.role==='guest' && NET.nsel)){ if(currentMap==='laspalmas' && (state===STATE.NETSELECT || (NET.role==='guest' && NET.nsel))){ /* Las Palmas playlist owns the pick screen — don't mix the menu track in */ } else if(menuMusic && menuMusic.paused) menuMusic.play().catch(()=>{}); } else { const gt=gameTrack(); if(gt && gt.paused && (!deathMusic || deathMusic.paused) && (!losAndesMusic || losAndesMusic.paused) && state!==STATE.OVER && state!==STATE.VICTORY) gt.play().catch(()=>{}); } }catch(e){}
 }
-function playPlin(){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4); }
+function playPlin(g){ plinCount++; playSfx(plinCount%7===0?AUDIO_SRC.plin2:AUDIO_SRC.plin, 0.4*(g==null?1:g)); }
 // vending "denied" buzzer (no money / health already full): the classic harsh EERGH error sound —
 // a short dissonant two-oscillator sawtooth buzz sliding down. Synthesized, no asset needed. This
 // replaces the plin at the machines (the plin doubles as Freddy's hit sound, which made no sense
@@ -286,8 +286,11 @@ function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6);
 const VOICE_BOOST={ alfredo_sel:4.5, alfredo_die:1.6, alfredo_hit1:2.8, alfredo_hit2:2.8,
                     mati_sel:3.0, mati_die:1.6, mati_hit1:2.1, mati_hit2:2.0 };
 function voiceVol(clip, base){ return base*(VOICE_BOOST[clip]||1); }
-function playCharSelect(kind){ if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], voiceVol(kind+'_sel',0.95)); }
-function playCharDeath(kind){ if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], voiceVol(kind+'_die',0.95)); }
+// Character voices are proximity-scaled when the caller passes world coords (Modo Infinito has
+// per-player cameras — a teammate dying across the map shouldn't shout in your ear). Calls
+// without coords (menus, char-select screens) keep the old full-volume behavior.
+function playCharSelect(kind,x,y){ const g=_proxGain(x,y); if(g<0.04) return; if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], voiceVol(kind+'_sel',0.95)*g); }
+function playCharDeath(kind,x,y){ const g=_proxGain(x,y); if(g<0.04) return; if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], voiceVol(kind+'_die',0.95)*g); }
 function playRoundStart(r){
   const boss=(r%5===0);
   if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
@@ -374,7 +377,7 @@ function musicLoopTrim(){
   const list=[bgMusic,sbMusic,tpMusic,evMusic,pvpMusic,menuMusic,losAndesMusic];
   for(const el of list){ if(!el||el.paused) continue; const end=measureAudioEnd(el._src); if(end>0 && (el.currentTime||0)>=end-0.04){ try{ el.currentTime=0; }catch(e){} } }
 }
-function playWow(){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; playSfx(AUDIO_SRC.wow, 0.4); }
+function playWow(g){ const now=(typeof performance!=='undefined'?performance.now():Date.now()); if(now-lastWow<1500) return; lastWow=now; playSfx(AUDIO_SRC.wow, 0.4*(g==null?1:g)); }
 function playPickup(){
   if(!actx) return;
   try{
@@ -516,7 +519,8 @@ const WSFX={ gun:'assets/sfx_gun.mp3',
   fb:['assets/sfx_fb1.mp3','assets/sfx_fb2.mp3','assets/sfx_fb3.mp3','assets/sfx_fb4.mp3','assets/sfx_fb5.mp3'],
   rapid:'assets/sfx_rapidloop.mp3', nadepin:'assets/sfx_nadepin.mp3', nadethrow:'assets/sfx_nadethrow.mp3',
   nadeboom:'assets/sfx_nadeboom.mp3', mineboom:'assets/sfx_mineboom.mp3', blockplace:'assets/sfx_blockplace.mp3',
-  aletoss:'assets/sfx_aletoss.mp3', slimehit:'assets/sfx_slimehit.mp3', turret:'assets/sfx_turretshot.mp3' };
+  aletoss:'assets/sfx_aletoss.mp3', slimehit:'assets/sfx_slimehit.mp3', turret:'assets/sfx_turretshot.mp3',
+  esco:'assets/sfx_escopeta.mp3' };
 function sfxGun(rapid,x,y,ch){ try{ const g=_proxGain(x,y); if(g<0.04) return;
   if(rapid){ _rapidFeed(g,ch); return; }   // held RÁPIDA = one resumable loop PER SHOOTER, not per-shot blips
   if(actx){ const t=actx.currentTime; if(t-_lastGunT<0.02) return; _lastGunT=t; }
@@ -562,6 +566,7 @@ function sfxBoom(x,y){ if(!actx) return; try{ const g=_proxGainFar(x,y); if(g<0.
 }catch(e){} }
 function sfxPlace(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime; _tone(t,0.09,0.2*g,'square',300,160); _noise(t,0.05,0.12*g,'lowpass',900); }catch(e){} }
 function sfxTurretShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.turret, 0.5*g); }catch(e){} }
+function sfxEscoShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.esco, 0.75*g); }catch(e){} }   // ESCOPETA blast
 
 const FREDDY_CELL={w:106,h:138};
 const FREDDY_PUNCH_DUR=0.22;
@@ -998,7 +1003,12 @@ addEventListener('keydown', e => {
   if(introPlaying){ e.preventDefault(); if(introSkip && (e.code==='Space'||e.code==='Enter'||e.code==='Escape')) introSkip(); return; }
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Comma'].includes(e.code)) e.preventDefault();
-  if (e.code === 'Escape'){ if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && (pvp.paused||pvpInfo) && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
+  if (e.code === 'Escape'){
+    // an open soles-transfer menu swallows the first Esc (so pausing takes Esc twice from there)
+    const _xf0=survival && state===STATE.PLAY && NET.role!=='guest' && players[0] && players[0]._xfer && players[0]._xfer.open;
+    const _xf1=survival && state===STATE.PLAY && NET.role!=='guest' && players[1] && !players[1].netRemote && players[1]._xfer && players[1]._xfer.open;
+    if(_xf0||_xf1){ if(_xf0) players[0]._xfer.open=false; if(_xf1) players[1]._xfer.open=false; }
+    else if(state===STATE.PAUSE && pauseView==='settings'){ pauseView='main'; } else if(state===STATE.PVP && (pvp.paused||pvpInfo) && NET.role!=='guest' && pvp.pauseView==='settings'){ pvp.pauseView='main'; } else togglePause(); }
   // Modo Infinito weapon switch: number keys 1..N pick a slot for the local player
   if(survival && state===STATE.PLAY){
     const lp=players[NET.role==='guest'?NET.slot:0];
@@ -1011,16 +1021,19 @@ addEventListener('keydown', e => {
     if(NET.role!=='guest' && players[1] && (e.code==='Slash'||e.code==='ShiftRight')){ cycleWeapon(players[1], 1); }
     // P1 can also cycle with Q / E without reaching for the number row
     if(NET.role!=='guest' && players[0] && (e.code==='KeyQ'||e.code==='KeyE')){ cycleWeapon(players[0], e.code==='KeyQ'?-1:1); }
-    // dead online host: A / D hop between the teammates still fighting
-    if(NET.hosting && lp && !lp.alive && !lp.departed && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight'))
+    // dead online host: A / D hop between the teammates still fighting (not while the transfer menu has the arrows)
+    if(NET.hosting && lp && !lp.alive && !lp.departed && !(lp._xfer&&lp._xfer.open) && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight'))
       specCycle((e.code==='KeyA'||e.code==='ArrowLeft')?-1:1);
     // ---- soles transfer menus (host + local co-op). Guests handle theirs inside the swallow. ----
     if(NET.role!=='guest'){
+      // dead players can still open the menu — a spectator sending their soles to the living is
+      // exactly what the yapeo is for (only departed/pending players are locked out)
       const p0=players[0], p1=players[1], p1Local=p1 && !p1.netRemote;
-      if(e.code==='KeyP' && p0 && p0.alive){ const st=xferState(p0); st.open=!st.open; st.amt=10; }
-      if(e.code==='BracketLeft' && p1Local && p1.alive){ const st=xferState(p1); st.open=!st.open; st.amt=10; }
-      const m0=p0 && p0._xfer && p0._xfer.open && p0.alive;
-      const m1=p1Local && p1._xfer && p1._xfer.open && p1.alive;
+      const canXfer=q=>q && !q.departed && !q.pending;
+      if(e.code==='KeyP' && canXfer(p0)){ const st=xferState(p0); st.open=!st.open; st.amt=10; }
+      if(e.code==='BracketLeft' && p1Local && canXfer(p1)){ const st=xferState(p1); st.open=!st.open; st.amt=10; }
+      const m0=canXfer(p0) && p0._xfer && p0._xfer.open;
+      const m1=p1Local && canXfer(p1) && p1._xfer && p1._xfer.open;
       if(m0){ const st=p0._xfer;
         if(e.code==='ArrowUp') st.sel--; else if(e.code==='ArrowDown') st.sel++;
         else if(e.code==='ArrowLeft') st.amt=Math.max(10,st.amt-10); else if(e.code==='ArrowRight') st.amt=Math.min(990,st.amt+10);
@@ -1489,7 +1502,7 @@ function enhLvl(p,k){ return p&&p.enh ? Math.min(ENH_MAX,(p.enh[k]||0)) : 0; }
 function wDmgMul(p,k){ return WENH_DMG[enhLvl(p,k)]; }
 function wRadMul(p,k){ return WENH_RAD[enhLvl(p,k)]; }
 // weapons the MEJORA machine can improve (the Distracción lure is excluded — nothing to level)
-const ENHANCEABLE=new Set(['pistol','rapid','fire','grenade','mine','block','torreta']);
+const ENHANCEABLE=new Set(['pistol','rapid','fire','escopeta','grenade','mine','block','torreta']);
 // Speed stays constant from round 1 to the last round on any given map — the only way to go
 // faster is by stacking Tierra apuchis. (The machu/templo ×1.2 is a per-map constant, applied
 // every round and matched on enemies, not a late-round ramp.)
@@ -1692,7 +1705,7 @@ function drawWeaponCrate(x,y,kind){   // wooden ammo crate stamped with the weap
   ctx.strokeStyle='#4a3016'; ctx.lineWidth=1.5; rrect(x-13,y-11,26,22,3); ctx.stroke();
   ctx.fillStyle=W2.col; ctx.fillRect(x-11,y-2,22,7);
   ctx.fillStyle='#241a10'; ctx.font='bold 12px Courier New'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  const IN={rapid:'R',fire:'F',grenade:'G',mine:'M',block:'B',torreta:'T'};
+  const IN={rapid:'R',fire:'F',escopeta:'E',grenade:'G',mine:'M',block:'B',torreta:'T'};
   ctx.fillText(IN[kind]||'?', x, y+1); ctx.textBaseline='alphabetic'; ctx.textAlign='left';
 }
 function drawLpItem(it){
@@ -1713,7 +1726,7 @@ let lpCrateT=10;
 // Even split, drawn from a SHUFFLED BAG (same trick as the vending rares): each kind appears its
 // weighted number of times per bag cycle, so no kind can flood the map on a lucky streak. With the
 // old independent rolls at rapid=12/34, streaks regularly left most visible boxes RÁPIDA crates.
-const CRATE_LOOT=[['rapid',2],['fire',2],['grenade',2],['mine',2]];
+const CRATE_LOOT=[['rapid',2],['fire',2],['escopeta',2],['grenade',2],['mine',2]];
 let _crateBag=[];   // host-only (crates replicate through lpItems), refills+reshuffles when empty
 function pickCrateKind(){
   if(!_crateBag.length){
@@ -1823,20 +1836,25 @@ function updateLeaves(dt){
     if(!gone) for(const p of players){ if(!p.alive) continue;
       const _py=p.y+(currentMap==='machu'?machuElev(p.x):0);
       if(dist(l.x,l.y,p.x,_py) < p.radius+9){
+        // Distracción safe-zone: the shot fizzles on the ring instead of hurting whoever's inside
+        if(decoyShielded(p.x,p.y)){ spark(l.x,l.y,'#ffcf9a',6,110); gone=true; break; }
         p.hitFlash=1.0; cameraShake=3;
         if(l.plasma) sfxSlimeHit(l.x,l.y);   // slime splash on impact
         if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',10,140); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-        else { p.hp-=l.dmg; spark(p.x,p.y,'#ff5050',6,100); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,p.color,20,180);} }
+        else { p.hp-=l.dmg; spark(p.x,p.y,'#ff5050',6,100); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind,p.x,p.y); spark(p.x,p.y,p.color,20,180);} }
         gone=true; break;
       }
     }
     // enemy shots also hurt recruited AI allies (death handled by updateNpcs)
     if(!gone && survival) for(const n of npcs){ if(n.npcState!=='active') continue;
-      if(dist(l.x,l.y,n.x,n.y) < n.radius+9){ n.hitFlash=1.0; n.hp-=l.dmg; spark(n.x,n.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true; break; }
+      if(dist(l.x,l.y,n.x,n.y) < n.radius+9){
+        if(decoyShielded(n.x,n.y)){ spark(l.x,l.y,'#ffcf9a',6,110); gone=true; break; }   // safe inside the Distracción ring
+        n.hitFlash=1.0; n.hp-=l.dmg; spark(n.x,n.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true; break; }
     }
     // ...and the Super Ayuda (his death plays out in updateTio)
     if(!gone && survival && tioTargetable() && dist(l.x,l.y,tio.x,tio.y) < tio.radius+9){
-      tio.hitFlash=1.0; tio.hp-=l.dmg; spark(tio.x,tio.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true;
+      if(decoyShielded(tio.x,tio.y)){ spark(l.x,l.y,'#ffcf9a',6,110); gone=true; }
+      else { tio.hitFlash=1.0; tio.hp-=l.dmg; spark(tio.x,tio.y,'#ff5050',6,100); if(l.plasma) sfxSlimeHit(l.x,l.y); gone=true; }
     }
     if(gone) leaves.splice(i,1);
   }
@@ -1907,13 +1925,14 @@ const WEAPONS={
   pistol:  {name:'PISTOLA',  col:'#fff6d6', auto:false, cd:0.16, ammoMax:0 },   // unlimited
   rapid:   {name:'RÁPIDA',   col:'#7fd4ff', auto:true,  cd:0.06, ammoMax:110},
   fire:    {name:'FUEGO',    col:'#ff7a2a', auto:false, cd:0.45, ammoMax:26},   // ignites + spreads; deliberate trigger — slower than the pistol
+  escopeta:{name:'ESCOPETA', col:'#e878ff', auto:false, cd:2.4,  ammoMax:10},   // short-range pellet fan; devastating up close (cd comes from ESCO_CD per level)
   grenade: {name:'GRANADAS', col:'#8ac24a', auto:false, cd:0.5,  ammoMax:8 },
   mine:    {name:'MINAS',    col:'#ff5a4a', auto:false, cd:0.4,  ammoMax:5 },   // proximity blast
   block:   {name:'BLOQUES',  col:'#d8d2c2', auto:false, cd:0.28, ammoMax:12},   // concrete barricade
   torreta: {name:'TORRETA',  col:'#caa66a', auto:false, cd:0.5,  ammoMax:3 },   // auto arrow turret
   decoy:   {name:'DISTRACCIÓN', col:'#ffb45a', auto:false, cd:0.5, ammoMax:1 }, // Alessito — throwable lure that blows up
 };
-const WEAPON_ORDER=['pistol','rapid','fire','grenade','mine','block','torreta','decoy'];   // number keys 1..N map to this order
+const WEAPON_ORDER=['pistol','rapid','fire','escopeta','grenade','mine','block','torreta','decoy'];   // number keys 1..N map to this order
 function weaponOwned(p,k){ return k==='pistol' || !!(p.ammo && p.ammo[k]>0); }
 function giveWeapon(p,k){ const W=WEAPONS[k]; if(!W) return; if(!p.ammo) p.ammo={};
   // Turrets are powerful — a crate grants just ONE, but you can stockpile up to 3 from multiple crates.
@@ -1940,6 +1959,37 @@ function fireBullet(p,fire){
                  wmul:(survival?wDmgMul(p,wk):1) });   // survival pistol/rapid use the LP_SHOTS table; fire keeps the multiplier
   spark(bx+cx*6, by+cy*6, fire?'#ff9a2a':'#bfe4ff', fire?5:3, 130);
 }
+// ---- ESCOPETA: a fan of pellets with hard range limit and distance falloff. Point-blank it
+// deletes whatever is in front of you; at the edge of its (short) reach it only stings. The
+// MEJORA levels stretch the reach, raise the far-end damage (level 3 one-shots anything the
+// pellets touch) and speed up the very slow pump between shots.
+const ESCO_PELLETS=7;
+const ESCO_ARC=0.42;                        // total fan width in radians (~24°)
+const ESCO_SPD=980;
+const ESCO_CD   =[2.4, 2.4, 1.9, 1.2];      // seconds between shots per enh level — always far slower than FUEGO
+const ESCO_RANGE=[240, 300, 360, 360];      // pellet reach per enh level
+const ESCO_FARF =[0.15,0.30,0.55,1.00];     // damage fraction (of enemy max HP) per pellet at MAX range
+function escoDmgFrac(d,range,lvl){
+  if(lvl>=3) return 1;                       // enh3: every pellet is lethal across the whole reach
+  const t=clamp(d/Math.max(1,range),0,1);
+  if(t<0.35) return 1;                       // "right next to you" zone: one hit kills
+  return 1-(1-ESCO_FARF[Math.min(3,lvl)])*((t-0.35)/0.65);   // fades toward the far-end fraction
+}
+function fireShotgun(p){
+  let fx=p.facing.x, fy=p.facing.y; if(!fx && !fy){ fy=1; }
+  const ang=Math.round(Math.atan2(fy,fx)/(Math.PI/4))*(Math.PI/4);   // same 8-way snap as the other guns
+  const lvl=survival?enhLvl(p,'escopeta'):0, range=ESCO_RANGE[lvl];
+  const mz=18, bx=p.x+Math.cos(ang)*mz, by=p.y+Math.sin(ang)*mz;
+  for(let i=0;i<ESCO_PELLETS;i++){
+    const a=ang + (i/(ESCO_PELLETS-1)-0.5)*ESCO_ARC + rand(-0.03,0.03);
+    const rr=range*rand(0.88,1.0);           // ragged pellet reach — the fan's edge isn't a perfect arc
+    bullets.push({ id:_entId++, x:bx, y:by, vx:Math.cos(a)*ESCO_SPD, vy:Math.sin(a)*ESCO_SPD,
+                   life:rr/ESCO_SPD, owner:players.indexOf(p), pmul:PIEDRA_MULT[p.piedra],
+                   esco:1, ox:bx, oy:by, range:rr, wk:'escopeta', lvl });
+  }
+  spark(bx+Math.cos(ang)*8, by+Math.sin(ang)*8, '#ffd9a0', 8, 160);
+  cameraShake=Math.max(cameraShake,3);
+}
 function tryShoot(p){
   if(!p.alive || p.cooldown>0) return;
   if(p.special==='morganita'){ p.cooldown=effCd(p); p.punchAnim=CHARS[p.kind].pd; fireBeam(p); p.specialCharges--; if(p.specialCharges<=0){ p.special='none'; floatText(p.x,p.y-26,'MORGANITA agotada','#ff7ab0'); } return; }
@@ -1948,6 +1998,7 @@ function tryShoot(p){
   p.cooldown=W.cd; p.punchAnim=CHARS[p.kind].pd;
   if(wk==='grenade'){ throwGrenade(p); consumeAmmo(p,'grenade'); sfxNadeThrow(p.x,p.y); return; }
   if(wk==='fire'){ fireBullet(p,true); consumeAmmo(p,'fire'); sfxFireShot(p.x,p.y); return; }
+  if(wk==='escopeta'){ p.cooldown=ESCO_CD[survival?enhLvl(p,'escopeta'):0]; fireShotgun(p); consumeAmmo(p,'escopeta'); sfxEscoShot(p.x,p.y); return; }
   if(wk==='mine'){ if(placeMine(p)) consumeAmmo(p,'mine'); return; }
   if(wk==='block'){ if(placeBlockLP(p)) consumeAmmo(p,'block'); else p.cooldown=0.1; return; }
   if(wk==='torreta'){ if(placeTurretLP(p)) consumeAmmo(p,'torreta'); else p.cooldown=0.1; return; }
@@ -1967,6 +2018,7 @@ const BLAST_PLAYER_FRAC=0.2;
 function blastHurtPlayers(x,y,R){
   for(const p of players){
     if(!p.alive || p.pending) continue;
+    if(decoyShielded(p.x,p.y)) continue;   // inside the Distracción's ring nothing touches you
     if(dist(x,y,p.x,p.y) >= R+p.radius) continue;
     const dmg=Math.round(p.maxhp*BLAST_PLAYER_FRAC);
     p.hp=Math.max(1, p.hp-dmg);
@@ -2020,7 +2072,7 @@ function placeTurretLP(p){
   const before=turrets.length;
   if(!placeTurret(p)) return false;
   const t=turrets[turrets.length-1];   // beef the survival turret: tougher, faster, longer reach
-  if(t && turrets.length>before){ t.hp=t.maxhp=800; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // 800hp: it's a 120+ soles rare now, it should hold the line (was 400)
+  if(t && turrets.length>before){ t.hp=t.maxhp=1500; t.cd=0.4; t.beef=true; t.owner=players.indexOf(p); t.enh=enhLvl(p,'torreta'); }   // 1500hp: it's a 120+ soles rare, it should hold the line for real in late rounds (was 800)
   sfxPlace(p.x,p.y); return true;   // deploy thunk — the recorded turret sound now plays per ARROW instead
 }
 // ---- Grenades + explosions (grenade launcher; also reused by mines later) ----
@@ -2081,9 +2133,18 @@ const ALE_IMG={}; for(const k of ALE_KEYS){ const im=new Image(); im.src='assets
 const ALE_AUD_SRC={FELICIDAD:'assets/Ale_FELICIDAD.mp3', NERVIOSandCRY:'assets/Ale_NERVIOSandCRY.mp3', DEATHLONG:'assets/Ale_DEATHLONG.mp3'};
 const _aleEls={};
 function aleEl(k){ let a=_aleEls[k]; if(!a){ try{ a=new Audio(ALE_AUD_SRC[k]); a.preload='metadata'; _aleEls[k]=a; }catch(e){ return null; } } return a; }
-function playAle(k){ try{ const a=aleEl(k); if(a){ a.currentTime=0; a.volume=0.95; a.play().catch(()=>{}); } }catch(e){} }
+function playAle(k,x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; const a=aleEl(k); if(a){ a.currentTime=0; a.volume=clamp(0.95*g,0,1); a.play().catch(()=>{}); } }catch(e){} }
 function aleDur(k,fb){ const a=_aleEls[k]; return (a && isFinite(a.duration) && a.duration>0.5) ? a.duration : fb; }
 const DECOY_LURE_R=280;    // enemies inside this radius drop the players and mob Alessito (outside: unaware, still shootable)
+// SAFE ZONE: while Alessito is down there doing his thing, players and allied NPCs standing inside
+// his lure ring can't be damaged by anything — the enemies only have eyes for him.
+function decoyShielded(x,y){
+  if(!survival) return false;
+  for(const dc of decoys){
+    if((dc.phase==='idle'||dc.phase==='scared'||dc.phase==='doom') && dist(x,y,dc.x,dc.y)<DECOY_LURE_R) return true;
+  }
+  return false;
+}
 const ALE_ALERT_R=230;     // enemies this close trigger his panic (and the countdown to the blast) — inside the lure ring
 const ALE_BOOM_R=340;      // the goodbye explosion
 function throwDecoy(p,power){
@@ -2102,7 +2163,7 @@ function updateDecoys(dt){
       if(lpSolidAt(d.x,d.y)){ d.x=ox; d.y=oy; d.vx=0; d.vy=0; }   // no bounce — he just stops
       if(Math.hypot(d.vx,d.vy)<55){ d.phase='land'; d.pose='LAND'; d.t=0; }
     } else if(d.phase==='land'){
-      if(d.t>=1.6){ d.phase='idle'; d.t=0; playAle('FELICIDAD'); netQSnd('aleF'); }
+      if(d.t>=1.6){ d.phase='idle'; d.t=0; playAle('FELICIDAD',d.x,d.y); netQSnd('aleF',{x:Math.round(d.x),y:Math.round(d.y)}); }
     } else if(d.phase==='idle'){
       // idle facing his thrower: south poses when the player is S/SE/SW, east pose for E/NE/N
       // (flipped for W/NW) — exactly the panel rules
@@ -2111,11 +2172,11 @@ function updateDecoys(dt){
         if(dy>Math.abs(dx)*0.45){ d.pose='SOUTH_IDLE'; d.flip=false; }
         else { d.pose='EAST_IDLE'; d.flip=dx<0; } }
       for(const e of enemies){ if(!e.dead && !e.boss && dist(e.x,e.y,d.x,d.y)<ALE_ALERT_R){
-        d.phase='scared'; d.t=0; playAle('NERVIOSandCRY'); netQSnd('aleN'); break; } }
+        d.phase='scared'; d.t=0; playAle('NERVIOSandCRY',d.x,d.y); netQSnd('aleN',{x:Math.round(d.x),y:Math.round(d.y)}); break; } }
     } else if(d.phase==='scared'){
       // fixed montage over Ale_NERVIOSandCRY: EAST_SCARED1 5s → EARS 3s → WEST_SCARED1 3s → SOUTH_SCARED1 4s
       d.pose = d.t<5?'EAST_SCARED1' : d.t<8?'EARS' : d.t<11?'WEST_SCARED1' : 'SOUTH_SCARED1'; d.flip=false;
-      if(d.t>=15){ d.phase='doom'; d.t=0; d.boomT=aleDur('DEATHLONG',7); d.nextP=0; playAle('DEATHLONG'); netQSnd('aleD'); }
+      if(d.t>=15){ d.phase='doom'; d.t=0; d.boomT=aleDur('DEATHLONG',7); d.nextP=0; playAle('DEATHLONG',d.x,d.y); netQSnd('aleD',{x:Math.round(d.x),y:Math.round(d.y)}); }
     } else if(d.phase==='doom'){
       // scared poses shuffle at random beats until Ale_DEATHLONG runs out — then the big goodbye
       if(d.t>=d.nextP){ d.nextP=d.t+rand(1.4,2.6); d.pose=['EAST_SCARED1','EARS','WEST_SCARED1','SOUTH_SCARED1','NORTH_SCARED1'][randi(0,4)]; d.flip=false; }
@@ -2213,9 +2274,9 @@ const TIO_AUD_SRC={ INTRO:'assets/Tio_INTRO.mp3', DEATHAUDIO:'assets/Tio_DEATHAU
   MUERTOS:'assets/Tio_extraMUERTOS.mp3', CHISTE:'assets/Tio_Marcianos_chiste.mp3', SAPITO:'assets/Tio_SAPITO.mp3' };
 const _tioEls={};
 function tioEl(k){ let a=_tioEls[k]; if(!a){ try{ a=new Audio(TIO_AUD_SRC[k]); a.preload='metadata'; _tioEls[k]=a; }catch(e){ return null; } } return a; }
-function playTio(k){ try{ const a=tioEl(k); if(a){ a.currentTime=0; a.volume=0.95*sfxVol; a.play().catch(()=>{}); } }catch(e){} }
+function playTio(k,x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; const a=tioEl(k); if(a){ a.currentTime=0; a.volume=clamp(0.95*sfxVol*g,0,1); a.play().catch(()=>{}); } }catch(e){} }
 function tioDur(k,fb){ const a=_tioEls[k]; return (a && isFinite(a.duration) && a.duration>0.4) ? a.duration : fb; }
-function tioSay(k){ playTio(k); netQSnd('tioV',k); }
+function tioSay(k){ const x=tio?tio.x:TIO_SPOT.x, y=tio?tio.y:TIO_SPOT.y; playTio(k,x,y); netQSnd('tioV',{k, x:Math.round(x), y:Math.round(y)}); }
 const TIO_SHOOT_LINES=['Kill8','kneelLONG','KneelSnd'];   // combat barks (kneel/taunt/shooting)
 const TIO_IDLE_LINES=['MUERTOS','CHISTE','SAPITO'];       // strolling banter (rare while shooting)
 let tio=null;   // null → the shadow stands on the spot, buyable. Host-authoritative + replicated.
@@ -2771,7 +2832,7 @@ function drawReviveCountdowns(){
     ctx.save(); ctx.textAlign='center';
     ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(camX+W/2-215,camY+64,430,42);
     ctx.font='bold 15px Courier New'; ctx.fillStyle='#ffd24a'; ctx.fillText('YA NO TE PUEDEN REVIVIR', camX+W/2, camY+82);
-    ctx.font='11px Courier New'; ctx.fillStyle='#c8d2da'; ctx.fillText('vuelves al empezar la próxima ronda · A/D: cambiar de vista', camX+W/2, camY+98);
+    ctx.font='11px Courier New'; ctx.fillStyle='#c8d2da'; ctx.fillText('vuelves cuando acabe la ronda · A/D: cambiar de vista · P: enviar soles', camX+W/2, camY+98);
     ctx.restore(); ctx.textAlign='left';
   }
 }
@@ -2799,12 +2860,24 @@ function updateBullets(dt){
       if(e.dcLock) continue;   // mobbing the Distracción → immune to player fire (the blast finishes them)
       const rr=(e.footR||e.radius)+6;
       if(segPtDist2(ax,ay,b.x,b.y,e.x,e.y) < rr*rr){
+        if(b.esco){
+          // ESCOPETA pellet: damage scales with how far the pellet travelled from the muzzle —
+          // hugging the barrel means certain death, the edge of the reach only chips
+          const frac=escoDmgFrac(dist(b.ox,b.oy,e.x,e.y), b.range||240, b.lvl||0);
+          if(e.boss) e.hp -= 40*frac; else e.hp -= e.maxhp*frac*1.001;
+          e.hitFlash=0.14; e.stagger=0.25;
+          const d=Math.hypot(b.vx,b.vy)||1, k=90+200*frac;   // the blast shoves hard up close
+          e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
+          spark(e.x,e.y,'#ffd9a0',5,110);
+          if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner); if(owner) playPunchSound(owner); }
+          hit=true; break;
+        }
         const _tb=(survival && !b.fire) ? lpShotDmg(e,b.wk||'pistol',b.lvl) : null;   // Modo Infinito: exact shots-to-kill per enhancement level
         e.hp -= (_tb!=null) ? _tb : (e.maxhp/(b.fire?4:bulletShots(e)))*b.pmul*(b.wmul||1);
         e.hitFlash=0.14; e.stagger=0.18;
         const d=Math.hypot(b.vx,b.vy)||1, k=b.fire?90:150;   // knockback punch
         e.vx+=b.vx/d*k; e.vy+=b.vy/d*k;
-        if(b.fire){ igniteEnemy(e, b.owner); spark(e.x,e.y,'#ff9a2a',6,120); } else spark(e.x,e.y,'#ffd0d0',5,90);
+        if(b.fire){ igniteEnemy(e, b.owner, false, b.lvl||0); spark(e.x,e.y,'#ff9a2a',6,120); } else spark(e.x,e.y,'#ffd0d0',5,90);
         if(e.hp<=0){ const owner=players[b.owner]; killEnemy(e, owner);
           if(b.tioB){ if(tio){ tio.kills++; tio.tauntKills++; } }   // the Tío tallies toward his taunt (his barks are his own audio, not a character voice)
           else { const vo=b.npc||owner; if(vo) playPunchSound(vo); } }   // voice on KILL (NPC ally uses its own voice), throttled per character
@@ -2815,29 +2888,38 @@ function updateBullets(dt){
   }
 }
 // ---- Fire: incendiary rounds ignite enemies, the flames spread to whoever they touch ----
-// Two tiers of burn: a DIRECT hit (lit up by the shot itself) burns all the way to death, while an
-// enemy merely INFECTED by the spreading flames chars down to a sliver (~6% HP) and stops there —
-// crippled and one tap from dead, but the contagion alone doesn't finish them.
-function igniteEnemy(e,owner,spread){
+// Three tiers of burn, by distance from the SOURCE of the fire:
+//  · the shot-lit enemy (the source) burns all the way to death;
+//  · anything pressed against the source catches a FATAL burn too — close to the origin = dies;
+//  · enemies further down the contagion chain only char down to a floor and stop there. That
+//    floor drops with the FUEGO enhancement level (FIRE_SPREAD_KEEP): an upgraded flame hurts the
+//    far end of the chain much harder, and at max level leaves them one tap from dead.
+const FIRE_SPREAD_KEEP=[0.50,0.35,0.20,0.06];   // HP fraction a chain-infected enemy keeps, per FUEGO enh level
+function igniteEnemy(e,owner,spread,lvl){
   if(e.boss){ e.burnT=Math.max(e.burnT||0,2.5); } else { e.burnT=4.5; }
   e.burnOwner=owner;
-  if(!spread) e.burnFatal=true;   // sticky: once shot-lit, a later re-ignition still burns fatal
+  if(lvl!=null) e.burnLvl=lvl; else if(e.burnLvl==null) e.burnLvl=0;
+  if(!spread){ e.burnFatal=true; e.burnSrc=true; }   // sticky: once shot-lit, a later re-ignition still burns fatal
 }
 function updateBurns(dt){
   for(const e of enemies){ if(e.dead || !(e.burnT>0)) continue;
     e.burnT-=dt;
-    // fatal (shot-lit) burn runs a touch hotter so 4.5s always covers 100% even without the
-    // shot's own damage; bosses resist either way
+    // fatal (shot-lit or source-adjacent) burn runs a touch hotter so 4.5s always covers 100% even
+    // without the shot's own damage; bosses resist either way
     const dps=e.maxhp*(e.boss?0.06:(e.burnFatal?0.24:0.22));
     if(!e.boss && !e.burnFatal){
-      const floor=e.maxhp*0.06;
-      if(e.hp>floor) e.hp=Math.max(floor, e.hp-dps*dt);   // spread burn never kills on its own
+      const floor=e.maxhp*FIRE_SPREAD_KEEP[Math.min(3,e.burnLvl||0)];
+      if(e.hp>floor) e.hp=Math.max(floor, e.hp-dps*dt);   // chain burn stops at the level's floor
     } else e.hp-=dps*dt;
     if(Math.random()<0.5) spark(e.x,e.y-e.radius*0.4,(Math.random()<0.5?'#ff7a2a':'#ffd24a'),1,60);
     if(e.hp<=0){ const owner=players[e.burnOwner]; killEnemy(e, owner); continue; }
     // spread to any non-burning enemy pressed against this one
     for(const o of enemies){ if(o===e||o.dead||o.burnT>0) continue;
-      if(dist(e.x,e.y,o.x,o.y) < (e.footR||e.radius)+(o.footR||o.radius)+4){ igniteEnemy(o, e.burnOwner, true); o.burnT=Math.min(e.burnT,3.2)+0.6; }
+      if(dist(e.x,e.y,o.x,o.y) < (e.footR||e.radius)+(o.footR||o.radius)+4){
+        igniteEnemy(o, e.burnOwner, true, e.burnLvl);
+        if(e.burnSrc && !o.boss) o.burnFatal=true;   // hugging the source enemy = close enough to the fire to die with it
+        o.burnT=Math.min(e.burnT,3.2)+0.6;
+      }
     }
   }
 }
@@ -2847,6 +2929,12 @@ function drawBullet(b){   // one tracer — depth-sorted with the world so trees
   // body-centre level so horizontal shots still cross the enemies' hit circles)
   const by=b.y+(b.dy||0);
   const d=Math.hypot(b.vx,b.vy)||1, tl=22, tx=b.x-b.vx/d*tl, ty=by-b.vy/d*tl;   // tracer line
+  if(b.esco){   // ESCOPETA pellet: short hot buckshot streak
+    const pl=12, px2=b.x-b.vx/d*pl, py2=by-b.vy/d*pl;
+    ctx.strokeStyle='rgba(232,120,255,0.4)'; ctx.lineWidth=4.5; ctx.beginPath(); ctx.moveTo(px2,py2); ctx.lineTo(b.x,by); ctx.stroke();
+    ctx.strokeStyle='#ffe9c0'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px2,py2); ctx.lineTo(b.x,by); ctx.stroke();
+    ctx.restore(); return;
+  }
   if(b.fire){   // incendiary rounds keep their fiery look
     ctx.strokeStyle='rgba(255,214,120,0.45)'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,by); ctx.stroke();
     ctx.strokeStyle='#fff6d6'; ctx.lineWidth=2.6; ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(b.x,by); ctx.stroke();
@@ -2960,16 +3048,19 @@ function segBlocked(x1,y1,x2,y2){
 }
 function playPunchSound(p){
   const k=p.kind;
+  // hit voices are positional: silent when the shouter is off this machine's screen, quieter with
+  // distance (stand-in guest objects without coords fall back to full volume via _proxGain)
+  const pg=_proxGain(p.x,p.y); if(pg<0.04) return;
   // Modo Infinito: rapid-fire kills would otherwise fire a hit voice every few frames. Hard-cap every
   // character's hit audio to once per 6s per player so the voices never pile up on top of each other.
   if(survival){ if((time-(p._hitVoiceT||-1e9))<6) return; p._hitVoiceT=time; }
-  if(k==='freddy'){ playPlin(); return; }     // PLIN exclusive to Freddy
-  if(k==='michi'){ playWow(); return; }        // WOW exclusive to Michi
+  if(k==='freddy'){ playPlin(pg); return; }     // PLIN exclusive to Freddy
+  if(k==='michi'){ playWow(pg); return; }        // WOW exclusive to Michi
   // Teddington laughs on every bomb. Inline (not playHee()) — the playHee wrapper queues its own
   // net event, and this call already rides the 'punch' event, so guests would hear it twice.
-  if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6); return; }
+  if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6*pg); return; }
   // Cóndor cries on every THIRD bomb — more would be too much
-  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42); return; }
+  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42*pg); return; }
   // Alfredo/Mati/Sebas/Vannucci: HIT1/HIT2 rotate at random. Horda calls this only on CONNECTING
   // punches (see tryPunch's hitAny) → voice every 2nd landed hit; PVP: voice every 3rd bomb placed.
   if(AUDIO_SRC[k+'_hit1']){
@@ -2979,18 +3070,18 @@ function playPunchSound(p){
     const horStep=(k==='vannucci')?3:(k==='sebas')?4:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
-      playOne(AUDIO_SRC[k+'_hit'+n2], voiceVol(k+'_hit'+n2,0.6));
+      playOne(AUDIO_SRC[k+'_hit'+n2], voiceVol(k+'_hit'+n2,0.6)*pg);
     }
     return;
   }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
   if(state===STATE.PVP){
     // bombs are placed far less often than horda punches — voice every 3rd bomb
-    if(k==='sumac'||k==='shooshy'){ if(c%3===1) playOne(AUDIO_SRC[k+(randi(1,4)===4?'2':'1')], 0.55); }
+    if(k==='sumac'||k==='shooshy'){ if(c%3===1) playOne(AUDIO_SRC[k+(randi(1,4)===4?'2':'1')], 0.55*pg); }
     return;
   }
-  if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55); }
-  else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55); }
+  if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55*pg); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55*pg); }
+  else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55*pg); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55*pg); }
 }
 function tryPunch(p){
   if(!p.alive || p.cooldown>0) return;
@@ -3121,7 +3212,8 @@ function doTransfer(fromI,toI,amt){
   const a=players[fromI], b=players[toI];
   if(!a || !b || fromI===toI || b.departed || b.pending) return;
   amt=Math.max(10, Math.min(990, Math.round(amt/10)*10));
-  if(!a.alive || (a.soles||0)<amt){ floatText(a.x,a.y-30,'¡Sigues misio!','#ff9a7a'); playDenied(); return; }
+  // dead senders allowed: a spectator can wire their soles to whoever is still fighting
+  if((a.soles||0)<amt){ floatText(a.x,a.y-30,'¡Sigues misio!','#ff9a7a'); playDenied(); return; }
   a.soles-=amt; b.soles=(b.soles||0)+amt;
   floatText(a.x,a.y-30,'-'+amt+' S/.','#ffe07a');
   floatText(b.x,b.y-30,'+'+amt+' S/. de '+(a.name||'?'),'#7fe0a0');
@@ -3158,19 +3250,31 @@ function drawXferPanel(x0, st, meIdx, meSoles, keysHint){
 function drawXferMenus(){
   if(!survival || state!==STATE.PLAY) return;
   if(NET.role==='guest'){
-    if(gXfer.open && players[NET.slot]) drawXferPanel(W-234, gXfer, NET.slot, players[NET.slot].soles, '[P] cierra · flechas eligen');
+    if(gXfer.open && players[NET.slot]) drawXferPanel(W-234, gXfer, NET.slot, players[NET.slot].soles, '[P]/[Esc] cierra · flechas eligen');
     return;
   }
   const p0=players[0], p1=players[1];
-  if(p0 && p0._xfer && p0._xfer.open && p0.alive) drawXferPanel(W-234, p0._xfer, 0, p0.soles, '[P] cierra · flechas eligen');
-  if(p1 && !p1.netRemote && p1._xfer && p1._xfer.open && p1.alive) drawXferPanel(20, p1._xfer, 1, p1.soles, '[ cierra · W/S eligen · A/D monto');
+  if(p0 && !p0.departed && !p0.pending && p0._xfer && p0._xfer.open) drawXferPanel(W-234, p0._xfer, 0, p0.soles, '[P]/[Esc] cierra · flechas eligen');
+  if(p1 && !p1.netRemote && !p1.departed && !p1.pending && p1._xfer && p1._xfer.open) drawXferPanel(20, p1._xfer, 1, p1.soles, '[ cierra · W/S eligen · A/D monto');
 }
 function vendNear(p){ if(!survival||!p.alive) return null; let best=null,bd=1e9; for(const v of LP_VENDS){ const d=dist(p.x,p.y,v.x,v.y+v.h*0.5); if(d<v.r && d<bd){ bd=d; best=v; } } return best; }
 function nearVending(p){ return !!vendNear(p); }   // kept for callers that only need a boolean
 // improve every turret this player already placed, so a mid-fight upgrade lifts the whole line
 function bumpPlacedTurrets(pi,lvl){ for(const t of turrets){ if(t.owner===pi) t.enh=lvl; } }
 function tryVend(p){
-  if(p.riding){ dismountBike(p); return true; }   // F while riding = park the Ticla (even next to a machine)
+  if(p.riding){
+    // rolled up to the Bicicletero with a worn Ticla: F buys the repair FROM THE SADDLE instead of
+    // dismounting (ride away from the shop and F parks the bike as always)
+    const B=biciNear(p), bk=p.riding;
+    if(B && bk && bk.hp<bk.maxhp){
+      if((p.soles||0) < B.cost){ floatText(B.ix, B.iy-46, '¡'+(p.vendFlip?'Pobre de mierda':'Sigues misio')+'! ('+B.cost+' S/.)', '#ff9a7a'); playDenied(); return true; }
+      p.soles-=B.cost; vendFlash=0.5; bk.hp=bk.maxhp;
+      floatText(p.x, p.y-30, '¡TICLA REPARADA!', '#7fe0a0'); playCoin();
+      spark(B.ix, B.iy-6, '#7fe0a0', 22, 170); cameraShake=4;
+      return true;
+    }
+    dismountBike(p); return true;   // F while riding = park the Ticla (even next to a machine)
+  }
   // F next to a parked Ticla = mount it (takes precedence over vending machines)
   if(!(p._remount>0)){
     let nb=null, nbd=1e9;
@@ -3225,11 +3329,11 @@ function tryBici(p){
 function drawBiciPrompt(){
   const B=LP_BICI;
   for(const p of players){ if(biciNear(p)!==B) continue;
-    const bk=biciPlayerBike(p);
+    const bk=p.riding||biciPlayerBike(p);   // riding a (borrowed) Ticla? the shop repairs THAT one
     let txt, col;
     if(!bk){ txt='No tienes Ticla'; col='#9aa4b0'; }
     else if(bk.hp>=bk.maxhp){ txt='Ticla al tope'; col='#ffcf9a'; }
-    else if((p.soles||0)<B.cost){ txt=(p.vendFlip?'Pobre de mierda':'Sigues misio'); col='#ffcf9a'; }
+    else if((p.soles||0)<B.cost){ txt=(p.vendFlip?'Pobre de mierda':'Sigues misio')+' ('+B.cost+' S/.)'; col='#ffcf9a'; }
     else { const key=(players.indexOf(p)===0?'F':'.'); txt='Reparar Ticla ('+B.cost+' S/.)  ['+key+']'; col='#aef7c2'; }
     ctx.font='bold 12px Courier New'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
     const tw=ctx.measureText(txt).width+18, ty=B.iy-46;   // just above the player at the shopfront
@@ -3356,7 +3460,7 @@ function updateRays(dt){
       if(dist(r.x,r.y,p.x,p.y)<p.radius+7){
         p.hitFlash=1.0; cameraShake=5;
         if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',12,150); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-        else { p.hp-=Math.ceil(p.maxhp/3); spark(p.x,p.y,'#ffe24a',10,150); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,p.color,20,180);} }
+        else { p.hp-=Math.ceil(p.maxhp/3); spark(p.x,p.y,'#ffe24a',10,150); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind,p.x,p.y); spark(p.x,p.y,p.color,20,180);} }
         gone=true; break;
       }
     }
@@ -3497,7 +3601,7 @@ const GRID = 40;                 // invisible placement grid for the Inca wall b
 const WALL_HP = 240;
 // Modo Infinito concrete blocks are meant to build a refuge that actually lasts — give them a much
 // bigger pool than the Horda Paredes Incas so a walled base survives several waves before crumbling.
-const LP_BLOCK_HP = 900;         // ~112 hits from a base normal enemy (8 dmg); a swarm still grinds it down
+const LP_BLOCK_HP = 1700;        // ~212 hits from a base normal enemy (8 dmg) — late-round swarms used to chew 900hp in seconds
 function wallMaxHp(){ return currentMap==='laspalmas' ? LP_BLOCK_HP : WALL_HP; }
 const bossDrops = [];            // {id,type,x,y,bob}
 const bombs = [];                // Rata Blanca dynamite: {id,owner(player idx),x,y,t}
@@ -3994,7 +4098,7 @@ function updatePlayers(dt){
       else useGear(p);
     }
     p.wasGear=gkd;
-    if(p.alive && cliffs.length && inCliff(p.x,p.y)){ p.alive=false; p.fell=true; p.fallT=0.5; p.deathAnim=null; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,'#6a5a40',22,180); cameraShake=7; }
+    if(p.alive && cliffs.length && inCliff(p.x,p.y)){ p.alive=false; p.fell=true; p.fallT=0.5; p.deathAnim=null; lastDead=p; playCharDeath(p.kind,p.x,p.y); spark(p.x,p.y,'#6a5a40',22,180); cameraShake=7; }
   }
 }
 
@@ -4258,7 +4362,8 @@ function updateEnemies(dt){
       // Modo Infinito damage gate: walking into a cluster no longer means 10 simultaneous hits —
       // at most one contact hit lands every 0.28s (the rest of the mob swings at air). Ranged
       // attacks (slime balls, arrows) bypass the gate. Other modes keep their original rules.
-      if(!(survival && (tgt.dmgGateT||0)>0)){
+      // Inside an active Distracción's lure ring the target is untouchable (safe-zone).
+      if(!(survival && ((tgt.dmgGateT||0)>0 || decoyShielded(tgt.x,tgt.y)))){
         if(survival) tgt.dmgGateT=0.28;
         tgt.hitFlash=1.0; cameraShake=4;
         // riding the Ticla: 3 hits inside ~2.5s knock you off right where you are
@@ -4271,7 +4376,7 @@ function updateEnemies(dt){
           tgt.hp -= e.dmg;
           spark(tgt.x,tgt.y,'#ff5050',6,100);
           // AI allies die through updateNpcs (their own death voice + respawn queue), not the player path
-          if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind); spark(tgt.x,tgt.y,tgt.color,20,180); }
+          if(tgt.hp<=0 && !tgt.isNpc){ tgt.hp=0; tgt.alive=false; tgt.deathAnim=0; lastDead=tgt; playCharDeath(tgt.kind,tgt.x,tgt.y); spark(tgt.x,tgt.y,tgt.color,20,180); }
         }
       }
     }
@@ -4571,7 +4676,7 @@ function spawnIdleNpc(){
   npcQueue.push(kind);                       // no spot found — retry next tick
 }
 function tagNpc(n,tagger){ n.npcState='active'; n.hp=n.maxhp; n.ownIdx=players.indexOf(tagger);   // the ally belongs to whoever tagged it: it fights inside THAT player's view
-  try{ playCharSelect(n.kind); netQSnd('sel',n.kind); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
+  try{ playCharSelect(n.kind,n.x,n.y); netQSnd('sel',{k:n.kind,x:Math.round(n.x),y:Math.round(n.y)}); }catch(e){} spark(n.x,n.y,'#aef7c2',22,190); floatText(n.x,n.y-30,'¡'+n.name+' se une!','#aef7c2'); cameraShake=4; }
 function fireNpcBullet(n, tx, ty){
   const dx=tx-n.x, dy=ty-n.y, ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4), cx=Math.cos(ang), cy=Math.sin(ang);
   n.facing.x=cx; n.facing.y=cy; n.dir=Math.abs(cx)>Math.abs(cy)?(cx<0?'w':'e'):(cy<0?'n':'s'); n.punchAnim=CHARS[n.kind].pd;
@@ -4695,7 +4800,7 @@ function updateNpcs(dt){
       }
     }
     // (enemies deal contact damage to the ally through their own attack path — see nearestTarget)
-    if(n.hp<=0){ try{ playCharDeath(n.kind); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); corpses.push({id:_entId++, kind:n.kind, x:Math.round(n.x), y:Math.round(n.y+n.radius+4), t:0}); npcs.splice(i,1); npcSpawnT=60; }
+    if(n.hp<=0){ try{ playCharDeath(n.kind,n.x,n.y); }catch(e){} spark(n.x,n.y,n.color,22,190); floatText(n.x,n.y-24,n.name+' cayó','#ffcf9a'); corpses.push({id:_entId++, kind:n.kind, x:Math.round(n.x), y:Math.round(n.y+n.radius+4), t:0}); npcs.splice(i,1); npcSpawnT=60; }
   }
 }
 function drawNpc(n){
@@ -4721,19 +4826,31 @@ function startSurvival(){
 // arm the next Modo Infinito wave; between-rounds (not the first) every fallen player re-enters at
 // FULL health next to a survivor (stripped at the 15s mark, so they come back with the basic gun),
 // and mid-game joiners (pending) enter fresh at the map spawn point by the water tower
+// revive every fallen (non-pending) player at FULL health next to a survivor. Called the moment a
+// wave is cleared — the fallen come back for the WHOLE between-rounds countdown, so they get real
+// time to shop and gear up instead of respawning into an already-incoming swarm.
+function lpReviveFallen(){
+  const anchor=players.find(pp=>pp.alive);
+  for(const p of players){ if(!p.alive && !p.pending && !p.departed){
+    if(anchor){ p.x=anchor.x+rand(-46,46); p.y=anchor.y+rand(-34,34); }
+    p.alive=true; p.fell=false; p.deathAnim=null; p.deadT=0; p.hp=p.maxhp;
+    p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p);
+    if(p.netRemote) p.netRemote.grace=0.5;
+    spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,'RENACE','#aef7c2');
+  } }
+}
 function startLpRound(first){
   spawnQueue=lpQuota(round, activePlayerCount());
   survSpawnT=first?2.0:1.0;
   if(!first){
-    const anchor=players.find(pp=>pp.alive);
-    for(const p of players){ if(!p.alive && !p.departed){
-      const joining=p.pending;
-      if(joining){ p.x=LP_SPAWN.x+rand(-34,34); p.y=LP_SPAWN.y+rand(-26,26); }
-      else if(anchor){ p.x=anchor.x+rand(-46,46); p.y=anchor.y+rand(-34,34); }
+    lpReviveFallen();   // safety net (e.g. a player who died during the countdown itself)
+    for(const p of players){ if(!p.alive && !p.departed && p.pending){
+      // mid-game joiners enter fresh at the map spawn point by the water tower
+      p.x=LP_SPAWN.x+rand(-34,34); p.y=LP_SPAWN.y+rand(-26,26);
       p.pending=false; p.alive=true; p.fell=false; p.deathAnim=null; p.deadT=0; p.hp=p.maxhp;
       p.reviveProgress=0; p.shieldFlash=0; resolveCollision(p);
       if(p.netRemote) p.netRemote.grace=0.5;
-      spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,joining?'¡ENTRA!':'RENACE','#aef7c2');
+      spark(p.x,p.y,p.color,18,150); floatText(p.x,p.y-28,'¡ENTRA!','#aef7c2');
     } }
   }
 }
@@ -4782,8 +4899,9 @@ function updateSurvival(dt){
     survSpawnT = Math.max(0.14, (nParty>=2?0.62:0.85) - round*0.02);
   }
   lpStragglerHerd(dt, aliveN);   // the last few enemies get teleported closer if nobody can find them
-  // wave down -> round cleared, start the countdown to the next one
-  if(spawnQueue<=0 && aliveN===0){ lpBreakT=LP_ROUND_BREAK; breakTimer=lpBreakT; }
+  // wave down -> round cleared, start the countdown to the next one; the fallen come back NOW
+  // (start of the countdown), so they can gather/shop before the next swarm is on its way
+  if(spawnQueue<=0 && aliveN===0){ lpBreakT=LP_ROUND_BREAK; breakTimer=lpBreakT; lpReviveFallen(); }
 }
 // --- speed penalty (Modo Infinito only — this runs solely from updateSurvival) ---
 // Every 5 hits a player takes strips one white-running-shoe speed level (p.tierra, capped 0..3 and
@@ -5711,7 +5829,7 @@ function bossIceRay(b){
     if(perp> p.radius+(b.giant?34:24)) continue;
     p.hitFlash=1.0;
     if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',12,150); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-    else { p.hp-=b.dmg; spark(p.x,p.y,'#9fe6ff',12,150); if(p.hp<=0){p.hp=0;p.alive=false;p.deathAnim=0;lastDead=p;playCharDeath(p.kind);spark(p.x,p.y,p.color,20,180);} }
+    else { p.hp-=b.dmg; spark(p.x,p.y,'#9fe6ff',12,150); if(p.hp<=0){p.hp=0;p.alive=false;p.deathAnim=0;lastDead=p;playCharDeath(p.kind,p.x,p.y);spark(p.x,p.y,p.color,20,180);} }
   }
 }
 function updateIceBeams(dt){ for(let i=iceBeams.length-1;i>=0;i--){ const b=iceBeams[i]; b.life-=dt; if(b.life<=0) iceBeams.splice(i,1); } }
@@ -5737,7 +5855,7 @@ function bossWhipHit(b){
     if(segBlocked(b.x,b.y,p.x,p.y)) continue;   // whip can't reach through walls
     p.hitFlash=1.0; cameraShake=7;
     if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',12,150); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-    else { p.hp-=b.dmg; spark(p.x,p.y,'#ff5050',10,130); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,p.color,20,180);} }
+    else { p.hp-=b.dmg; spark(p.x,p.y,'#ff5050',10,130); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind,p.x,p.y); spark(p.x,p.y,p.color,20,180);} }
   }
 }
 function updateBoss(e,dt){
@@ -5750,7 +5868,7 @@ function updateBoss(e,dt){
       if(!(e.touchCd>0) && dist(p.x,p.y,e.x,e.y) < bodyR + p.radius){
         e.touchCd=0.6; p.hitFlash=1.0;
         if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',8,120); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-        else { p.hp-=(e.giant?11:7); spark(p.x,p.y,'#ff8080',5,90); if(p.hp<=0){ p.hp=0; p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,p.color,20,180); } }
+        else { p.hp-=(e.giant?11:7); spark(p.x,p.y,'#ff8080',5,90); if(p.hp<=0){ p.hp=0; p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind,p.x,p.y); spark(p.x,p.y,p.color,20,180); } }
       }
     }
   }
@@ -5894,7 +6012,7 @@ function jarMeleeHit(b){
     if(dot < 0.25 && !close) continue;   // strike direction + its two diagonals (e.g. N, NE, NW), plus anyone adjacent
     p.hitFlash=1.0;
     if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',12,150); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-    else { p.hp-=p.maxhp*0.25; spark(p.x,p.y,'#ff5050',10,130); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind); spark(p.x,p.y,p.color,20,180);} }
+    else { p.hp-=p.maxhp*0.25; spark(p.x,p.y,'#ff5050',10,130); if(p.hp<=0){p.hp=0;p.alive=false; p.deathAnim=0; lastDead=p; playCharDeath(p.kind,p.x,p.y); spark(p.x,p.y,p.color,20,180);} }
   }
 }
 const EVAN_STOREH=261, EVAN_DH=158, BRIAN_STOREH=261, BRIAN_DH=155;
@@ -5921,7 +6039,7 @@ function evanHit(b){
     if(proj<-18||proj>reach) continue; if(Math.abs(rx*dv[1]-ry*dv[0])>p.radius+30) continue;
     p.hitFlash=1.0;
     if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',12,150); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-    else { p.hp-=p.maxhp*0.25; spark(p.x,p.y,'#ff5050',10,130); if(p.hp<=0){p.hp=0;p.alive=false;p.deathAnim=0;lastDead=p;playCharDeath(p.kind);spark(p.x,p.y,p.color,20,180);} } }
+    else { p.hp-=p.maxhp*0.25; spark(p.x,p.y,'#ff5050',10,130); if(p.hp<=0){p.hp=0;p.alive=false;p.deathAnim=0;lastDead=p;playCharDeath(p.kind,p.x,p.y);spark(p.x,p.y,p.color,20,180);} } }
 }
 function brianSmash(b){
   const R=b.giant?285:225, me=(x)=>(currentMap==='machu')?machuElev(x):0, bx=b.x, by=b.y+me(b.x);
@@ -5929,7 +6047,7 @@ function brianSmash(b){
   for(const p of players){ if(!p.alive) continue; const py=p.y+me(p.x);
     if(dist(bx,by,p.x,py) < R){ p.hitFlash=1.0;
       if(p.shields>0){ p.shields--; p.shieldFlash=0.25; spark(p.x,p.y,'#7fd4ff',12,150); floatText(p.x,p.y-24,'BLOQUEO','#7fd4ff'); }
-      else { p.hp-=p.maxhp*0.30; spark(p.x,p.y,'#ff5050',14,170); if(p.hp<=0){p.hp=0;p.alive=false;p.deathAnim=0;lastDead=p;playCharDeath(p.kind);spark(p.x,p.y,p.color,20,180);} } } }
+      else { p.hp-=p.maxhp*0.30; spark(p.x,p.y,'#ff5050',14,170); if(p.hp<=0){p.hp=0;p.alive=false;p.deathAnim=0;lastDead=p;playCharDeath(p.kind,p.x,p.y);spark(p.x,p.y,p.color,20,180);} } } }
 }
 function updateMachuBoss(e,dt){
   if(e.phase>0) e.phase-=dt;
@@ -6916,6 +7034,7 @@ function drawPauseSurvival(){
   ctx.fillStyle='#7fd4ff'; ctx.font='bold 18px Courier New'; ctx.fillText('ARMAS', px+18, py+28);
   ctx.fillStyle='#6a7a86'; ctx.font='11px Courier New'; ctx.fillText('recoge cajas para conseguirlas', px+92, py+28);
   const WI=[['pistol','munici\u00f3n infinita'],['rapid','autom\u00e1tica, no para'],['fire','incendia y se contagia'],
+            ['escopeta','devastadora de cerca, poco alcance'],
             ['grenade','mant\u00e9n para cargar la fuerza'],['mine','mata al instante al pisarla'],
             ['block','barricada de concreto'],['torreta','dispara flechas sola'],
             ['decoy','l\u00e1nzalo: atrae enemigos y \u00a1BUM!']];
@@ -6929,7 +7048,7 @@ function drawPauseSurvival(){
   }
   ctx.fillStyle='#9fb0bd'; ctx.font='bold 12px Courier New'; ctx.fillText('CONTROLES', px+18, wy+10);
   ctx.fillStyle='#6a7a86'; ctx.font='10px Courier New';
-  ctx.fillText('J1: WASD \u00b7 Espacio dispara \u00b7 cambiar arma: E  (o 1-7 / rueda) \u00b7 comprar: F', px+18, wy+30);
+  ctx.fillText('J1: WASD \u00b7 Espacio dispara \u00b7 cambiar arma: E  (o 1-9 / rueda) \u00b7 comprar: F', px+18, wy+30);
   ctx.fillText('J2: Flechas \u00b7 Coma (,) dispara \u00b7 cambiar arma: / \u00b7 comprar: Punto (.)', px+18, wy+48);
   ctx.fillText('TICLA: [F] montar y bajar \u00b7 disparo = timbre \u00b7 atropella (no puedes recoger nada montado)', px+18, wy+66);
   ctx.fillText('[P] enviar soles a un compa\u00f1ero (J2: tecla [ ) \u00b7 flechas: elegir y monto \u00b7 Enter: enviar', px+18, wy+84);
@@ -7810,7 +7929,7 @@ function pvpCheckDeaths(){
 function pvpKill(p){
   if(!p.alive) return;
   p.alive=false; p.fell=false; p.deathAnim=0;
-  playCharDeath(p.kind);
+  playCharDeath(p.kind,p.x,p.y);
   spark(p.x,p.y,'#ff9a2a',26,210);
   floatText(p.x,p.y-36,'¡KO!','#ff6a5a');
   cameraShake=11;
@@ -8544,7 +8663,10 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   playZapSound=wrapSnd('zap',playZapSound);     playBeamSound=wrapSnd('beam',playBeamSound);
   playCameraClick=wrapSnd('cam',playCameraClick); playMagic=wrapSnd('magic',playMagic);
   playHee=wrapSnd('hee',playHee);               playHeeGiant=wrapSnd('heeg',playHeeGiant);
-  playBrujaAttack=wrapSnd('bruja',playBrujaAttack); playCharDeath=wrapSnd('die',playCharDeath);
+  playBrujaAttack=wrapSnd('bruja',playBrujaAttack);
+  // death voices carry the corpse's coords so each guest applies its own proximity falloff
+  const _pcd=playCharDeath;
+  playCharDeath=function(k,x,y){ netQSnd('die', Number.isFinite(x)?{k, x:Math.round(x), y:Math.round(y)}:k); return _pcd(k,x,y); };
   // Modo Infinito weapon sounds are host-side synthesized (WebAudio) — replicate them as events too,
   // or guests fight in silence: no gunfire, no explosions, no turret/mine placement feedback.
   // Gun/fire shots carry the SHOOTER's position so every machine applies its own proximity falloff.
@@ -8556,6 +8678,7 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   sfxBoom=wrapSndXY('boom',sfxBoom);
   sfxPlace=wrapSndXY('plc',sfxPlace);
   sfxTurretShot=wrapSndXY('tshot',sfxTurretShot);
+  sfxEscoShot=wrapSndXY('esco',sfxEscoShot);
   sfxSlimeHit=wrapSndXY('slh',sfxSlimeHit);
   sfxNadePin=wrapSndXY('npin',sfxNadePin);     sfxNadeThrow=wrapSndXY('nthrow',sfxNadeThrow);
   sfxNadeBoom=wrapSndXY('nboom',sfxNadeBoom);  sfxMineBoom=wrapSndXY('mboom',sfxMineBoom);
@@ -8566,15 +8689,15 @@ function netQSnd(n,a){ netQEvt(a===undefined?{t:'s',n}:{t:'s',n,a}); }
   const _ss=sfxSlimeSplash; sfxSlimeSplash=function(x,y,i){ netQSnd('slsp',{x:Math.round(x),y:Math.round(y),i:i|0}); return _ss(x,y,i); };
   playLock=wrapSnd('lock',playLock);   // enhance-machine "locked" clunk reaches guest buyers too
   playDenied=wrapSnd('deny',playDenied);   // vending "no money" buzzer too
-  const _pps=playPunchSound;   // punch voices key off the puncher's character
-  playPunchSound=function(p){ netQSnd('punch',p.kind); return _pps(p); };
+  const _pps=playPunchSound;   // punch voices key off the puncher's character (+ position for falloff)
+  playPunchSound=function(p){ netQSnd('punch',{k:p.kind, x:Number.isFinite(p.x)?Math.round(p.x):null, y:Number.isFinite(p.y)?Math.round(p.y):null}); return _pps(p); };
 }
 const gPunchP={};   // guest: per-kind stand-in players so the sumac/shooshy voice cadence counters persist
 // guest-side dispatch for positional sounds: unpack {x,y} and let the local sfx apply ITS OWN
 // proximity falloff against this machine's camera (null coords → legacy global behavior)
 function _sndXY(n){
   return a=>{
-    const f={boom:sfxBoom, plc:sfxPlace, tshot:sfxTurretShot, slh:sfxSlimeHit, npin:sfxNadePin,
+    const f={boom:sfxBoom, plc:sfxPlace, tshot:sfxTurretShot, esco:sfxEscoShot, slh:sfxSlimeHit, npin:sfxNadePin,
              nthrow:sfxNadeThrow, nboom:sfxNadeBoom, mboom:sfxMineBoom, bplc:sfxBlockPlace,
              aleT:sfxAleToss, bkuse:sfxBikeUse, bkring:sfxBikeRing, skd:sfxSkid}[n];
     if(!f) return;
@@ -8585,18 +8708,20 @@ const NET_SND={
   hit:()=>playHitThud(), pk:()=>playPickup(), coin:()=>playCoin(), oro:()=>playOroPower(),
   zap:()=>playZapSound(), beam:()=>playBeamSound(), cam:()=>playCameraClick(), magic:()=>playMagic(),
   hee:()=>playHee(), heeg:()=>playHeeGiant(), bruja:g=>playBrujaAttack(g),
-  die:k=>playCharDeath(k), punch:k=>playPunchSound(gPunchP[k]||(gPunchP[k]={kind:k})),
-  sel:k=>playCharSelect(k), pboom:()=>playPvpBoom(),
+  die:a=>(a&&typeof a==='object')?playCharDeath(a.k,a.x,a.y):playCharDeath(a),
+  punch:a=>{ const k=(a&&typeof a==='object')?a.k:a; const st=gPunchP[k]||(gPunchP[k]={kind:k});
+             if(a&&typeof a==='object'){ st.x=(a.x==null?undefined:a.x); st.y=(a.y==null?undefined:a.y); } playPunchSound(st); },
+  sel:a=>(a&&typeof a==='object')?playCharSelect(a.k,a.x,a.y):playCharSelect(a), pboom:()=>playPvpBoom(),
   gun:a=>(a&&typeof a==='object')?sfxGun(!!a.r,a.x==null?undefined:a.x,a.y==null?undefined:a.y,a.c==null?undefined:a.c):sfxGun(a),
   fshot:a=>(a&&typeof a==='object')?sfxFireShot(a.x==null?undefined:a.x,a.y==null?undefined:a.y):sfxFireShot(),
   lnch:()=>sfxLaunch(),
-  boom:_sndXY('boom'), plc:_sndXY('plc'), tshot:_sndXY('tshot'), slh:_sndXY('slh'),
+  boom:_sndXY('boom'), plc:_sndXY('plc'), tshot:_sndXY('tshot'), esco:_sndXY('esco'), slh:_sndXY('slh'),
   npin:_sndXY('npin'), nthrow:_sndXY('nthrow'), nboom:_sndXY('nboom'), mboom:_sndXY('mboom'),
   bplc:_sndXY('bplc'), aleT:_sndXY('aleT'), bkuse:_sndXY('bkuse'), bkring:_sndXY('bkring'),
   skd:_sndXY('skd'),
   slsp:a=>{ if(a&&typeof a==='object') sfxSlimeSplash(a.x,a.y,a.i); },
-  aleF:()=>playAle('FELICIDAD'), aleN:()=>playAle('NERVIOSandCRY'), aleD:()=>playAle('DEATHLONG'),
-  tioV:k=>playTio(k),
+  aleF:a=>playAle('FELICIDAD',a&&a.x,a&&a.y), aleN:a=>playAle('NERVIOSandCRY',a&&a.x,a&&a.y), aleD:a=>playAle('DEATHLONG',a&&a.x,a&&a.y),
+  tioV:a=>(a&&typeof a==='object')?playTio(a.k,a.x,a.y):playTio(a),
   lock:()=>playLock(), deny:()=>playDenied()
 };
 let gLastEvt=0, gEvtSynced=false;
@@ -9325,8 +9450,8 @@ requestAnimationFrame(frame);
             if(n>=0 && n<own.length){ lp.weapon=own[n]; NET.guestWeapon=lp.weapon; sendInput(true); }
           } else if(e.code==='KeyQ'||e.code==='KeyE'){
             cycleWeapon(lp, e.code==='KeyQ'?-1:1); NET.guestWeapon=lp.weapon; sendInput(true);
-          } else if(!lp.alive && !lp.departed && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight')){
-            specCycle((e.code==='KeyA'||e.code==='ArrowLeft')?-1:1);   // dead: hop between living teammates
+          } else if(!lp.alive && !lp.departed && !gXfer.open && (e.code==='KeyA'||e.code==='ArrowLeft'||e.code==='KeyD'||e.code==='ArrowRight')){
+            specCycle((e.code==='KeyA'||e.code==='ArrowLeft')?-1:1);   // dead: hop between living teammates (menu keeps the arrows while open)
           }
         }
       }
@@ -9336,7 +9461,8 @@ requestAnimationFrame(frame);
         // on the Horda pick screen (replicated via {_nsel}): ask the host to un-pick our character
         // so we can choose again. (No {pt:1} pause here — there's nothing to pause yet.)
         const nselMe = NET.nsel && NET.nsel.list && NET.nsel.list[NET.slot];
-        if(NET.nsel){
+        if(survival && state===STATE.PLAY && gXfer.open){ gXfer.open=false; }   // first Esc just closes the transfer menu
+        else if(NET.nsel){
           if(nselMe && nselMe.skd && NET.conn && NET.conn.open){ try{ NET.conn.send({ds:1}); }catch(_e){} }
         }
         else if(state===STATE.PVP){
