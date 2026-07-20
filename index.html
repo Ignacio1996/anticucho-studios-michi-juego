@@ -2660,7 +2660,7 @@ function sfxBikeUse(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSf
 function sfxBikeRing(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx('assets/sfx_bike_ring.mp3', 0.65*g); }catch(e){} }
 function sfxSkid(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime;   // short tire scrub on a hard turn
   _noise(t,0.13,0.2*g,'highpass',2400); _noise(t,0.09,0.1*g,'bandpass',900,500); }catch(e){} }
-const BIKE_HP=120;   // wear pool: each ram chips it (small 2, egg 6) — a Ticla lasts a few rounds of plowing
+const BIKE_HP=180;   // wear pool: each ram chips it (small 2, egg 6) — a Ticla lasts a few rounds of plowing (was 120)
 function spawnTicla(v,ownerIdx){
   let bx=v.x, by=v.y+v.h+40;
   for(let t=0;t<30;t++){ const qx=v.x+rand(-80,80), qy=v.y+v.h+rand(28,90); if(!lpSolidAt(qx,qy)){ bx=qx; by=qy; break; } }
