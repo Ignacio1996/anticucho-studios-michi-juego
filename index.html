@@ -285,25 +285,30 @@ function playHee(){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6);
 // boost a no-op: 0.95×1.35 just clipped back to 1.0 — that's why Alfredo never got louder.)
 const VOICE_BOOST={ alfredo_sel:4.5, alfredo_die:1.6, alfredo_hit1:2.8, alfredo_hit2:2.8,
                     mati_sel:3.0, mati_die:1.6, mati_hit1:2.1, mati_hit2:2.0 };
+// Global lift for spoken content — player character voices (select/death/hit barks), the round/boss
+// announcer dialogues, the Cóndor briefings, the NPC allies and the Super Ayuda (Tío). These were
+// getting buried under the weapon SFX; nudge every voice/dialogue up together so raising them stays a
+// one-knob change. Rides the Web Audio path (which amplifies past 1.0); the <audio> fallback clamps.
+const VOICE_GAIN=1.4;
 function voiceVol(clip, base){ return base*(VOICE_BOOST[clip]||1); }
 // Character voices are proximity-scaled when the caller passes world coords (Modo Infinito has
 // per-player cameras — a teammate dying across the map shouldn't shout in your ear). Calls
 // without coords (menus, char-select screens) keep the old full-volume behavior.
-function playCharSelect(kind,x,y){ const g=_proxGain(x,y); if(g<0.04) return; if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], voiceVol(kind+'_sel',0.95)*g); }
-function playCharDeath(kind,x,y){ const g=_proxGain(x,y); if(g<0.04) return; if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], voiceVol(kind+'_die',0.95)*g); }
+function playCharSelect(kind,x,y){ const g=_proxGain(x,y); if(g<0.04) return; if(AUDIO_SRC[kind+'_sel']) playOne(AUDIO_SRC[kind+'_sel'], voiceVol(kind+'_sel',0.95)*VOICE_GAIN*g); }
+function playCharDeath(kind,x,y){ const g=_proxGain(x,y); if(g<0.04) return; if(AUDIO_SRC[kind+'_die']) playOne(AUDIO_SRC[kind+'_die'], voiceVol(kind+'_die',0.95)*VOICE_GAIN*g); }
 function playRoundStart(r){
   const boss=(r%5===0);
-  if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75); } return; }
-  if(currentMap==='machu'){ playOne(boss ? AUDIO_SRC.evan_round : AUDIO_SRC.mp_round, 0.85); return; }
-  if(currentMap==='templo'){ if(boss){ if(r>=20) playOne(AUDIO_SRC.jar_intro2, 0.5); else playOne(AUDIO_SRC.jar_intro, 0.81); } else { playOne(AUDIO_SRC.guachi_intro,0.85); } return; }
-  if(r>=20){ playSfx(AUDIO_SRC.tedintro, 0.6, 0.62); return; }
-  playOne(boss ? AUDIO_SRC.tedintro : AUDIO_SRC.chulla, 0.6);
+  if(currentMap==='stonebridge'){ if(boss && r>=20){ playSfx(AUDIO_SRC.bruja_round, 0.75*VOICE_GAIN, 0.62); } else { playOne(boss ? AUDIO_SRC.bruja_round : AUDIO_SRC.chaufita, 0.75*VOICE_GAIN); } return; }
+  if(currentMap==='machu'){ playOne(boss ? AUDIO_SRC.evan_round : AUDIO_SRC.mp_round, 0.85*VOICE_GAIN); return; }
+  if(currentMap==='templo'){ if(boss){ if(r>=20) playOne(AUDIO_SRC.jar_intro2, 0.5*VOICE_GAIN); else playOne(AUDIO_SRC.jar_intro, 0.81*VOICE_GAIN); } else { playOne(AUDIO_SRC.guachi_intro,0.85*VOICE_GAIN); } return; }
+  if(r>=20){ playSfx(AUDIO_SRC.tedintro, 0.6*VOICE_GAIN, 0.62); return; }
+  playOne(boss ? AUDIO_SRC.tedintro : AUDIO_SRC.chulla, 0.6*VOICE_GAIN);
 }
 function playMagic(){ playOne(AUDIO_SRC.magic, 0.3); }
 function playPvpBoom(){ playSfx(AUDIO_SRC.pvpboom, 0.8); }
 function playBrujaAttack(giant){ playSfx(AUDIO_SRC.bruja_attack, 0.72, giant?0.62:0); }
 function playHeeGiant(){ playSfx(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.62, 0.62); }
-function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95); } }
+function playCondorMsg(){ if(currentMap==='machu'){ playOne(mode===2?AUDIO_SRC.condor_mp_coop:AUDIO_SRC.condor_mp_single, 0.95*VOICE_GAIN); } else if(currentMap==='stonebridge'){ playOne(mode===2?AUDIO_SRC.condor_sb_coop:AUDIO_SRC.condor_sb_single, 0.95*VOICE_GAIN); } else if(currentMap==='templo'){ playOne(mode===2?AUDIO_SRC.condor_templo_coop:AUDIO_SRC.condor_templo_single, 0.95*VOICE_GAIN); } else { playOne(mode===2?AUDIO_SRC.condorcoop:AUDIO_SRC.condorsingle, 0.95*VOICE_GAIN); } }
 function playDeathMusic(){ try{ lpMusicStop(); if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(losAndesMusic) losAndesMusic.pause(); if(deathMusic){ deathMusic.currentTime=0; deathMusic.play().catch(()=>{}); } }catch(e){} }
 function playLosAndes(){ try{ lpMusicStop(); if(menuMusic) menuMusic.pause(); if(bgMusic) bgMusic.pause(); if(sbMusic) sbMusic.pause(); if(tpMusic) tpMusic.pause(); if(evMusic) evMusic.pause(); if(deathMusic) deathMusic.pause(); if(losAndesMusic){ losAndesMusic.currentTime=0; losAndesMusic.play().catch(()=>{}); } }catch(e){} }
 function gameTrack(){ if(currentMap==='laspalmas') return lpMx[lpMxIdx]||null;   // Las Palmas uses its own crossfading playlist, not a single looping track
@@ -566,7 +571,7 @@ function sfxBoom(x,y){ if(!actx) return; try{ const g=_proxGainFar(x,y); if(g<0.
 }catch(e){} }
 function sfxPlace(x,y){ if(!actx) return; try{ const g=_proxGain(x,y); if(g<0.04) return; const t=actx.currentTime; _tone(t,0.09,0.2*g,'square',300,160); _noise(t,0.05,0.12*g,'lowpass',900); }catch(e){} }
 function sfxTurretShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.turret, 0.5*g); }catch(e){} }
-function sfxEscoShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.esco, 0.75*g); }catch(e){} }   // ESCOPETA blast
+function sfxEscoShot(x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; playSfx(WSFX.esco, 0.375*g); }catch(e){} }   // ESCOPETA blast — halved: the raw take is extremely loud
 
 const FREDDY_CELL={w:106,h:138};
 const FREDDY_PUNCH_DUR=0.22;
@@ -2274,14 +2279,14 @@ const TIO_AUD_SRC={ INTRO:'assets/Tio_INTRO.mp3', DEATHAUDIO:'assets/Tio_DEATHAU
   MUERTOS:'assets/Tio_extraMUERTOS.mp3', CHISTE:'assets/Tio_Marcianos_chiste.mp3', SAPITO:'assets/Tio_SAPITO.mp3' };
 const _tioEls={};
 function tioEl(k){ let a=_tioEls[k]; if(!a){ try{ a=new Audio(TIO_AUD_SRC[k]); a.preload='metadata'; _tioEls[k]=a; }catch(e){ return null; } } return a; }
-function playTio(k,x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; const a=tioEl(k); if(a){ a.currentTime=0; a.volume=clamp(0.95*sfxVol*g,0,1); a.play().catch(()=>{}); } }catch(e){} }
+function playTio(k,x,y){ try{ const g=_proxGain(x,y); if(g<0.04) return; const a=tioEl(k); if(a){ a.currentTime=0; a.volume=clamp(0.95*VOICE_GAIN*sfxVol*g,0,1); a.play().catch(()=>{}); } }catch(e){} }
 function tioDur(k,fb){ const a=_tioEls[k]; return (a && isFinite(a.duration) && a.duration>0.4) ? a.duration : fb; }
 function tioSay(k){ const x=tio?tio.x:TIO_SPOT.x, y=tio?tio.y:TIO_SPOT.y; playTio(k,x,y); netQSnd('tioV',{k, x:Math.round(x), y:Math.round(y)}); }
 const TIO_SHOOT_LINES=['Kill8','kneelLONG','KneelSnd'];   // combat barks (kneel/taunt/shooting)
 const TIO_IDLE_LINES=['MUERTOS','CHISTE','SAPITO'];       // strolling banter (rare while shooting)
 let tio=null;   // null → the shadow stands on the spot, buyable. Host-authoritative + replicated.
 const TIO_H=84;      // standing height on screen (a grown man — a head over the kids)
-const TIO_REF=929;   // SOUTH_W2's visible pixel height — the uniform-scale reference
+const TIO_REF=297;   // SOUTH_W2's visible pixel height — the uniform-scale reference (source art downscaled 0.32× from 929px: it renders at ~84px, so ~3.5× headroom, no visible change while shedding ~90MB of decoded RAM)
 function tioTargetable(){ return !!(tio && tio.state!=='dead' && tio.state!=='intro'); }
 function tioSpawn(byIdx){
   const base=(players[0]&&players[0].maxhp)||100;
@@ -3054,13 +3059,13 @@ function playPunchSound(p){
   // Modo Infinito: rapid-fire kills would otherwise fire a hit voice every few frames. Hard-cap every
   // character's hit audio to once per 6s per player so the voices never pile up on top of each other.
   if(survival){ if((time-(p._hitVoiceT||-1e9))<6) return; p._hitVoiceT=time; }
-  if(k==='freddy'){ playPlin(pg); return; }     // PLIN exclusive to Freddy
-  if(k==='michi'){ playWow(pg); return; }        // WOW exclusive to Michi
+  if(k==='freddy'){ playPlin(pg*VOICE_GAIN); return; }     // PLIN exclusive to Freddy
+  if(k==='michi'){ playWow(pg*VOICE_GAIN); return; }        // WOW exclusive to Michi
   // Teddington laughs on every bomb. Inline (not playHee()) — the playHee wrapper queues its own
   // net event, and this call already rides the 'punch' event, so guests would hear it twice.
-  if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6*pg); return; }
+  if(k==='teddington'){ playOne(AUDIO_SRC[['hee1','hee2','hee3'][randi(0,2)]], 0.6*VOICE_GAIN*pg); return; }
   // Cóndor cries on every THIRD bomb — more would be too much
-  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42*pg); return; }
+  if(k==='condor'){ p.punchSfx=(p.punchSfx||0)+1; if(p.punchSfx%3===1) playOne(AUDIO_SRC.condor_hit, 0.42*VOICE_GAIN*pg); return; }
   // Alfredo/Mati/Sebas/Vannucci: HIT1/HIT2 rotate at random. Horda calls this only on CONNECTING
   // punches (see tryPunch's hitAny) → voice every 2nd landed hit; PVP: voice every 3rd bomb placed.
   if(AUDIO_SRC[k+'_hit1']){
@@ -3070,18 +3075,18 @@ function playPunchSound(p){
     const horStep=(k==='vannucci')?3:(k==='sebas')?4:2;
     if((state===STATE.PVP) ? (ch%3===1) : (ch%horStep===0)){
       let n2=randi(1,2); if(!AUDIO_SRC[k+'_hit'+n2]) n2=1;
-      playOne(AUDIO_SRC[k+'_hit'+n2], voiceVol(k+'_hit'+n2,0.6)*pg);
+      playOne(AUDIO_SRC[k+'_hit'+n2], voiceVol(k+'_hit'+n2,0.6)*VOICE_GAIN*pg);
     }
     return;
   }
   p.punchSfx=(p.punchSfx||0)+1; const c=p.punchSfx;
   if(state===STATE.PVP){
     // bombs are placed far less often than horda punches — voice every 3rd bomb
-    if(k==='sumac'||k==='shooshy'){ if(c%3===1) playOne(AUDIO_SRC[k+(randi(1,4)===4?'2':'1')], 0.55*pg); }
+    if(k==='sumac'||k==='shooshy'){ if(c%3===1) playOne(AUDIO_SRC[k+(randi(1,4)===4?'2':'1')], 0.55*VOICE_GAIN*pg); }
     return;
   }
-  if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55*pg); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55*pg); }
-  else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55*pg); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55*pg); }
+  if(k==='sumac'){ if(c%13===0) playOne(AUDIO_SRC.sumac2,0.55*VOICE_GAIN*pg); else if(c%5===0) playOne(AUDIO_SRC.sumac1,0.55*VOICE_GAIN*pg); }
+  else if(k==='shooshy'){ if(c%13===0) playOne(AUDIO_SRC.shooshy2,0.55*VOICE_GAIN*pg); else if(c%5===0) playOne(AUDIO_SRC.shooshy1,0.55*VOICE_GAIN*pg); }
 }
 function tryPunch(p){
   if(!p.alive || p.cooldown>0) return;
