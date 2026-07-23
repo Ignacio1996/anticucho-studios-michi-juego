@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="author" content="Renzo Cheesman (Anticucho Studios)">
 <meta name="copyright" content="© 2026 Anticucho Studios — Renzo Cheesman. All rights reserved.">
 <meta name="description" content="Freddy &amp; Michi: Espíritu del Amazonas — a game by Anticucho Studios (Renzo Cheesman).">
@@ -34,12 +34,61 @@
 <link rel="apple-touch-icon" href="assets/img_001.png">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html,body { height:100%; background:#1a1410; font-family:'Courier New', monospace; overflow:hidden; }
+  html,body { height:100%; background:#1a1410; font-family:'Courier New', monospace; overflow:hidden;
+              -webkit-text-size-adjust:100%; }
   #wrap { display:flex; align-items:center; justify-content:center; height:100%; }
   #game { image-rendering:pixelated; image-rendering:crisp-edges; background:#3a5a2a;
           box-shadow:0 0 0 4px #2a1f14, 0 0 40px #000; max-width:100vw; max-height:100vh; }
   .hint { position:fixed; bottom:6px; left:50%; transform:translateX(-50%);
           color:#a89878; font-size:11px; letter-spacing:1px; opacity:.6; }
+
+  /* ============================================================
+     Mobile touch controls — only shown on touch/coarse-pointer devices.
+     They synthesize the same keyboard events the game already reads
+     (P1: WASD move · Space punch · F gear/bike · Esc pause), so no
+     game logic needs to change and menus stay navigable by thumb.
+     ============================================================ */
+  #touchpad { display:none; }
+  body.touch #touchpad { display:block; }
+  body.touch .hint { display:none; }          /* the keyboard hint is meaningless on a phone */
+
+  #touchpad { position:fixed; inset:0; z-index:70; pointer-events:none; }   /* children opt back in */
+  .tc { pointer-events:auto; position:fixed; touch-action:none; user-select:none;
+        -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
+
+  /* movement joystick, bottom-left */
+  #tc-stick { left:calc(18px + env(safe-area-inset-left)); bottom:calc(18px + env(safe-area-inset-bottom));
+              width:132px; height:132px; border-radius:50%;
+              background:rgba(20,15,10,.32); border:2px solid rgba(232,220,192,.32); }
+  #tc-knob { position:absolute; left:50%; top:50%; width:60px; height:60px; margin:-30px 0 0 -30px;
+             border-radius:50%; background:rgba(192,80,74,.72); border:2px solid rgba(255,255,255,.5);
+             box-shadow:0 2px 8px rgba(0,0,0,.4); will-change:transform; }
+
+  /* action buttons, bottom-right */
+  .tc-btn { border-radius:50%; display:flex; align-items:center; justify-content:center;
+            font:bold 15px 'Courier New',monospace; color:#fff; letter-spacing:1px;
+            border:2px solid rgba(255,255,255,.42); box-shadow:0 2px 8px rgba(0,0,0,.4);
+            transition:transform .05s ease, background .05s ease; }
+  .tc-btn.pressed { transform:scale(.92); }
+  #tc-punch { right:calc(22px + env(safe-area-inset-right)); bottom:calc(30px + env(safe-area-inset-bottom));
+              width:104px; height:104px; background:rgba(192,80,74,.62); }
+  #tc-punch.pressed { background:rgba(192,80,74,.95); }
+  #tc-gear  { right:calc(134px + env(safe-area-inset-right)); bottom:calc(24px + env(safe-area-inset-bottom));
+              width:74px; height:74px; font-size:26px; background:rgba(74,120,74,.55); }
+  #tc-gear.pressed { background:rgba(74,120,74,.92); }
+  #tc-pause { top:calc(10px + env(safe-area-inset-top)); right:calc(10px + env(safe-area-inset-right));
+              width:46px; height:46px; font-size:18px; background:rgba(20,15,10,.5);
+              border:2px solid rgba(232,220,192,.4); }
+  #tc-pause.pressed { background:rgba(20,15,10,.85); }
+
+  /* portrait nudge — the game is built for horizontal play */
+  #rotate { display:none; position:fixed; inset:0; z-index:200; background:#1a1410;
+            color:#e8dcc0; align-items:center; justify-content:center; text-align:center;
+            padding:28px; font:bold 18px 'Courier New',monospace; line-height:1.6; letter-spacing:1px; }
+  #rotate .rot-emoji { font-size:52px; display:block; margin-bottom:14px; animation:rothint 1.8s ease-in-out infinite; }
+  @keyframes rothint { 0%,100%{ transform:rotate(0); } 50%{ transform:rotate(-90deg); } }
+  body.touch.portrait #rotate { display:flex; }
+  body.touch.portrait #touchpad { display:none; }
 </style>
 </head>
 <body>
@@ -47,6 +96,14 @@
   <canvas id="game" width="1120" height="720"></canvas>
 </div>
 <div class="hint">J1: WASD + Espacio &nbsp;|&nbsp; J2: Flechas + Coma &nbsp;|&nbsp; Esc: Pausa</div>
+<!-- On-screen touch controls (mobile only). Populated/handled by the touch script at the end of body. -->
+<div id="touchpad" aria-hidden="true">
+  <div id="tc-stick" class="tc"><div id="tc-knob"></div></div>
+  <div id="tc-gear"  class="tc tc-btn">🚲</div>
+  <div id="tc-punch" class="tc tc-btn">PUÑO</div>
+  <div id="tc-pause" class="tc tc-btn">II</div>
+</div>
+<div id="rotate"><div><span class="rot-emoji">📱</span>Gira tu dispositivo<br>para jugar en horizontal</div></div>
 <video id="remotevideo" autoplay playsinline muted></video>
 <video id="introvideo" playsinline preload="none">
   <source src="assets/laspalmas_intro.mp4" type="video/mp4">
@@ -9733,6 +9790,132 @@ requestAnimationFrame(frame);
 
 })();
 
+</script>
+<!-- ============================================================
+     Mobile touch controls
+     Standalone from the game IIFE: it drives the game purely by
+     synthesizing the keyboard events the game already listens for,
+     so movement / attack / gear / pause AND all menu navigation
+     work by thumb without touching any game logic.
+     ============================================================ -->
+<script>
+(function(){
+  "use strict";
+  // Show controls only on a touch-first device (phones/tablets), not on a mouse laptop
+  // that merely happens to have a touchscreen.
+  var coarse = false;
+  try { coarse = window.matchMedia('(hover: none) and (pointer: coarse)').matches; } catch(e){}
+  var isTouch = coarse || (('ontouchstart' in window) && (navigator.maxTouchPoints||0) > 0);
+  if(!isTouch) return;
+  document.body.classList.add('touch');
+
+  // ---- synthetic keyboard bridge ----------------------------------------
+  // The game reads a global `keys[e.code]` map and runs its menus off the
+  // window 'keydown' listener. We feed both by dispatching real KeyboardEvents.
+  var held = {};
+  function keydown(code){
+    try { window.dispatchEvent(new KeyboardEvent('keydown', { code:code, key:code, bubbles:true, cancelable:true })); } catch(e){}
+  }
+  function keyup(code){
+    try { window.dispatchEvent(new KeyboardEvent('keyup', { code:code, key:code, bubbles:true, cancelable:true })); } catch(e){}
+  }
+  function press(code){ if(held[code]) return; held[code]=true; keydown(code); }
+  function release(code){ if(!held[code]) return; held[code]=false; keyup(code); }
+  function releaseAll(){ for(var c in held){ if(held[c]){ held[c]=false; keyup(c); } } }
+
+  // ---- orientation --------------------------------------------------------
+  function orient(){
+    var portrait = window.innerHeight > window.innerWidth;
+    if(portrait){ document.body.classList.add('portrait'); releaseAll(); clearStick(); }
+    else document.body.classList.remove('portrait');
+  }
+  window.addEventListener('resize', orient);
+  window.addEventListener('orientationchange', orient);
+
+  // ---- action buttons -----------------------------------------------------
+  function bindButton(id, code){
+    var el = document.getElementById(id); if(!el) return;
+    el.addEventListener('touchstart', function(e){ e.preventDefault(); el.classList.add('pressed'); press(code); }, {passive:false});
+    var end = function(e){ e.preventDefault(); el.classList.remove('pressed'); release(code); };
+    el.addEventListener('touchend', end, {passive:false});
+    el.addEventListener('touchcancel', end, {passive:false});
+  }
+  bindButton('tc-punch', 'Space');   // punch / confirm-in-menus / special charge
+  bindButton('tc-gear',  'KeyF');    // mount bike / gear (Las Palmas)
+  bindButton('tc-pause', 'Escape');  // pause / back-in-menus / skip intro
+
+  // ---- movement joystick --------------------------------------------------
+  var stick = document.getElementById('tc-stick');
+  var knob  = document.getElementById('tc-knob');
+  var DIRS  = ['KeyW','KeyS','KeyA','KeyD'];
+  var dirOn = { KeyW:false, KeyS:false, KeyA:false, KeyD:false };
+  var stickId = null, repeatTimer = null;
+
+  // Auto-repeat held directions so menu selection / volume sliders keep moving
+  // while the stick is pushed. Harmless during gameplay (movement is level-triggered).
+  function stopRepeat(){ if(repeatTimer){ clearTimeout(repeatTimer); repeatTimer=null; } }
+  function syncRepeat(){
+    var any = dirOn.KeyW || dirOn.KeyS || dirOn.KeyA || dirOn.KeyD;
+    if(any && !repeatTimer){
+      repeatTimer = setTimeout(function tick(){
+        for(var i=0;i<DIRS.length;i++){ if(dirOn[DIRS[i]]) keydown(DIRS[i]); }   // re-fire = repeat
+        repeatTimer = setTimeout(tick, 180);
+      }, 360);
+    } else if(!any){ stopRepeat(); }
+  }
+  function setDirs(next){
+    for(var i=0;i<DIRS.length;i++){ var c=DIRS[i];
+      if(next[c] && !dirOn[c]){ dirOn[c]=true; press(c); }
+      else if(!next[c] && dirOn[c]){ dirOn[c]=false; release(c); }
+    }
+    syncRepeat();
+  }
+  function clearStick(){ knob.style.transform=''; setDirs({}); }
+
+  function moveKnob(touch){
+    var r = stick.getBoundingClientRect();
+    var cx = r.left + r.width/2, cy = r.top + r.height/2;
+    var dx = touch.clientX - cx, dy = touch.clientY - cy;
+    var max = r.width/2, mag = Math.hypot(dx,dy) || 0;
+    var kx = dx, ky = dy;
+    if(mag > max){ kx = dx/mag*max; ky = dy/mag*max; }
+    knob.style.transform = 'translate('+kx.toFixed(1)+'px,'+ky.toFixed(1)+'px)';
+
+    var next = {};
+    var dead = max*0.34, thr = max*0.30;
+    if(mag > dead){
+      if(dx < -thr) next.KeyA = true;
+      if(dx >  thr) next.KeyD = true;
+      if(dy < -thr) next.KeyW = true;
+      if(dy >  thr) next.KeyS = true;
+      // near-cardinal within the diagonal band: fall back to the dominant axis
+      if(!next.KeyW && !next.KeyS && !next.KeyA && !next.KeyD){
+        if(Math.abs(dx) > Math.abs(dy)) next[dx<0?'KeyA':'KeyD'] = true;
+        else                            next[dy<0?'KeyW':'KeyS'] = true;
+      }
+    }
+    setDirs(next);
+  }
+
+  stick.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    if(stickId !== null) return;
+    var t = e.changedTouches[0]; stickId = t.identifier; moveKnob(t);
+  }, {passive:false});
+  stick.addEventListener('touchmove', function(e){
+    e.preventDefault();
+    for(var i=0;i<e.changedTouches.length;i++){ var t=e.changedTouches[i];
+      if(t.identifier===stickId){ moveKnob(t); break; } }
+  }, {passive:false});
+  function endStick(e){
+    for(var i=0;i<e.changedTouches.length;i++){
+      if(e.changedTouches[i].identifier===stickId){ e.preventDefault(); stickId=null; clearStick(); break; } }
+  }
+  stick.addEventListener('touchend', endStick, {passive:false});
+  stick.addEventListener('touchcancel', endStick, {passive:false});
+
+  orient();
+})();
 </script>
 </body>
 </html>
