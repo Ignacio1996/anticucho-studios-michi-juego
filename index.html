@@ -9437,6 +9437,25 @@ requestAnimationFrame(frame);
 
   const joinId = new URLSearchParams(location.search).get('r');
 
+  // ---- ICE servers (shared by host + guest) ----------------------------------------------------
+  // A bare `new Peer()` only ships Google STUN, so peers behind a restrictive/symmetric NAT or a
+  // UDP-blocking network (corporate/university/mobile) can never punch a direct hole and get stuck
+  // on "Reintentando conexión…" forever. We keep STUN (unchanged for everyone who already connects
+  // fine — ICE always prefers a direct/STUN path) and ADD a free public TURN relay as a last-resort
+  // fallback, used only by peers that can't connect any other way. The TCP-443 entry looks like
+  // plain HTTPS and slips through firewalls that drop UDP. Players on friendly networks never touch
+  // the relay, so this can't slow down or break existing connections.
+  //   Free public relay = best-effort (may be congested). To use your own free-tier credentials
+  //   (e.g. metered.ca gives ~50GB/mo at no cost, no card), just replace the three turn: entries.
+  const NET_ICE = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+    { urls: 'turn:openrelay.metered.ca:80',                 username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443',                username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp',  username: 'openrelayproject', credential: 'openrelayproject' }
+  ];
+  const NET_PEER_OPTS = { config: { iceServers: NET_ICE } };
+
   // translate a guest's normalized input into the canonical control codes fed into its host-side player
   function applyRemote(guest, d){
     const keysObj = guest.keys;
@@ -9586,7 +9605,7 @@ requestAnimationFrame(frame);
     addEventListener('keydown', swallow, true);
     addEventListener('keyup',   swallow, true);
 
-    const peer = new Peer(); NET.peer = peer;
+    const peer = new Peer(NET_PEER_OPTS); NET.peer = peer;
     // Opening the WebRTC data channel is NOT reliable: the handshake can silently stall (a dropped
     // ICE packet, or the host momentarily off the signaling server) and leave this guest stuck on
     // "Conectando con el anfitrión…" forever — while other guests get in fine. So keep (re)trying
@@ -9646,7 +9665,7 @@ requestAnimationFrame(frame);
     // ----------------------------- HOST ------------------------------
     NET.role = 'host';
     const inGame = () => state===STATE.PLAY||state===STATE.BREAK||state===STATE.INTRO||state===STATE.PAUSE||state===STATE.DYING;
-    const peer = new Peer(); NET.peer = peer;
+    const peer = new Peer(NET_PEER_OPTS); NET.peer = peer;
     // if idle or a network blip drops the host off the signaling server, guests can no longer find us
     // ("peer-unavailable" → stuck on Conectando…). Rejoin the server so new guests keep connecting.
     peer.on('disconnected', () => { try{ peer.reconnect(); }catch(_e){} });
