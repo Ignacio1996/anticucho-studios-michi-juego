@@ -7631,6 +7631,11 @@ function startPvpRound(){
       }
     }
   }
+  // …and nobody starts SEALED IN: the cross-pocket alone can still be a closed crate box
+  // (its ends walled off, the sides pillared), so carve the cheapest corridor from every
+  // spawn into the first spawn's walkable region. All spawns end up sharing one open area,
+  // so a round always opens with somewhere to run instead of a bomb-out-of-your-own-cell.
+  pvpConnectSpawns(g, spots);
   pvp.grid=g; pvp.bombs.length=0; pvp.flames.length=0; pvp.items.length=0;
   pvp.sudden=0; pvp.suddenOn=false; pvp.dropT=0; pvp.spiral=pvpBuildSpiral(); pvp.spiralI=0; pvp.winner=-1; pvp.warnCell=null;
   particles.length=0;
@@ -7648,7 +7653,7 @@ function startPvpRound(){
   pvp.sub='count'; pvp.count=3.0; pvp.t=0;
 }
 // pick n non-pillar tiles as far apart as possible: try a large min-distance first,
-// relax it until a placement fits (corners as the never-fails fallback)
+// relax it until a placement fits (farthest-first greedy as the never-fails fallback)
 function pvpPickSpawns(n){
   const cand=[];
   for(let r=0;r<PVP_ROWS;r++)for(let c=0;c<PVP_COLS;c++){ if(!(c%2===1&&r%2===1)) cand.push([c,r]); }
@@ -7665,7 +7670,74 @@ function pvpPickSpawns(n){
       if(picks.length===n) return picks;
     }
   }
-  return [[0,0],[PVP_COLS-1,PVP_ROWS-1],[PVP_COLS-1,0],[0,PVP_ROWS-1]].slice(0,n);
+  // never-fails fallback: farthest-first greedy — always yields n DISTINCT tiles (the old
+  // 4-corner list came up short with 5 players, and two of them shared a spawn cell)
+  const picks=[cand[randi(0,cand.length-1)]];
+  while(picks.length<n){
+    let best=cand[0], bd=-1;
+    for(const t of cand){
+      let d=1e9; for(const q of picks) d=Math.min(d, Math.hypot(t[0]-q[0], t[1]-q[1]));
+      if(d>bd){ bd=d; best=t; }
+    }
+    picks.push(best);
+  }
+  return picks;
+}
+const PVP_DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+// every walkable (0) tile reachable on foot from (c0,r0), as a Set of "c,r" keys
+function pvpOpenRegion(g,c0,r0){
+  const seen=new Set([c0+','+r0]), q=[[c0,r0]];
+  while(q.length){
+    const [c,r]=q.shift();
+    for(const d of PVP_DIRS){
+      const cc=c+d[0], rr=r+d[1];
+      if(cc<0||rr<0||cc>=PVP_COLS||rr>=PVP_ROWS) continue;
+      const k=cc+','+rr;
+      if(seen.has(k) || g[rr][cc]!==0) continue;
+      seen.add(k); q.push([cc,rr]);
+    }
+  }
+  return seen;
+}
+// Dijkstra from (c0,r0) to the nearest tile of `goal`, paying 1 per crate crossed and 0 for
+// open ground (so it reuses existing lanes and breaks as few crates as possible); the crates
+// on the winning route are removed. Pillars/stone are never touched. false = no route at all.
+function pvpCarveTo(g,c0,r0,goal){
+  const key=(c,r)=>c+','+r;
+  const cost=new Map([[key(c0,r0),0]]), prev=new Map();
+  const open=[[0,c0,r0]];
+  let endK=null;
+  while(open.length){
+    let bi=0; for(let i=1;i<open.length;i++) if(open[i][0]<open[bi][0]) bi=i;   // 165 tiles — a linear scan is plenty
+    const [cst,c,r]=open.splice(bi,1)[0];
+    const k=key(c,r);
+    if(cst>(cost.has(k)?cost.get(k):1e9)) continue;
+    if(goal.has(k)){ endK=k; break; }
+    for(const d of PVP_DIRS){
+      const cc=c+d[0], rr=r+d[1];
+      if(cc<0||rr<0||cc>=PVP_COLS||rr>=PVP_ROWS) continue;
+      const t=g[rr][cc];
+      if(t===1||t===3) continue;                       // unbreakable: route around it
+      const nk=key(cc,rr), nc=cst+(t===2?1:0);
+      if(nc<(cost.has(nk)?cost.get(nk):1e9)){ cost.set(nk,nc); prev.set(nk,k); open.push([nc,cc,rr]); }
+    }
+  }
+  if(endK==null) return false;
+  for(let k=endK; k!=null; k=prev.get(k)){
+    const [c,r]=k.split(',').map(Number);
+    if(g[r][c]===2) g[r][c]=0;
+  }
+  return true;
+}
+// join every spawn pocket into one walkable region so no player is boxed in at the start
+function pvpConnectSpawns(g,spots){
+  if(!spots.length) return;
+  let region=pvpOpenRegion(g, spots[0][0], spots[0][1]);
+  for(let i=1;i<spots.length;i++){
+    const s=spots[i];
+    if(region.has(s[0]+','+s[1])) continue;
+    if(pvpCarveTo(g, s[0], s[1], region)) region=pvpOpenRegion(g, spots[0][0], spots[0][1]);
+  }
 }
 function pvpBuildSpiral(){
   const order=[]; let t=0,b=PVP_ROWS-1,l=0,r=PVP_COLS-1;
