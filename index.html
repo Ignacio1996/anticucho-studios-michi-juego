@@ -7636,6 +7636,8 @@ function startPvpRound(){
   // spawn into the first spawn's walkable region. All spawns end up sharing one open area,
   // so a round always opens with somewhere to run instead of a bomb-out-of-your-own-cell.
   pvpConnectSpawns(g, spots);
+  // …and your own first bomb can never catch you, whichever way you run
+  pvpEnsureEscapes(g, spots);
   pvp.grid=g; pvp.bombs.length=0; pvp.flames.length=0; pvp.items.length=0;
   pvp.sudden=0; pvp.suddenOn=false; pvp.dropT=0; pvp.spiral=pvpBuildSpiral(); pvp.spiralI=0; pvp.winner=-1; pvp.warnCell=null;
   particles.length=0;
@@ -7737,6 +7739,30 @@ function pvpConnectSpawns(g,spots){
     const s=spots[i];
     if(region.has(s[0]+','+s[1])) continue;
     if(pvpCarveTo(g, s[0], s[1], region)) region=pvpOpenRegion(g, spots[0][0], spots[0][1]);
+  }
+}
+// A round-1 bomb has range 1, so its flames cover the spawn tile and its four orthogonal
+// neighbours only: EVERY tile one more step out — straight ahead or around the corner — is
+// already clear of the blast. The cross pocket clears two tiles per direction, which covers
+// that… except where the arena edge cuts the direction short: then the neighbour is a
+// one-tile dead end and a player who runs that way is killed by their own first bomb.
+// Open a side exit on any such tile, so every direction you CAN run is a way out.
+function pvpEnsureEscapes(g,spots){
+  for(const s of spots){
+    for(const d of PVP_DIRS){
+      const nc=s[0]+d[0], nr=s[1]+d[1];
+      if(nc<0||nr<0||nc>=PVP_COLS||nr>=PVP_ROWS) continue;
+      if(g[nr][nc]!==0) continue;                        // solid — you can't run into it in the first place
+      let out=false, fix=null;
+      for(const e of PVP_DIRS){
+        const xc=nc+e[0], xr=nr+e[1];
+        if(xc<0||xr<0||xc>=PVP_COLS||xr>=PVP_ROWS) continue;
+        if(xc===s[0]&&xr===s[1]) continue;               // back onto the bomb: not an escape
+        if(g[xr][xc]===0){ out=true; break; }            // already leads out of the blast
+        if(g[xr][xc]===2 && fix==null) fix=[xc,xr];      // a crate we can open instead (pillars stay)
+      }
+      if(!out && fix) g[fix[1]][fix[0]]=0;
+    }
   }
 }
 function pvpBuildSpiral(){
